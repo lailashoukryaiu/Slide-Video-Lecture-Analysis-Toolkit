@@ -2,7 +2,8 @@ import os
 import json
 import re
 from fastapi.responses import JSONResponse
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 class SummaryProcessor:
@@ -12,8 +13,9 @@ class SummaryProcessor:
         GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
         
         try:
-            genai.configure(api_key=GOOGLE_API_KEY)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            self.client = genai.Client(api_key=GOOGLE_API_KEY)
+            self.model_name = "gemini-3.6-flash"
+            self.model = True
         except Exception as e:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
             self.model = None
@@ -53,7 +55,14 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
-            response = self.model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.5))
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.5,
+                    response_mime_type="application/json",
+                ),
+            )
             try:
                 # Try to parse the response as JSON
                 chapters = json.loads(response.text)
