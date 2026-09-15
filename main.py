@@ -25,6 +25,25 @@ from processors.summary_processor import SummaryProcessor
 # Initialize FastAPI app
 app = FastAPI()
 
+@app.get("/yolo_status")
+async def yolo_status():
+    """Return the current availability of the YOLO model."""
+    try:
+        OCRProcessor.initialize_models()
+
+        loaded = OCRProcessor.yolo_model is not None
+
+        return JSONResponse({
+            "loaded": loaded,
+            "error": None if loaded else "YOLOv8 model not loaded"
+        })
+
+    except Exception as e:
+        return JSONResponse({
+            "loaded": False,
+            "error": str(e)
+        })
+
 # Create directories if they don't exist
 STATIC_DIRS = [
     "static/videos",
