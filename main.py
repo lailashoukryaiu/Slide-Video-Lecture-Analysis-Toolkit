@@ -74,7 +74,10 @@ ocr_processor = OCRProcessor(send_sse_update=send_sse_update)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+    request=request,
+    name="index.html"
+)
 
 @app.post("/upload_video")
 async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = File(...)):
