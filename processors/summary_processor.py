@@ -10,9 +10,19 @@ class SummaryProcessor:
     def __init__(self):
         # Initialize Gemini API
         load_dotenv()
-        GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-        
+
+        # Prefer the environment variable for normal/local execution.
+        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+        # In Google Colab, use the Colab Secret directly.
+        if not GOOGLE_API_KEY:
+            from google.colab import userdata
+            GOOGLE_API_KEY = userdata.get("GOOGLE_API_KEY")
+
         try:
+            if not GOOGLE_API_KEY:
+                raise ValueError("GOOGLE_API_KEY is not configured")
+
             self.client = genai.Client(api_key=GOOGLE_API_KEY)
             self.model_name = "gemini-3.6-flash"
             self.model = True
