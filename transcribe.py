@@ -1,4 +1,5 @@
 from faster_whisper import WhisperModel, BatchedInferencePipeline
+import torch
 
 def convert_to_srt_time(time_in_seconds):
     hours, remainder = divmod(time_in_seconds, 3600)
@@ -44,7 +45,22 @@ def transcribe_audio(file_path, batch_size=16):
     Yields:
         Tuple of (formatted SRT string, progress percentage)
     """
-    model = WhisperModel("turbo", device="cuda", compute_type="float16")
+    # Automatically select the best available hardware.
+    if torch.cuda.is_available():
+        device = "cuda"
+        compute_type = "float16"
+    else:
+        device = "cpu"
+        compute_type = "int8"
+
+    print(f"Whisper device: {device}")
+    print(f"Whisper compute type: {compute_type}")
+
+    model = WhisperModel(
+        "turbo",
+        device=device,
+        compute_type=compute_type
+    )
     batched_model = BatchedInferencePipeline(model=model)
     segments, info = batched_model.transcribe(file_path, batch_size=batch_size, word_timestamps=True, log_progress=True)
     total_duration = info.duration
