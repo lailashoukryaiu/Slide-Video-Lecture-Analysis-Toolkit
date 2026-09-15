@@ -14,10 +14,9 @@ class SummaryProcessor:
         # Prefer the environment variable for normal/local execution.
         GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-        # In Google Colab, use the Colab Secret directly.
-        if not GOOGLE_API_KEY:
-            from google.colab import userdata
-            GOOGLE_API_KEY = userdata.get("GOOGLE_API_KEY")
+        # Colab Secrets are available only from the interactive notebook
+        # process. The server process receives the key through the environment.
+        # Do not call google.colab.userdata from the FastAPI/Uvicorn process.
 
         try:
             if not GOOGLE_API_KEY:
