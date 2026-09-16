@@ -29,6 +29,25 @@ app = FastAPI()
 
 ensure_app_directories()
 
+@app.get("/yolo_status")
+async def yolo_status():
+    """Return the current availability of the YOLO model."""
+    try:
+        OCRProcessor.initialize_models()
+
+        loaded = OCRProcessor.yolo_model is not None
+
+        return JSONResponse({
+            "loaded": loaded,
+            "error": None if loaded else "YOLOv8 model not loaded"
+        })
+
+    except Exception as e:
+        return JSONResponse({
+            "loaded": False,
+            "error": str(e)
+        })
+
 # Mount static directory
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -63,7 +82,10 @@ ocr_processor = OCRProcessor(send_sse_update=send_sse_update)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+    request=request,
+    name="index.html"
+)
 
 @app.post("/upload_video")
 async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = File(...)):
@@ -108,15 +130,17 @@ async def get_scene_detections(video_id: str, scene_index: int):
 
 @app.get("/thumbnails/{video_id}/{filename}")
 async def get_thumbnail(video_id: str, filename: str):
-    thumbnail_path = str(THUMBNAILS_DIR / video_id / filename)
-    if not os.path.exists(thumbnail_path):
+    base_dir = THUMBNAILS_DIR.resolve()
+    thumbnail_path = (base_dir / video_id / filename).resolve()
+    if not thumbnail_path.is_relative_to(base_dir) or not thumbnail_path.is_file():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     return FileResponse(thumbnail_path)
 
 @app.get("/fullsize_images/{video_id}/{filename}")
 async def get_fullsize_image(video_id: str, filename: str):
-    image_path = str(FULLSIZE_IMAGES_DIR / video_id / filename)
-    if not os.path.exists(image_path):
+    base_dir = FULLSIZE_IMAGES_DIR.resolve()
+    image_path = (base_dir / video_id / filename).resolve()
+    if not image_path.is_relative_to(base_dir) or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path)
 
@@ -223,7 +247,7 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
         video_path = str(VIDEO_DIR / f"{video_id}.mp4")
         if not glob.glob(str(VIDEO_DIR / f"{video_id}.*")):
             ydl_opts = {
-                'format': 'bestvideo[height<=720][vcodec=vp9]+bestaudio/best[vcodec=vp9]',
+                'format': 'bestvideo[height<=720][vcodec^=vp9]+bestaudio/bestvideo[height<=720]+bestaudio/best',
                 'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
                 'merge_output_format': 'mp4',
             }

@@ -1,6 +1,6 @@
 import os
 import cv2
-from scenedetect import detect, AdaptiveDetector, SceneManager, VideoManager, ContentDetector
+from scenedetect import open_video, AdaptiveDetector, SceneManager, ContentDetector
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -92,8 +92,7 @@ class SceneProcessor:
         """Detect scene changes in the video and return timestamps."""
         try:
             # Detect scenes using content detection
-            video_manager = VideoManager([video_path])
-            video_manager.set_downscale_factor(0.1)
+            video = open_video(video_path)
             
             scene_manager = SceneManager()
             scene_manager.add_detector(
@@ -110,10 +109,11 @@ class SceneProcessor:
             )
             
             scene_manager.detect_scenes(
-                frame_source=video_manager,
+                video=video,
                 show_progress=True,
                 frame_skip=10
             )
+            video.close()
             
             scenes = scene_manager.get_scene_list()
             print(f"Detected {len(scenes)} scenes")

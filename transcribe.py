@@ -43,6 +43,8 @@ def timestamps_to_srt(word_timestamps):
 def transcribe_audio(file_path, batch_size=16):
     """Transcribe audio file and yield sentences as they are processed."""
     device, compute_type = get_whisper_device_config()
+    print(f"Whisper device: {device}")
+    print(f"Whisper compute type: {compute_type}")
     model = WhisperModel("turbo", device=device, compute_type=compute_type)
     batched_model = BatchedInferencePipeline(model=model)
     segments, info = batched_model.transcribe(file_path, batch_size=batch_size, word_timestamps=True, log_progress=True)

@@ -2,7 +2,8 @@ import os
 import json
 import re
 from fastapi.responses import JSONResponse
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 from project_paths import SUMMARIES_DIR
@@ -11,11 +12,21 @@ class SummaryProcessor:
     def __init__(self):
         # Initialize Gemini API
         load_dotenv()
-        GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-        
+
+        # Prefer the environment variable for normal/local execution.
+        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+        # Colab Secrets are available only from the interactive notebook
+        # process. The server process receives the key through the environment.
+        # Do not call google.colab.userdata from the FastAPI/Uvicorn process.
+
         try:
-            genai.configure(api_key=GOOGLE_API_KEY)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            if not GOOGLE_API_KEY:
+                raise ValueError("GOOGLE_API_KEY is not configured")
+
+            self.client = genai.Client(api_key=GOOGLE_API_KEY)
+            self.model_name = "gemini-3.8-flash"
+            self.model = True
         except Exception as e:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
             self.model = None
@@ -55,7 +66,14 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
-            response = self.model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.5))
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.5,
+                    response_mime_type="application/json",
+                ),
+            )
             try:
                 # Try to parse the response as JSON
                 chapters = json.loads(response.text)
