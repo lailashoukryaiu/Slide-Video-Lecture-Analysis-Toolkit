@@ -14,6 +14,8 @@ import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
+from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
+
 # Import processing modules
 from processors.video_processor import VideoProcessor
 from processors.scene_processor import SceneProcessor
@@ -25,24 +27,11 @@ from processors.summary_processor import SummaryProcessor
 # Initialize FastAPI app
 app = FastAPI()
 
-# Create directories if they don't exist
-STATIC_DIRS = [
-    "static/videos",
-    "static/transcripts",
-    "static/scenes",
-    "static/thumbnails",
-    "static/summaries",
-    "static/fullsize_images",
-    "static/detections",
-    "static/ocr_results"
-]
-
-for directory in STATIC_DIRS:
-    os.makedirs(directory, exist_ok=True)
+ensure_app_directories()
 
 # Mount static directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
 # Initialize processors
 video_processor = VideoProcessor()
@@ -82,7 +71,7 @@ async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = Fi
         # Calculate video hash
         content = await video.read()
         video_hash = hashlib.sha256(content).hexdigest()
-        video_path = f"static/videos/{video_hash}.mp4"
+        video_path = str(VIDEO_DIR / f"{video_hash}.mp4")
 
         # Check if video exists
         
@@ -119,14 +108,14 @@ async def get_scene_detections(video_id: str, scene_index: int):
 
 @app.get("/thumbnails/{video_id}/{filename}")
 async def get_thumbnail(video_id: str, filename: str):
-    thumbnail_path = f"static/thumbnails/{video_id}/{filename}"
+    thumbnail_path = str(THUMBNAILS_DIR / video_id / filename)
     if not os.path.exists(thumbnail_path):
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     return FileResponse(thumbnail_path)
 
 @app.get("/fullsize_images/{video_id}/{filename}")
 async def get_fullsize_image(video_id: str, filename: str):
-    image_path = f"static/fullsize_images/{video_id}/{filename}"
+    image_path = str(FULLSIZE_IMAGES_DIR / video_id / filename)
     if not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path)
@@ -231,28 +220,26 @@ def extract_video_id(url):
 @app.post("/download/{video_id}")
 async def download_video(video_id: str, background_tasks: BackgroundTasks):
     try:
-        video_path = f"static/videos/{video_id}.mp4"
-        if not glob.glob(f"static/videos/{video_id}.*"):
+        video_path = str(VIDEO_DIR / f"{video_id}.mp4")
+        if not glob.glob(str(VIDEO_DIR / f"{video_id}.*")):
             ydl_opts = {
-                'format': 'bestvideo[height<=720][vcodec=vp9]+bestaudio/best[vcodec=vp9]',  # 720p, no AV1
-                'outtmpl': f'static/videos/{video_id}.%(ext)s',
-                'merge_output_format': 'mp4',  # Ensure the final output is MP4
+                'format': 'bestvideo[height<=720][vcodec=vp9]+bestaudio/best[vcodec=vp9]',
+                'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
+                'merge_output_format': 'mp4',
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
 
-        # Get the actual video path (in case the extension is different)
-        downloaded_files = os.listdir("static/videos")
+        downloaded_files = os.listdir(VIDEO_DIR)
         for file in downloaded_files:
             if file.startswith(video_id):
-                video_path = os.path.join("static/videos", file)
+                video_path = str(VIDEO_DIR / file)
                 break
 
-        # Check for existing processing results
-        whisper_transcript_path = f"static/transcripts/{video_id}_whisper.json"
+        whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
-        
-        scenes_path = f"static/scenes/{video_id}.json"
+
+        scenes_path = str(SCENES_DIR / f"{video_id}.json")
         has_scenes = os.path.exists(scenes_path)
         
         # Load existing scenes if available
@@ -265,7 +252,7 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
                 print(f"Error loading existing scenes: {e}")
         
         # Check if transcript is being generated
-        progress_file = f"static/transcripts/{video_id}_whisper_progress.txt"
+        progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
         transcript_in_progress = os.path.exists(progress_file)
         
         # Load existing transcript if available
@@ -285,8 +272,7 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
                 if youtube_transcript:
                     transcript_to_use = youtube_transcript
                     has_youtube_transcript = True
-                    # Save YouTube transcript
-                    with open(f"static/transcripts/{video_id}_youtube.json", 'w') as f:
+                    with open(str(TRANSCRIPTS_DIR / f"{video_id}_youtube.json"), 'w') as f:
                         json.dump(youtube_transcript, f)
             except Exception as e:
                 print(f"Error getting YouTube transcript: {e}")

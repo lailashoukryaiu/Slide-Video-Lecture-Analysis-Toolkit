@@ -8,6 +8,8 @@ import threading
 from ultralytics import YOLO
 import asyncio
 
+from project_paths import resolve_model_path, FULLSIZE_IMAGES_DIR, SCENES_DIR
+
 # Import Surya for OCR
 try:
     from surya.recognition import RecognitionPredictor
@@ -27,12 +29,16 @@ class OCRProcessor:
     def initialize_models(cls):
         global SURYA_AVAILABLE
         """Initialize shared models if not already initialized."""
+        model_path = resolve_model_path()
         if cls.yolo_model is None:
-            try:
-                cls.yolo_model = YOLO("slide-model.pt")
-            except Exception as e:
-                print(f"Warning: Failed to load YOLOv8 model: {str(e)}")
-        
+            if not model_path.exists():
+                print(f"Warning: YOLO model not found at {model_path}. OCR detection will be unavailable until the model is added.")
+            else:
+                try:
+                    cls.yolo_model = YOLO(str(model_path))
+                except Exception as e:
+                    print(f"Warning: Failed to load YOLOv8 model: {str(e)}")
+
         if SURYA_AVAILABLE and cls.surya_recognition_predictor is None:
             try:
                 cls.surya_recognition_predictor = RecognitionPredictor()
@@ -51,7 +57,11 @@ class OCRProcessor:
         self.video_ocr_tasks = {}
         self.video_surya_tasks = {}
         self.send_sse_update = send_sse_update
-        self.loop = asyncio.get_event_loop()
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
         
         # Task tracking
         self.yolo_tasks_total = 0
@@ -250,8 +260,8 @@ class OCRProcessor:
         """Queue OCR tasks for text detections."""
         video_id = os.path.splitext(os.path.basename(scene_path))[0]
         scene = scenes[scene_index]
-        image_path = f"static/fullsize_images/{video_id}/{scene_index}.jpg"
-        
+        image_path = str(FULLSIZE_IMAGES_DIR / video_id / f"{scene_index}.jpg")
+
         has_text_detections = False
         for detection_index, detection in enumerate(scene["yolo_detections"]["detections"]):
             if detection.get("needs_ocr"):
@@ -595,7 +605,7 @@ class OCRProcessor:
 
     async def get_ocr_text(self, video_id: str):
         """Get all OCR text from a video's scenes."""
-        scene_path = f"static/scenes/{video_id}.json"
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
             return JSONResponse({
                 "success": False,
@@ -681,25 +691,25 @@ class OCRProcessor:
                 "success": False,
                 "error": "Surya OCR is not available"
             })
-        
-        scene_path = f"static/scenes/{video_id}.json"
+
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
             return JSONResponse({
                 "success": False,
                 "error": "Scene data not found"
             })
-        
+
         try:
             with open(scene_path, 'r') as f:
                 scenes = json.load(f)
-            
+
             surya_tasks = []
             for i, scene in enumerate(scenes):
                 if "fullsize" in scene:
-                    image_path = f"static/fullsize_images/{video_id}/{i}.jpg"
+                    image_path = str(FULLSIZE_IMAGES_DIR / video_id / f"{i}.jpg")
                     if os.path.exists(image_path):
                         surya_tasks.append((i, image_path))
-            
+
             if surya_tasks:
                 self.ocr_queue.put((video_id, surya_tasks, scene_path, "surya_batch"))
             

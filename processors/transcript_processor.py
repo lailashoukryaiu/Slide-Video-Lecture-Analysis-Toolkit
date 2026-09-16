@@ -3,6 +3,7 @@ import json
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
 from transcribe import transcribe_audio
+from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
 
 class TranscriptProcessor:
     def __init__(self):
@@ -16,7 +17,7 @@ class TranscriptProcessor:
                 "error": "Invalid source. Must be 'youtube' or 'whisper'."
             })
         
-        transcript_path = f"static/transcripts/{video_id}_{source}.json"
+        transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_{source}.json")
         if not os.path.exists(transcript_path):
             # If transcript doesn't exist and source is youtube, try to fetch it
             if source == "youtube":
@@ -74,7 +75,7 @@ class TranscriptProcessor:
             formatted_transcript = self.format_youtube_transcript(transcript)
             
             # Save transcript for future use
-            with open(f"static/transcripts/{video_id}_youtube.json", 'w') as f:
+            with open(str(TRANSCRIPTS_DIR / f"{video_id}_youtube.json"), 'w') as f:
                 json.dump(formatted_transcript, f)
             
             return formatted_transcript, None
@@ -85,11 +86,11 @@ class TranscriptProcessor:
         """Generate a transcript using Whisper."""
         try:
             # Check if video exists
-            video_files = os.listdir("static/videos")
+            video_files = os.listdir(VIDEO_DIR)
             video_path = None
             for file in video_files:
                 if file.startswith(video_id):
-                    video_path = os.path.join("static/videos", file)
+                    video_path = str(VIDEO_DIR / file)
                     break
             
             if not video_path:
@@ -98,8 +99,8 @@ class TranscriptProcessor:
                     "error": "Video not found"
                 })
             
-            output_path = f"static/transcripts/{video_id}_whisper.json"
-            
+            output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+
             # Check if transcript already exists
             if os.path.exists(output_path):
                 with open(output_path, 'r') as f:
@@ -127,10 +128,10 @@ class TranscriptProcessor:
 
     async def start_whisper_generation(self, video_id: str, video_path: str, background_tasks):
         """Start Whisper transcript generation."""
-        output_path = f"static/transcripts/{video_id}_whisper.json"
-        
+        output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+
         # Create progress file
-        with open(f"static/transcripts/{video_id}_whisper_progress.txt", 'w') as f:
+        with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"), 'w') as f:
             f.write("0")
         
         # Start background task
@@ -142,63 +143,53 @@ class TranscriptProcessor:
             transcript = []
             
             for sentence_data, progress in transcribe_audio(video_path):
-                # Parse SRT format
                 lines = sentence_data.strip().split('\n')
                 i = 0
                 while i < len(lines):
                     if i + 2 < len(lines) and '-->' in lines[i+1]:
-                        # Extract timestamp
                         timestamp_line = lines[i+1]
                         start_time = timestamp_line.split(' --> ')[0].strip()
                         end_time = timestamp_line.split(' --> ')[1].strip()
-                        
-                        # Convert timestamp to seconds
+
                         h, m, s = start_time.split(':')
                         s, ms = s.split(',')
                         start_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
-                        
+
                         h, m, s = end_time.split(':')
                         s, ms = s.split(',')
                         end_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
-                        
-                        # Extract text
+
                         text = lines[i+2].strip()
-                        
-                        # Add to transcript
                         transcript.append({
                             "text": text,
                             "start": start_seconds,
                             "duration": end_seconds - start_seconds
                         })
-                        
+
                         i += 4
                     else:
                         i += 1
-                
-                # Update progress
-                with open(f"static/transcripts/{video_id}_whisper_progress.txt", 'w') as f:
+
+                progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
+                with open(progress_file, 'w') as f:
                     f.write(str(progress))
-            
-            # Save complete transcript
+
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
-            
-            # Remove progress file
-            progress_file = f"static/transcripts/{video_id}_whisper_progress.txt"
+
+            progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_file):
                 os.remove(progress_file)
-                
+
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
-            # Save error
-            with open(f"static/transcripts/{video_id}_whisper_error.txt", 'w') as f:
+            with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                 f.write(str(e))
 
     async def get_whisper_status(self, video_id: str):
         """Check the status of Whisper transcript generation."""
         try:
-            # Check if transcript exists
-            transcript_path = f"static/transcripts/{video_id}_whisper.json"
+            transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
             if os.path.exists(transcript_path):
                 with open(transcript_path, 'r') as f:
                     transcript = json.load(f)
@@ -207,9 +198,8 @@ class TranscriptProcessor:
                     "status": "complete",
                     "transcript": transcript
                 })
-            
-            # Check if error occurred
-            error_path = f"static/transcripts/{video_id}_whisper_error.txt"
+
+            error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
             if os.path.exists(error_path):
                 with open(error_path, 'r') as f:
                     error = f.read()
@@ -218,9 +208,8 @@ class TranscriptProcessor:
                     "status": "error",
                     "error": error
                 })
-            
-            # Check progress
-            progress_path = f"static/transcripts/{video_id}_whisper_progress.txt"
+
+            progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_path):
                 with open(progress_path, 'r') as f:
                     progress = float(f.read())
@@ -229,13 +218,12 @@ class TranscriptProcessor:
                     "status": "in_progress",
                     "progress": progress
                 })
-            
-            # If no files exist, it's probably queued
+
             return JSONResponse({
                 "success": True,
                 "status": "queued"
             })
-            
+
         except Exception as e:
             return JSONResponse({
                 "success": False,

@@ -4,9 +4,12 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pathlib import Path
 import re
 import json
+
+from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR
+
 class VideoProcessor:
     def __init__(self):
-        self.video_dir = "static/videos"
+        self.video_dir = str(VIDEO_DIR)
 
     def get_video_path(self, video_id: str) -> str:
         """Get the path of a video file by its ID."""
@@ -21,11 +24,10 @@ class VideoProcessor:
         transcript_processor = TranscriptProcessor()
         scene_processor = SceneProcessor()
         
-        # Check for existing processing results
-        whisper_transcript_path = f"static/transcripts/{video_hash}_whisper.json"
+        whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_hash}_whisper.json")
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
-        
-        scenes_path = f"static/scenes/{video_hash}.json"
+
+        scenes_path = str(SCENES_DIR / f"{video_hash}.json")
         has_scenes = os.path.exists(scenes_path)
         
         # Load existing scenes if available
@@ -37,8 +39,7 @@ class VideoProcessor:
             except Exception as e:
                 print(f"Error loading existing scenes: {e}")
         
-        # Check if transcript is being generated
-        progress_file = f"static/transcripts/{video_hash}_whisper_progress.txt"
+        progress_file = str(TRANSCRIPTS_DIR / f"{video_hash}_whisper_progress.txt")
         transcript_in_progress = os.path.exists(progress_file)
         
         # Load existing transcript if available
@@ -96,13 +97,8 @@ class VideoProcessor:
         scene_processor = SceneProcessor()
         embedding_processor = EmbeddingProcessor()
         
-        # Start Whisper transcript generation 
-        # await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
+        await transcript_processor.process_whisper_transcript(video_hash, video_path, str(TRANSCRIPTS_DIR / f"{video_hash}_whisper.json"))
 
-        await transcript_processor.process_whisper_transcript(video_hash, video_path, f"static/transcripts/{video_hash}_whisper.json")
-        
-        # Start scene detection
-        # await scene_processor.start_scene_detection(video_hash, video_path, background_tasks)
         await scene_processor.run_scene_detection(video_hash, video_path)
         
         # Start embeddings processing

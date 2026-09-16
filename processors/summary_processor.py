@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+from project_paths import SUMMARIES_DIR
+
 class SummaryProcessor:
     def __init__(self):
         # Initialize Gemini API
@@ -68,9 +70,8 @@ Format each chapter exactly like this example:
             if isinstance(chapters, list) and isinstance(chapters[0], list):
                 chapters = [item for sublist in chapters for item in sublist]
 
-            # Save chapters to file if video_id is provided
             if video_id:
-                summary_path = f"static/summaries/{video_id}.json"
+                summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
                 with open(summary_path, 'w') as f:
                     json.dump(chapters, f)
 
@@ -87,7 +88,7 @@ Format each chapter exactly like this example:
 
     async def get_summary(self, video_id: str):
         """Get saved chapter summary for a video."""
-        summary_path = f"static/summaries/{video_id}.json"
+        summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
         if os.path.exists(summary_path):
             try:
                 with open(summary_path, 'r') as f:

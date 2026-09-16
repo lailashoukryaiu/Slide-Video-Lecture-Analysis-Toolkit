@@ -5,13 +5,15 @@ from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+from project_paths import SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR
+
 class SceneProcessor:
     def __init__(self):
         self.executor = ThreadPoolExecutor(max_workers=2)
 
     async def get_scenes(self, video_id: str):
         """Get scenes for a video."""
-        scene_path = f"static/scenes/{video_id}.json"
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
         if os.path.exists(scene_path):
             try:
                 with open(scene_path, 'r') as f:
@@ -35,7 +37,7 @@ class SceneProcessor:
 
     async def get_scene_detections(self, video_id: str, scene_index: int):
         """Get detection data for a specific scene."""
-        scene_path = f"static/scenes/{video_id}.json"
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
             return JSONResponse({
                 "success": False,
@@ -73,9 +75,8 @@ class SceneProcessor:
         """Run scene detection and save results."""
         try:
             scenes = await self.detect_scenes(video_path)
-            
-            # Save scenes to file
-            scene_path = f"static/scenes/{video_id}.json"
+
+            scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
                 json.dump(scenes, f)
                 
@@ -117,15 +118,13 @@ class SceneProcessor:
             scenes = scene_manager.get_scene_list()
             print(f"Detected {len(scenes)} scenes")
             
-            # Convert scene cuts to timestamps and generate thumbnails
             scene_changes = []
             cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             video_id = os.path.splitext(os.path.basename(video_path))[0]
-            
-            # Create video-specific folders
-            video_thumbnails_dir = f"static/thumbnails/{video_id}"
-            video_fullsize_dir = f"static/fullsize_images/{video_id}"
+
+            video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
+            video_fullsize_dir = str(FULLSIZE_IMAGES_DIR / video_id)
             os.makedirs(video_thumbnails_dir, exist_ok=True)
             os.makedirs(video_fullsize_dir, exist_ok=True)
             
@@ -178,28 +177,26 @@ class SceneProcessor:
     async def process_scene_images(self, video_id: str):
         """Queue scene images for YOLO processing and wait for completion."""
         from .ocr_processor import OCRProcessor
-        
-        scene_path = f"static/scenes/{video_id}.json"
+
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
             return
-        
+
         try:
             with open(scene_path, 'r') as f:
                 scenes = json.load(f)
-            
+
             ocr_processor = OCRProcessor()
-            
-            # Queue each scene image for processing
+
             for i, scene in enumerate(scenes):
                 if "fullsize" in scene:
-                    image_path = f"static/fullsize_images/{video_id}/{i}.jpg"
+                    image_path = str(FULLSIZE_IMAGES_DIR / video_id / f"{i}.jpg")
                     if os.path.exists(image_path):
                         await ocr_processor.queue_yolo_task(video_id, i, image_path, scene_path)
                         print(f"Queued image {image_path} for YOLO processing")
-            
-            # Wait for all YOLO and OCR tasks to complete
+
             await ocr_processor.wait_for_completion()
             print(f"Completed YOLO and OCR processing for video {video_id}")
-                
+
         except Exception as e:
-            print(f"Error processing scene images: {str(e)}") 
+            print(f"Error processing scene images: {str(e)}")

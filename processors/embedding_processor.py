@@ -7,6 +7,7 @@ from embeddings import (
     find_transcript_for_ocr,
     find_scene_for_transcript
 )
+from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR
 
 class EmbeddingProcessor:
     def __init__(self):
@@ -15,24 +16,21 @@ class EmbeddingProcessor:
     async def compute_embeddings(self, video_id: str, background_tasks):
         """Compute transcript-OCR embeddings and relationships for a video."""
         try:
-            # Check if video exists
-            video_files = os.listdir("static/videos")
+            video_files = os.listdir(VIDEO_DIR)
             if not any(f.startswith(video_id) for f in video_files):
                 return JSONResponse({
                     "success": False,
                     "error": "Video not found"
                 })
-            
-            # Check if transcript exists
-            transcript_files = os.listdir("static/transcripts")
+
+            transcript_files = os.listdir(TRANSCRIPTS_DIR)
             if not any(f.startswith(video_id) for f in transcript_files):
                 return JSONResponse({
                     "success": False,
                     "error": "No transcript found"
                 })
-            
-            # Check if scenes exist
-            scenes_path = f"static/scenes/{video_id}.json"
+
+            scenes_path = str(SCENES_DIR / f"{video_id}.json")
             if not os.path.exists(scenes_path):
                 return JSONResponse({
                     "success": False,
@@ -57,34 +55,30 @@ class EmbeddingProcessor:
     async def process_embeddings(self, video_id: str):
         """Process embeddings in the background."""
         try:
-            # Save initial progress
-            with open(f"static/transcripts/{video_id}_embeddings_progress.txt", 'w') as f:
+            progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings_progress.txt")
+            with open(progress_path, 'w') as f:
                 f.write("0")
-            
-            # Update progress to 10%
-            with open(f"static/transcripts/{video_id}_embeddings_progress.txt", 'w') as f:
+
+            with open(progress_path, 'w') as f:
                 f.write("10")
-            
-            # Compute embeddings and relationships
+
             result = build_transcript_ocr_relationships(video_id)
-            
-            # Update progress to 100%
-            with open(f"static/transcripts/{video_id}_embeddings_progress.txt", 'w') as f:
+
+            with open(progress_path, 'w') as f:
                 f.write("100")
-            
+
             print(f"Completed embedding computation for video {video_id}")
-            
+
         except Exception as e:
             print(f"Error computing embeddings: {str(e)}")
-            # Save error
-            with open(f"static/transcripts/{video_id}_embeddings_error.txt", 'w') as f:
+            with open(str(TRANSCRIPTS_DIR / f"{video_id}_embeddings_error.txt"), 'w') as f:
                 f.write(str(e))
 
     async def get_status(self, video_id: str):
         """Get the status of embeddings computation."""
-        error_file = f"static/transcripts/{video_id}_embeddings_error.txt"
-        progress_file = f"static/transcripts/{video_id}_embeddings_progress.txt"
-        completed_file = f"static/transcripts/{video_id}_embeddings.json"
+        error_file = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings_error.txt")
+        progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings_progress.txt")
+        completed_file = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
         
         if os.path.exists(error_file):
             with open(error_file, 'r') as f:
@@ -117,8 +111,8 @@ class EmbeddingProcessor:
 
     async def get_relationships(self, video_id: str):
         """Get the computed relationships between transcript and OCR."""
-        embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
-        
+        embeddings_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
+
         if os.path.exists(embeddings_path):
             with open(embeddings_path, 'r') as f:
                 data = json.load(f)

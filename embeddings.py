@@ -6,6 +6,8 @@ import faiss
 from typing import List, Dict, Tuple, Any, Optional, Union
 import threading
 
+from project_paths import TRANSCRIPTS_DIR, SCENES_DIR
+
 # Global variables
 model = None
 model_lock = threading.Lock()
@@ -98,10 +100,10 @@ def build_transcript_ocr_relationships(video_id: str) -> Dict:
         Dictionary with relationship data
     """
     # Paths to transcript and scene files
-    youtube_transcript_path = f"static/transcripts/{video_id}.json"
-    whisper_transcript_path = f"static/transcripts/{video_id}_whisper.json"
-    scenes_path = f"static/scenes/{video_id}.json"
-    embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
+    youtube_transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}.json")
+    whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+    scenes_path = str(SCENES_DIR / f"{video_id}.json")
+    embeddings_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
     
     # Check if embeddings file already exists
     # if os.path.exists(embeddings_path):
@@ -303,8 +305,8 @@ def find_ocr_text_for_transcript(video_id: str, transcript_index: int) -> List[D
     Returns:
         List of related OCR text items
     """
-    embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
-    
+    embeddings_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
+
     if not os.path.exists(embeddings_path):
         # Build relationships if they don't exist
         build_transcript_ocr_relationships(video_id)
@@ -348,8 +350,8 @@ def find_transcript_for_ocr(video_id: str, scene_index: int, ocr_text: str) -> L
     Returns:
         List of related transcript sentences
     """
-    embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
-    
+    embeddings_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
+
     if not os.path.exists(embeddings_path):
         # Build relationships if they don't exist
         build_transcript_ocr_relationships(video_id)
@@ -391,10 +393,9 @@ def find_scene_for_transcript(video_id: str, transcript_index: int) -> List[int]
     Returns:
         List of scene indices
     """
-    # Get transcript time
-    embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
-    scenes_path = f"static/scenes/{video_id}.json"
-    
+    embeddings_path = str(TRANSCRIPTS_DIR / f"{video_id}_embeddings.json")
+    scenes_path = str(SCENES_DIR / f"{video_id}.json")
+
     if not os.path.exists(embeddings_path) or not os.path.exists(scenes_path):
         return []
     
