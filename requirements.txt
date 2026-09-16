@@ -4,7 +4,7 @@ yt-dlp
 youtube-transcript-api
 python-multipart
 jinja2
-google-generativeai
+google-genai
 python-dotenv
 scenedetect
 opencv-python

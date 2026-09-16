@@ -98,7 +98,8 @@ def build_transcript_ocr_relationships(video_id: str) -> Dict:
         Dictionary with relationship data
     """
     # Paths to transcript and scene files
-    youtube_transcript_path = f"static/transcripts/{video_id}.json"
+    youtube_transcript_path = f"static/transcripts/{video_id}_youtube.json"
+    legacy_youtube_transcript_path = f"static/transcripts/{video_id}.json"
     whisper_transcript_path = f"static/transcripts/{video_id}_whisper.json"
     scenes_path = f"static/scenes/{video_id}.json"
     embeddings_path = f"static/transcripts/{video_id}_embeddings.json"
@@ -115,6 +116,9 @@ def build_transcript_ocr_relationships(video_id: str) -> Dict:
             transcript = json.load(f)
     elif os.path.exists(youtube_transcript_path):
         with open(youtube_transcript_path, 'r') as f:
+            transcript = json.load(f)
+    elif os.path.exists(legacy_youtube_transcript_path):
+        with open(legacy_youtube_transcript_path, 'r') as f:
             transcript = json.load(f)
     else:
         return {"success": False, "error": "No transcript available"}

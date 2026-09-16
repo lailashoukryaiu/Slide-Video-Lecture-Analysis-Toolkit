@@ -141,15 +141,17 @@ async def get_scene_detections(video_id: str, scene_index: int):
 
 @app.get("/thumbnails/{video_id}/{filename}")
 async def get_thumbnail(video_id: str, filename: str):
-    thumbnail_path = f"static/thumbnails/{video_id}/{filename}"
-    if not os.path.exists(thumbnail_path):
+    base_dir = Path("static/thumbnails").resolve()
+    thumbnail_path = (base_dir / video_id / filename).resolve()
+    if not thumbnail_path.is_relative_to(base_dir) or not thumbnail_path.is_file():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     return FileResponse(thumbnail_path)
 
 @app.get("/fullsize_images/{video_id}/{filename}")
 async def get_fullsize_image(video_id: str, filename: str):
-    image_path = f"static/fullsize_images/{video_id}/{filename}"
-    if not os.path.exists(image_path):
+    base_dir = Path("static/fullsize_images").resolve()
+    image_path = (base_dir / video_id / filename).resolve()
+    if not image_path.is_relative_to(base_dir) or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path)
 
@@ -256,7 +258,7 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
         video_path = f"static/videos/{video_id}.mp4"
         if not glob.glob(f"static/videos/{video_id}.*"):
             ydl_opts = {
-                'format': 'bestvideo[height<=720][vcodec=vp9]+bestaudio/best[vcodec=vp9]',  # 720p, no AV1
+                'format': 'bestvideo[height<=720][vcodec^=vp9]+bestaudio/bestvideo[height<=720]+bestaudio/best',
                 'outtmpl': f'static/videos/{video_id}.%(ext)s',
                 'merge_output_format': 'mp4',  # Ensure the final output is MP4
             }

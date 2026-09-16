@@ -96,17 +96,11 @@ class VideoProcessor:
         scene_processor = SceneProcessor()
         embedding_processor = EmbeddingProcessor()
         
-        # Start Whisper transcript generation 
-        # await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
-
-        await transcript_processor.process_whisper_transcript(video_hash, video_path, f"static/transcripts/{video_hash}_whisper.json")
+        # Start Whisper transcript generation in the background
+        await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
         
-        # Start scene detection
-        # await scene_processor.start_scene_detection(video_hash, video_path, background_tasks)
-        await scene_processor.run_scene_detection(video_hash, video_path)
-        
-        # Start embeddings processing
-        await embedding_processor.compute_embeddings(video_hash, background_tasks)
+        # Start scene detection in the background
+        await scene_processor.start_scene_detection(video_hash, video_path, background_tasks)
         
         return JSONResponse({
             "success": True,

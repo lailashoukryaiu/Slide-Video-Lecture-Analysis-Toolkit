@@ -23,7 +23,7 @@ class SummaryProcessor:
                 raise ValueError("GOOGLE_API_KEY is not configured")
 
             self.client = genai.Client(api_key=GOOGLE_API_KEY)
-            self.model_name = "gemini-3.6-flash"
+            self.model_name = "gemini-3.8-flash"
             self.model = True
         except Exception as e:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
