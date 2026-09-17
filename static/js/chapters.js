@@ -44,12 +44,10 @@ export async function exportChapters() {
  */
 export async function generateChapters() {
     const generateSummaryBtn = elements.generateSummaryBtn;
-    const chaptersContainer = elements.chaptersContainer;
     
     generateSummaryBtn.disabled = true;
     generateSummaryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
     setSummaryStatus('generating', '<i class="fas fa-spinner fa-spin"></i> Generating summary and chapters. This may take a minute...');
-    chaptersContainer.querySelectorAll(':scope > p').forEach(element => element.remove());
     showError('');
 
     try {
@@ -78,10 +76,13 @@ export async function generateChapters() {
         setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
-        chaptersContainer.innerHTML = '<p>Failed to generate summary. Please try again.</p>';
+        const isModelError = /gemini|model|429|404|quota|overload|unavailable|high demand/i.test(error.message);
+        const statusMessage = isModelError
+            ? '<i class="fas fa-exclamation-circle"></i> Gemini is currently unavailable or busy. Your existing chapters were kept. Please retry later.'
+            : '<i class="fas fa-exclamation-circle"></i> Summary generation failed. Your existing chapters were kept. You can retry without reloading the video.';
         const status = setSummaryStatus(
             'error',
-            '<i class="fas fa-exclamation-circle"></i> Summary generation failed. You can retry without reloading the video.'
+            statusMessage
         );
         const retryButton = document.createElement('button');
         retryButton.type = 'button';
