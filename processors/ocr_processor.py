@@ -704,18 +704,32 @@ class OCRProcessor:
                 scenes = json.load(f)
 
             surya_tasks = []
-            for i, scene in enumerate(scenes):
-                if "fullsize" in scene:
-                    image_path = str(FULLSIZE_IMAGES_DIR / video_id / f"{i}.jpg")
-                    if os.path.exists(image_path):
-                        surya_tasks.append((i, image_path))
+            image_dir = FULLSIZE_IMAGES_DIR / video_id
+            for scene_index in range(len(scenes)):
+                image_path = image_dir / f"{scene_index}.jpg"
+                if image_path.is_file():
+                    surya_tasks.append((scene_index, str(image_path)))
 
-            if surya_tasks:
-                self.ocr_queue.put((video_id, surya_tasks, scene_path, "surya_batch"))
+            if not surya_tasks:
+                return JSONResponse({
+                    "success": False,
+                    "error": (
+                        "No scene images are available for Surya OCR. "
+                        "Wait for scene processing to finish and try again."
+                    ),
+                    "queued": 0,
+                    "scene_count": len(scenes),
+                    "image_directory": str(image_dir)
+                })
+
+            with self.task_lock:
+                self.ocr_tasks_total += len(surya_tasks)
+            self.ocr_queue.put((video_id, surya_tasks, scene_path, "surya_batch"))
             
             return JSONResponse({
                 "success": True,
-                "message": f"Queued {len(surya_tasks)} images for Surya OCR processing"
+                "message": f"Queued {len(surya_tasks)} images for Surya OCR processing",
+                "queued": len(surya_tasks)
             })
             
         except Exception as e:
