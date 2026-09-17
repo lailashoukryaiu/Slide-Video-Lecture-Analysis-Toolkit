@@ -36,6 +36,16 @@ export const state = {
     transcript_to_ocr: {}  // Map for quick lookup: transcript_index -> OCR matches
 };
 
+// Register file selection before the rest of the UI initializes.
+window.addEventListener('video-file-selected', (event) => {
+    const file = event.detail;
+    if (file) {
+        processVideoUpload(file).catch((error) => {
+            showError(`Error uploading video: ${error.message}`);
+        });
+    }
+});
+
 /**
  * Navigates to the next detected slide/scene
  */
@@ -181,10 +191,6 @@ function setupKeyboardControls() {
 function initApp() {
     // Wire the core video controls before optional analysis features initialize.
     elements.loadVideoBtn.addEventListener('click', processVideo);
-    window.addEventListener('video-file-selected', (event) => {
-        const file = event.detail;
-        if (file) processVideoUpload(file);
-    });
     elements.detectScenesBtn.addEventListener('click', detectScenes);
 
     // Check YOLO status when the page loads
