@@ -121,6 +121,8 @@ class SceneProcessor:
             scene_changes = []
             cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            duration_seconds = frame_count / fps if fps > 0 else 0
             video_id = os.path.splitext(os.path.basename(video_path))[0]
 
             video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
@@ -128,8 +130,13 @@ class SceneProcessor:
             os.makedirs(video_thumbnails_dir, exist_ok=True)
             os.makedirs(video_fullsize_dir, exist_ok=True)
             
-            for i, scene in enumerate(scenes):
-                timestamp = scene[0].get_seconds()
+            # A video without detected cuts is still one processable scene.
+            timestamps = (
+                [scene[0].get_seconds() for scene in scenes]
+                if scenes else [0.0]
+            )
+
+            for i, timestamp in enumerate(timestamps):
                 minutes = int(timestamp // 60)
                 seconds = int(timestamp % 60)
                 
@@ -163,6 +170,11 @@ class SceneProcessor:
                 scene_changes.append({
                     "timestamp": f"{minutes:02d}:{seconds:02d}",
                     "time_seconds": timestamp,
+                    "duration": (
+                        timestamps[i + 1] - timestamp
+                        if i + 1 < len(timestamps)
+                        else max(0, duration_seconds - timestamp)
+                    ),
                     "thumbnail": f"/thumbnails/{video_id}/{i}.jpg",
                     "fullsize": f"/fullsize_images/{video_id}/{i}.jpg"
                 })
