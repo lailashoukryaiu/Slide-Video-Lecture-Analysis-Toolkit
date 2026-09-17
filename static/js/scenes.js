@@ -48,7 +48,7 @@ export async function checkSceneDetection(videoId) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
                 elements.detectScenesBtn.disabled = false;
-                elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
+                elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
                 
                 // Continue checking for YOLO detections
                 startDetectionPolling(videoId);
@@ -71,7 +71,7 @@ export async function checkSceneDetection(videoId) {
         }
         elements.scenesContainer.innerHTML = `<p>Scene processing failed: ${error.message}</p><p>Please check the server log and try again.</p>`;
         elements.detectScenesBtn.disabled = false;
-        elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
+        elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
         showError(`Error checking scene detection: ${error.message}`);
     }
 }

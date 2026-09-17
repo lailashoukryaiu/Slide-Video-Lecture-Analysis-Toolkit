@@ -48,9 +48,6 @@
                     onclick="document.getElementById('videoFile').click()">
                 <i class="fas fa-upload"></i> Upload Video
             </button>
-            <button id="detectScenesBtn" class="btn btn-secondary" disabled>
-                <i class="fas fa-film"></i> Detect Scenes
-            </button>
             <button id="settingsBtn" class="btn btn-secondary">
                 <i class="fas fa-cog"></i> Settings
             </button>
@@ -86,7 +83,7 @@
                                 <input type="checkbox" id="sceneToggle" checked>
                                 <span class="toggle-slider"></span>
                             </label>
-                            <span>Show Scene Changes</span>
+                            <span>Show Slide Changes</span>
                         </div>
                     </div>
                     <div class="timeline" id="thumbnailTimeline">
@@ -105,7 +102,7 @@
                         <i class="fas fa-bookmark"></i> Chapters
                     </button>
                     <button class="tab-btn" data-tab="scenes">
-                        <i class="fas fa-film"></i> Scene Changes
+                        <i class="fas fa-film"></i> Slide Changes
                     </button>
                     <button class="tab-btn" data-tab="slides">
                         <i class="fas fa-file-alt"></i> Slide Content
@@ -115,20 +112,6 @@
                 <div class="tab-content">
                     <div class="tab-pane active" id="transcript-tab">
                         <div class="controls-bar">
-                            <button id="generateSummaryBtn" class="btn btn-accent" disabled>
-                                <i class="fas fa-magic"></i> Generate Summary
-                            </button>
-                            <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
-                                <i class="fas fa-download"></i> Export Chapters
-                            </button>
-                            <label class="interval-export-option">
-                                <input type="checkbox" id="intervalExportToggle">
-                                Use fixed intervals
-                            </label>
-                            <label class="interval-duration-label" for="intervalDuration">
-                                Minutes:
-                                <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
-                            </label>
                             <div class="search-container">
                                 <div class="search-input-wrapper">
                                     <input type="text" id="transcriptSearch" class="search-input" placeholder="Search transcript...">
@@ -168,6 +151,22 @@
                     </div>
                     
                     <div class="tab-pane" id="chapters-tab">
+                        <div class="controls-bar chapter-controls">
+                            <button id="generateSummaryBtn" class="btn btn-accent" disabled>
+                                <i class="fas fa-magic"></i> Generate Summary
+                            </button>
+                            <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
+                                <i class="fas fa-download"></i> Export Chapters
+                            </button>
+                            <label class="interval-export-option">
+                                <input type="checkbox" id="intervalExportToggle">
+                                Use fixed intervals
+                            </label>
+                            <label class="interval-duration-label" for="intervalDuration">
+                                Minutes:
+                                <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
+                            </label>
+                        </div>
                         <div class="tab-body" id="chaptersContainer">
                             <div id="summaryStatus" class="summary-status" role="status" aria-live="polite"></div>
                             <p>Click "Generate Summary" to create chapter markers from the transcript.</p>
@@ -175,6 +174,11 @@
                     </div>
                     
                     <div class="tab-pane" id="scenes-tab">
+                        <div class="controls-bar">
+                            <button id="detectScenesBtn" class="btn btn-secondary" disabled>
+                                <i class="fas fa-film"></i> Detect Slides
+                            </button>
+                        </div>
                         <div class="tab-body" id="scenesContainer">
                             <!-- Scene markers will be added here -->
                         </div>

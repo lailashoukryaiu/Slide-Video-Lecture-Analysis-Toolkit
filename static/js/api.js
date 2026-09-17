@@ -199,7 +199,7 @@ export async function processVideo() {
             elements.generateSummaryBtn.disabled = true;
         }
 
-        elements.scenesContainer.innerHTML = '<p>Click "Detect Scenes" to analyze this video.</p>';
+        elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
 
     } catch (error) {
         showError(`Error: ${error.message}`);
@@ -351,7 +351,7 @@ export async function processVideoUpload(file) {
                 'Video ready. No transcript is available.';
         }
         
-        elements.scenesContainer.innerHTML = '<p>Click "Detect Scenes" to analyze this video.</p>';
+        elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
 
     } catch (error) {
         showError(`Error: ${error.message}`);
@@ -366,7 +366,7 @@ export async function detectScenes() {
     if (!videoId) return;
     const button = elements.detectScenesBtn;
     button.disabled = true;
-    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting...';
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting Slides...';
     state.sceneDetectionStartedAt = Date.now();
     elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
     try {
@@ -384,7 +384,7 @@ export async function detectScenes() {
     } catch (error) {
         showError(`Error detecting scenes: ${error.message}`);
         button.disabled = false;
-        button.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
+        button.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
     }
 }
 
