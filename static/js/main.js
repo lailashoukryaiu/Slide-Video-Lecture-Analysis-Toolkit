@@ -179,6 +179,15 @@ function setupKeyboardControls() {
 
 // Initialize the application
 function initApp() {
+    // Wire the core video controls before optional analysis features initialize.
+    elements.loadVideoBtn.addEventListener('click', processVideo);
+    elements.uploadVideoBtn.addEventListener('click', () => elements.videoFile.click());
+    elements.videoFile.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) processVideoUpload(file);
+    });
+    elements.detectScenesBtn.addEventListener('click', detectScenes);
+
     // Check YOLO status when the page loads
     checkYoloStatus();
     
@@ -199,17 +208,6 @@ function initApp() {
     console.log('Interactive layer initialized');
     
     // Add event listeners
-    elements.loadVideoBtn.addEventListener('click', processVideo);
-    elements.uploadVideoBtn.addEventListener('click', () => {
-        elements.videoFile.click();
-    });
-    elements.detectScenesBtn.addEventListener('click', detectScenes);
-    elements.videoFile.addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            processVideoUpload(file);
-        }
-    });
     elements.generateSummaryBtn.addEventListener('click', generateChapters);
     elements.exportChaptersBtn.addEventListener('click', exportChapters);
     elements.intervalExportToggle.addEventListener('change', (event) => {
