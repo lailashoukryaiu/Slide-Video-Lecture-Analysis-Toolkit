@@ -78,8 +78,17 @@ export async function generateChapters() {
         setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
-        setSummaryStatus('error', '<i class="fas fa-exclamation-circle"></i> Summary generation failed.');
         chaptersContainer.innerHTML = '<p>Failed to generate summary. Please try again.</p>';
+        const status = setSummaryStatus(
+            'error',
+            '<i class="fas fa-exclamation-circle"></i> Summary generation failed. You can retry without reloading the video.'
+        );
+        const retryButton = document.createElement('button');
+        retryButton.type = 'button';
+        retryButton.className = 'btn btn-secondary summary-retry-btn';
+        retryButton.innerHTML = '<i class="fas fa-redo"></i> Retry';
+        retryButton.addEventListener('click', generateChapters);
+        status.appendChild(retryButton);
     } finally {
         generateSummaryBtn.disabled = false;
         generateSummaryBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Summary';
@@ -97,6 +106,8 @@ function setSummaryStatus(state, message) {
     }
     status.className = `summary-status summary-status-${state.split(' ')[0]}`;
     status.innerHTML = message;
+    status.hidden = false;
+    return status;
 }
 
 /**

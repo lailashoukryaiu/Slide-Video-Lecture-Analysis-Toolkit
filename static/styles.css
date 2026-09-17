@@ -179,6 +179,12 @@ body {
     font-weight: 500;
 }
 
+.summary-retry-btn {
+    margin-top: 10px;
+    padding: 8px 14px;
+    font-size: 14px;
+}
+
 .summary-status-generating {
     color: #8a5a00;
     background-color: #fff8e1;
