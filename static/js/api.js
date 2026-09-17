@@ -214,6 +214,7 @@ export async function processVideo() {
 export async function processVideoUpload(file) {
     showError('');
     showLoading(true);
+    elements.loadingIndicator.querySelector('p').textContent = 'Uploading video...';
     elements.generateSummaryBtn.disabled = true;
 
     try {
@@ -229,6 +230,8 @@ export async function processVideoUpload(file) {
             body: formData
         });
 
+        elements.loadingIndicator.querySelector('p').textContent =
+            'Upload complete. Preparing video preview...';
         const data = await response.json();
 
         if (!data.success) {
@@ -252,6 +255,8 @@ export async function processVideoUpload(file) {
         // Store video ID
         state.currentVideoId = data.video_id;
         elements.detectScenesBtn.disabled = false;
+        elements.loadingIndicator.querySelector('p').textContent =
+            'Video ready. Scene detection is separate and must be started manually.';
         
         // Check if we have an existing transcript in the response
         console.log("check transcript", data.transcript)
@@ -287,6 +292,8 @@ export async function processVideoUpload(file) {
                     <p>Generating transcript with Whisper AI. This may take several minutes...</p>
                 </div>
             `;
+            elements.loadingIndicator.querySelector('p').textContent =
+                'Video ready. Generating transcript in the background...';
             
             // Start polling for transcript completion
             const checkWhisperTranscript = async () => {
@@ -340,6 +347,8 @@ export async function processVideoUpload(file) {
         else {
             elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
             elements.generateSummaryBtn.disabled = true;
+            elements.loadingIndicator.querySelector('p').textContent =
+                'Video ready. No transcript is available.';
         }
         
         elements.scenesContainer.innerHTML = '<p>Click "Detect Scenes" to analyze this video.</p>';
