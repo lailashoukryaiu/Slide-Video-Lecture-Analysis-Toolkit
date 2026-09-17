@@ -288,7 +288,13 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
 
         scenes_path = str(SCENES_DIR / f"{video_id}.json")
-        has_scenes = os.path.exists(scenes_path)
+        has_scenes = False
+        if os.path.exists(scenes_path):
+            try:
+                with open(scenes_path, 'r', encoding='utf-8') as file:
+                    has_scenes = bool(json.load(file))
+            except (OSError, json.JSONDecodeError):
+                has_scenes = False
         
         # Load existing scenes if available
         existing_scenes = []
