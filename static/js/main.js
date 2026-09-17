@@ -181,9 +181,8 @@ function setupKeyboardControls() {
 function initApp() {
     // Wire the core video controls before optional analysis features initialize.
     elements.loadVideoBtn.addEventListener('click', processVideo);
-    elements.uploadVideoBtn.addEventListener('click', () => elements.videoFile.click());
-    elements.videoFile.addEventListener('change', (event) => {
-        const file = event.target.files[0];
+    window.addEventListener('video-file-selected', (event) => {
+        const file = event.detail;
         if (file) processVideoUpload(file);
     });
     elements.detectScenesBtn.addEventListener('click', detectScenes);

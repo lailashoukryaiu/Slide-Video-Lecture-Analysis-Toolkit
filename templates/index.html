@@ -42,8 +42,9 @@
             <button id="loadVideoBtn" class="btn btn-primary">
                 <i class="fas fa-download"></i> Load Video
             </button>
-            <input type="file" id="videoFile" accept="video/*" style="display: none;">
-            <button id="uploadVideoBtn" class="btn btn-primary">
+            <input type="file" id="videoFile" accept="video/*" style="display: none;"
+                   onchange="window.dispatchEvent(new CustomEvent('video-file-selected', { detail: this.files[0] }))">
+            <button id="uploadVideoBtn" type="button" class="btn btn-primary">
                 <i class="fas fa-upload"></i> Upload Video
             </button>
             <button id="detectScenesBtn" class="btn btn-secondary" disabled>
@@ -323,6 +324,10 @@
     <!-- Scripts -->
     <script type="module" src="/static/js/index.js"></script>
     <script>
+    // Keep the native file picker independent from optional application modules.
+    document.getElementById('uploadVideoBtn').addEventListener('click', function () {
+        document.getElementById('videoFile').click();
+    });
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
             this.play();
