@@ -95,9 +95,10 @@ Format each chapter exactly like this example:
                 else:
                     raise ValueError("Could not parse Gemini response as JSON")
             
-            if isinstance(chapters, list) and isinstance(chapters[0], list):
+            if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
                 chapters = [item for sublist in chapters for item in sublist]
 
+            chapters = self._normalize_chapters(chapters, transcript)
             self._save_chapters(video_id, chapters)
 
             return JSONResponse({
@@ -131,6 +132,46 @@ Format each chapter exactly like this example:
         return chapters or [{"timestamp": "00:00", "title": "Lecture"}]
 
     @staticmethod
+    def _normalize_chapters(chapters: list, transcript: list) -> list:
+        """Ensure every chapter has a usable timestamp and title."""
+        if not isinstance(chapters, list):
+            return SummaryProcessor._fallback_chapters(transcript)
+
+        normalized = []
+        for index, chapter in enumerate(chapters):
+            if not isinstance(chapter, dict):
+                continue
+            raw_timestamp = chapter.get("timestamp", "00:00")
+            raw_title = " ".join(str(chapter.get("title", "")).split()).strip()
+            try:
+                timestamp_parts = [int(float(part)) for part in str(raw_timestamp).split(":")]
+                if len(timestamp_parts) == 2:
+                    total_seconds = timestamp_parts[0] * 60 + timestamp_parts[1]
+                elif len(timestamp_parts) == 3:
+                    total_seconds = timestamp_parts[0] * 3600 + timestamp_parts[1] * 60 + timestamp_parts[2]
+                else:
+                    raise ValueError
+            except (TypeError, ValueError):
+                total_seconds = int(float(transcript[index].get("start", 0))) if index < len(transcript) else 0
+
+            if not raw_title:
+                matching_text = next(
+                    (
+                        " ".join(str(item.get("text", "")).split())
+                        for item in transcript
+                        if abs(float(item.get("start", 0)) - total_seconds) < 30
+                    ),
+                    f"Chapter {index + 1}",
+                )
+                raw_title = " ".join(matching_text.split()[:8]).strip(".,!?") or f"Chapter {index + 1}"
+
+            normalized.append({
+                "timestamp": f"{total_seconds // 60:02d}:{total_seconds % 60:02d}",
+                "title": raw_title,
+            })
+        return normalized or SummaryProcessor._fallback_chapters(transcript)
+
+    @staticmethod
     def _save_chapters(video_id: str, chapters: list):
         if video_id:
             summary_path = SUMMARIES_DIR / f"{video_id}.json"
@@ -145,8 +186,9 @@ Format each chapter exactly like this example:
                 with open(summary_path, 'r') as f:
                     chapters = json.load(f)
                 # if chapters is not flat, flatten
-                if isinstance(chapters, list) and isinstance(chapters[0], list):
+                if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
                     chapters = [item for sublist in chapters for item in sublist]
+                chapters = self._normalize_chapters(chapters, [])
                 return JSONResponse({
                     "success": True,
                     "chapters": chapters,

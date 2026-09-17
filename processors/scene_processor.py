@@ -75,6 +75,8 @@ class SceneProcessor:
         """Run scene detection and save results."""
         try:
             scenes = await self.detect_scenes(video_path)
+            if not scenes:
+                scenes = await self.create_fallback_scene(video_path)
 
             scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
@@ -189,6 +191,49 @@ class SceneProcessor:
         except Exception as e:
             print(f"Error detecting scenes: {str(e)}")
             return []
+
+    async def create_fallback_scene(self, video_path: str) -> list:
+        """Create one processable scene when detection fails or finds no cuts."""
+        cap = cv2.VideoCapture(video_path)
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            duration = frame_count / fps if fps > 0 else 0
+            video_id = os.path.splitext(os.path.basename(video_path))[0]
+            thumbnail_dir = THUMBNAILS_DIR / video_id
+            fullsize_dir = FULLSIZE_IMAGES_DIR / video_id
+            thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            fullsize_dir.mkdir(parents=True, exist_ok=True)
+
+            ret, frame = cap.read()
+            if not ret:
+                return []
+
+            fullsize_path = fullsize_dir / "0.jpg"
+            thumbnail_path = thumbnail_dir / "0.jpg"
+            height, width = frame.shape[:2]
+            if height > 1080:
+                ratio = 1080 / height
+                frame = cv2.resize(
+                    frame,
+                    (int(width * ratio), 1080),
+                    interpolation=cv2.INTER_AREA,
+                )
+            cv2.imwrite(str(fullsize_path), frame)
+            cv2.imwrite(
+                str(thumbnail_path),
+                cv2.resize(frame, (max(1, frame.shape[1] // 4), max(1, frame.shape[0] // 4))),
+            )
+            return [{
+                "timestamp": "00:00",
+                "time_seconds": 0,
+                "duration": max(0, duration),
+                "thumbnail": f"/thumbnails/{video_id}/0.jpg",
+                "fullsize": f"/fullsize_images/{video_id}/0.jpg",
+                "detection_note": "Scene detector found no cuts; using the first frame.",
+            }]
+        finally:
+            cap.release()
 
     async def process_scene_images(self, video_id: str):
         """Queue scene images for YOLO processing and wait for completion."""

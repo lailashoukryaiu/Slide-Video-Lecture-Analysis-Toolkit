@@ -42,8 +42,8 @@ export async function checkSceneDetection(videoId) {
                 
                 // Update the scenes container
                 if (data.scenes.length === 0) {
-                    elements.scenesContainer.innerHTML = '<p>No scene changes detected.</p>';
-                    elements.thumbnailTimeline.innerHTML = '<p>No scenes available for timeline.</p>';
+                    elements.scenesContainer.innerHTML = '<p>Scene processing failed. Check the server log and try loading the video again.</p>';
+                    elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated.</p>';
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
