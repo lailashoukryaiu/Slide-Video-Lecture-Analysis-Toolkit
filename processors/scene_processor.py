@@ -1,6 +1,6 @@
 import os
 import cv2
-from scenedetect import open_video, AdaptiveDetector, ContentDetector, SceneManager
+from scenedetect import open_video, AdaptiveDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +14,16 @@ class SceneProcessor:
     async def get_scenes(self, video_id: str):
         """Get scenes for a video."""
         scene_path = str(SCENES_DIR / f"{video_id}.json")
+        error_path = SCENES_DIR / f"{video_id}_error.txt"
+        if error_path.exists():
+            try:
+                error = error_path.read_text(encoding="utf-8")
+            except OSError as read_error:
+                error = f"Could not read scene detection error: {read_error}"
+            return JSONResponse({
+                "success": False,
+                "error": error
+            })
         if os.path.exists(scene_path):
             try:
                 with open(scene_path, 'r') as f:
@@ -70,8 +80,11 @@ class SceneProcessor:
     async def start_scene_detection(self, video_id: str, video_path: str, background_tasks):
         """Start scene detection in the background."""
         scene_path = SCENES_DIR / f"{video_id}.json"
+        error_path = SCENES_DIR / f"{video_id}_error.txt"
         if scene_path.exists():
             scene_path.unlink()
+        if error_path.exists():
+            error_path.unlink()
         background_tasks.add_task(self.run_scene_detection, video_id, video_path)
 
     async def run_scene_detection(self, video_id: str, video_path: str):
@@ -90,9 +103,8 @@ class SceneProcessor:
                 
         except Exception as e:
             print(f"Error in background scene detection: {str(e)}")
-            scene_path = SCENES_DIR / f"{video_id}.json"
-            with scene_path.open("w", encoding="utf-8") as file:
-                json.dump([], file)
+            error_path = SCENES_DIR / f"{video_id}_error.txt"
+            error_path.write_text(str(e), encoding="utf-8")
 
     async def detect_scenes(self, video_path: str) -> list:
         """Detect scene changes in the video and return timestamps."""
@@ -104,13 +116,7 @@ class SceneProcessor:
             scene_manager.add_detector(
                 AdaptiveDetector(
                     adaptive_threshold=1,
-                    min_content_val=5,
-                    weights=ContentDetector.Components(
-                        delta_hue=1.0,
-                        delta_sat=1.0,
-                        delta_lum=1.0,
-                        delta_edges=2.0
-                    )
+                    min_content_val=5
                 )
             )
             scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=10)

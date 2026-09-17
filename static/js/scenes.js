@@ -42,7 +42,7 @@ export async function checkSceneDetection(videoId) {
                 
                 // Update the scenes container
                 if (data.scenes.length === 0) {
-                    elements.scenesContainer.innerHTML = '<p>Scene processing failed. Check the server log and try loading the video again.</p>';
+                    elements.scenesContainer.innerHTML = '<p>No scene changes detected.</p>';
                     elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated.</p>';
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
@@ -60,10 +60,19 @@ export async function checkSceneDetection(videoId) {
                 elements.scenesContainer.innerHTML = `<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running (${elapsed}s elapsed)...</p>`;
                 elements.thumbnailTimeline.innerHTML = '<p>Generating visual timeline...</p>';
             }
+        } else {
+            throw new Error(data.error || 'Scene processing failed');
         }
     } catch (error) {
         console.error('Error checking scene detection:', error);
-        showError('Error checking scene detection. Please try again.');
+        if (state.sceneDetectionInterval) {
+            clearInterval(state.sceneDetectionInterval);
+            state.sceneDetectionInterval = null;
+        }
+        elements.scenesContainer.innerHTML = `<p>Scene processing failed: ${error.message}</p><p>Please check the server log and try again.</p>`;
+        elements.detectScenesBtn.disabled = false;
+        elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
+        showError(`Error checking scene detection: ${error.message}`);
     }
 }
 
