@@ -100,6 +100,15 @@ async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = Fi
         content = await video.read()
         video_hash = hashlib.sha256(content).hexdigest()
         video_path = str(VIDEO_DIR / f"{video_hash}.mp4")
+        metadata_path = VIDEO_DIR / "metadata.json"
+        metadata = {}
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                metadata = {}
+        metadata[video_hash] = {"filename": video.filename or f"{video_hash}.mp4"}
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
         # Check if video exists
         
@@ -118,13 +127,18 @@ async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = Fi
 
 @app.get("/uploaded_videos")
 async def uploaded_videos():
+    metadata_path = VIDEO_DIR / "metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        metadata = {}
     videos = []
     for video_path in sorted(VIDEO_DIR.glob("*"), key=lambda path: path.stat().st_mtime, reverse=True):
-        if not video_path.is_file():
+        if not video_path.is_file() or video_path.name == "metadata.json":
             continue
         videos.append({
             "video_id": video_path.stem,
-            "filename": video_path.name,
+            "filename": metadata.get(video_path.stem, {}).get("filename", video_path.name),
             "size_bytes": video_path.stat().st_size,
             "modified_at": video_path.stat().st_mtime
         })
@@ -158,13 +172,16 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
         raise HTTPException(status_code=404, detail="Video not found")
     data = await request.json()
     threshold = data.get("adaptive_threshold", 0.5)
+    mode = data.get("mode", "frame_difference")
     try:
         threshold = float(threshold)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid scene detection threshold")
     if not 0.1 <= threshold <= 3:
         raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 3")
-    await scene_processor.start_scene_detection(video_id, video_path, background_tasks, threshold)
+    if mode not in {"content", "frame_difference"}:
+        raise HTTPException(status_code=400, detail="Invalid scene detection mode")
+    await scene_processor.start_scene_detection(video_id, video_path, background_tasks, threshold, mode)
     return JSONResponse({"success": True, "message": "Scene detection started"})
 
 @app.get("/scene_detections/{video_id}/{scene_index}")

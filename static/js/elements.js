@@ -60,6 +60,7 @@ export const elements = {
     get whisperProgressText() { return document.querySelector('#whisperProgress .progress-text'); },
     get sceneDetectionThreshold() { return document.getElementById('sceneDetectionThreshold'); },
     get sceneDetectionThresholdValue() { return document.getElementById('sceneDetectionThresholdValue'); },
+    get sceneDetectionMode() { return document.getElementById('sceneDetectionMode'); },
     get uploadVideoBtn() { return document.getElementById('uploadVideoBtn'); },
     get detectScenesBtn() { return document.getElementById('detectScenesBtn'); }
 };

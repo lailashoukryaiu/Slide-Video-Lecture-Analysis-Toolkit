@@ -1,5 +1,6 @@
 import os
 import cv2
+from scenedetect import open_video, ContentDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -76,7 +77,7 @@ class SceneProcessor:
                 "error": str(e)
             })
 
-    async def start_scene_detection(self, video_id: str, video_path: str, background_tasks, adaptive_threshold: float = 0.5):
+    async def start_scene_detection(self, video_id: str, video_path: str, background_tasks, adaptive_threshold: float = 0.5, mode: str = "frame_difference"):
         """Start scene detection in the background."""
         scene_path = SCENES_DIR / f"{video_id}.json"
         error_path = SCENES_DIR / f"{video_id}_error.txt"
@@ -84,12 +85,12 @@ class SceneProcessor:
             scene_path.unlink()
         if error_path.exists():
             error_path.unlink()
-        background_tasks.add_task(self.run_scene_detection, video_id, video_path, adaptive_threshold)
+        background_tasks.add_task(self.run_scene_detection, video_id, video_path, adaptive_threshold, mode)
 
-    async def run_scene_detection(self, video_id: str, video_path: str, adaptive_threshold: float):
+    async def run_scene_detection(self, video_id: str, video_path: str, adaptive_threshold: float, mode: str):
         """Run scene detection and save results."""
         try:
-            scenes = await self.detect_scenes(video_path, adaptive_threshold)
+            scenes = await self.detect_scenes(video_path, adaptive_threshold, mode)
 
             scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
@@ -105,7 +106,31 @@ class SceneProcessor:
             error_path = SCENES_DIR / f"{video_id}_error.txt"
             error_path.write_text(str(e), encoding="utf-8")
 
-    async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5) -> list:
+    async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5, mode: str = "frame_difference") -> list:
+        """Detect slide changes using the selected configured detector."""
+        try:
+            if mode == "content":
+                return await self.detect_content_scenes(video_path, adaptive_threshold)
+            return await self.detect_frame_difference_scenes(video_path, adaptive_threshold)
+        except Exception as e:
+            print(f"Error detecting scenes: {str(e)}")
+            return []
+
+    async def detect_content_scenes(self, video_path: str, adaptive_threshold: float) -> list:
+        """Detect hard cuts using PySceneDetect's content detector."""
+        video = open_video(video_path)
+        scene_manager = SceneManager()
+        scene_manager.add_detector(ContentDetector(
+            threshold=max(1.0, adaptive_threshold * 20),
+            min_scene_len=10
+        ))
+        scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
+        detected_scenes = scene_manager.get_scene_list()
+        video.close()
+        timestamps = [scene[0].get_seconds() for scene in detected_scenes]
+        return await self.build_scene_changes(video_path, timestamps)
+
+    async def detect_frame_difference_scenes(self, video_path: str, adaptive_threshold: float) -> list:
         """Detect slide changes using sampled frame differences."""
         try:
             cap = cv2.VideoCapture(video_path)
@@ -146,15 +171,26 @@ class SceneProcessor:
             cap.release()
 
             print(f"Detected {len(timestamps)} slide changes")
+            return await self.build_scene_changes(video_path, timestamps)
+        except Exception as e:
+            print(f"Error detecting frame differences: {str(e)}")
+            return []
 
-            video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
-            video_fullsize_dir = str(FULLSIZE_IMAGES_DIR / video_id)
-            os.makedirs(video_thumbnails_dir, exist_ok=True)
-            os.makedirs(video_fullsize_dir, exist_ok=True)
+    async def build_scene_changes(self, video_path: str, timestamps: list) -> list:
+        """Create scene records and preview images for detected timestamps."""
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        duration_seconds = frame_count / fps if fps > 0 else 0
+        video_id = os.path.splitext(os.path.basename(video_path))[0]
+
+        video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
+        video_fullsize_dir = str(FULLSIZE_IMAGES_DIR / video_id)
+        os.makedirs(video_thumbnails_dir, exist_ok=True)
+        os.makedirs(video_fullsize_dir, exist_ok=True)
             
-            scene_changes = []
-            cap = cv2.VideoCapture(video_path)
-            for i, timestamp in enumerate(timestamps):
+        scene_changes = []
+        for i, timestamp in enumerate(timestamps):
                 minutes = int(timestamp // 60)
                 seconds = int(timestamp % 60)
                 
@@ -197,12 +233,8 @@ class SceneProcessor:
                     "fullsize": f"/fullsize_images/{video_id}/{i}.jpg"
                 })
             
-            cap.release()
-            return scene_changes
-            
-        except Exception as e:
-            print(f"Error detecting scenes: {str(e)}")
-            return []
+        cap.release()
+        return scene_changes
 
     async def process_scene_images(self, video_id: str):
         """Queue scene images for YOLO processing and wait for completion."""

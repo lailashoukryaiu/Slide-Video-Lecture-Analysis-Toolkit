@@ -179,6 +179,11 @@
                                 <i class="fas fa-film"></i> Detect Slides
                             </button>
                             <div class="scene-threshold-control">
+                                <label for="sceneDetectionMode">Detection method</label>
+                                <select id="sceneDetectionMode">
+                                    <option value="frame_difference">Frame difference (fades and animations)</option>
+                                    <option value="content">Content cuts (original method)</option>
+                                </select>
                                 <label class="range-label" for="sceneDetectionThreshold">
                                     <span>Slide-change sensitivity</span>
                                     <output id="sceneDetectionThresholdValue" for="sceneDetectionThreshold">0.5</output>

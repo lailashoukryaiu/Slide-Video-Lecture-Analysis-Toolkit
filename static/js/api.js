@@ -426,7 +426,10 @@ export async function detectScenes() {
         const response = await fetch(`/detect_scenes/${videoId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ adaptive_threshold: state.sceneDetectionThreshold })
+            body: JSON.stringify({
+                adaptive_threshold: state.sceneDetectionThreshold,
+                mode: elements.sceneDetectionMode.value
+            })
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
