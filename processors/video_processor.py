@@ -58,20 +58,9 @@ class VideoProcessor:
             except Exception as e:
                 print(f"Error loading existing transcript: {e}")
         
-        # Try to get YouTube transcript if Whisper transcript is not available
-        if not transcript_to_use and not transcript_in_progress:
-            try:
-                youtube_transcript, error = await transcript_processor.get_youtube_transcript(video_hash)
-                if youtube_transcript:
-                    transcript_to_use = youtube_transcript
-                    has_youtube_transcript = True
-                else:
-                    has_youtube_transcript = False
-            except Exception as e:
-                print(f"Error getting YouTube transcript: {e}")
-                has_youtube_transcript = False
-        else:
-            has_youtube_transcript = False
+        # Uploaded files do not have a YouTube ID, so do not make a network
+        # transcript request using their content hash.
+        has_youtube_transcript = False
         
         # Start missing processing tasks
         if not has_whisper_transcript and not transcript_in_progress:
