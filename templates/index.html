@@ -178,6 +178,14 @@
                             <button id="detectScenesBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-film"></i> Detect Slides
                             </button>
+                            <div class="scene-threshold-control">
+                                <label class="range-label" for="sceneDetectionThreshold">
+                                    <span>Slide-change sensitivity</span>
+                                    <output id="sceneDetectionThresholdValue" for="sceneDetectionThreshold">0.5</output>
+                                </label>
+                                <input id="sceneDetectionThreshold" type="range" min="0.1" max="3" step="0.1" value="0.5">
+                                <small>Lower values detect smaller visual changes.</small>
+                            </div>
                         </div>
                         <div class="tab-body" id="scenesContainer">
                             <!-- Scene markers will be added here -->
@@ -320,16 +328,6 @@
                 </div>
             </div>
 
-            <div class="settings-section">
-                <h3>Scene Detection</h3>
-                <p class="settings-description">Lower thresholds detect smaller visual changes but may produce more scenes.</p>
-                <label class="range-label" for="sceneDetectionThreshold">
-                    <span>Detection threshold</span>
-                    <output id="sceneDetectionThresholdValue" for="sceneDetectionThreshold">0.5</output>
-                </label>
-                <input id="sceneDetectionThreshold" type="range" min="0.1" max="3" step="0.1" value="0.5">
-            </div>
-            
             <div class="settings-actions">
                 <button id="saveSettingsBtn" class="btn btn-primary">Save Settings</button>
             </div>

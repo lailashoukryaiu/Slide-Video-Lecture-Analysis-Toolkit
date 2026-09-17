@@ -149,6 +149,14 @@ body {
     width: 100%;
 }
 
+.scene-threshold-control {
+    min-width: 280px;
+}
+
+.scene-threshold-control small {
+    color: var(--text-secondary);
+}
+
 /* Alerts */
 .alert {
     padding: 12px 16px;

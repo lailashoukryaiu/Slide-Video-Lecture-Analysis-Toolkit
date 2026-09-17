@@ -220,7 +220,11 @@ function initApp() {
     });
     elements.sceneDetectionThreshold.addEventListener('input', (event) => {
         elements.sceneDetectionThresholdValue.textContent = event.target.value;
+        state.sceneDetectionThreshold = Number(event.target.value);
+        localStorage.setItem('sceneDetectionThreshold', event.target.value);
     });
+    elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
+    elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
     elements.closeDetectionBtn.addEventListener('click', () => {
         elements.detectionOverlay.style.display = 'none';
     });
