@@ -116,6 +116,27 @@ async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = Fi
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)})
 
+@app.get("/uploaded_videos")
+async def uploaded_videos():
+    videos = []
+    for video_path in sorted(VIDEO_DIR.glob("*"), key=lambda path: path.stat().st_mtime, reverse=True):
+        if not video_path.is_file():
+            continue
+        videos.append({
+            "video_id": video_path.stem,
+            "filename": video_path.name,
+            "size_bytes": video_path.stat().st_size,
+            "modified_at": video_path.stat().st_mtime
+        })
+    return {"success": True, "videos": videos}
+
+@app.get("/uploaded_videos/{video_id}")
+async def load_uploaded_video(video_id: str, background_tasks: BackgroundTasks):
+    video_path = video_processor.get_video_path(video_id)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Uploaded video not found")
+    return await video_processor.handle_existing_video(video_id, video_path, background_tasks)
+
 @app.get("/video/{video_id}")
 async def stream_video(video_id: str, range: Optional[str] = Header(None)):
     try:

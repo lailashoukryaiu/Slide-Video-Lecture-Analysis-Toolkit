@@ -361,6 +361,59 @@ export async function processVideoUpload(file) {
 
 }
 
+export async function loadUploadedVideo(videoId) {
+    showError('');
+    showLoading(true);
+    elements.loadingIndicator.querySelector('p').textContent = 'Loading saved video...';
+    try {
+        resetVideoStates();
+        const response = await fetch(`/uploaded_videos/${encodeURIComponent(videoId)}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.detail || data.error || 'Could not load saved video');
+        }
+
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Saved video preview could not be loaded.')), 30000);
+            elements.videoPlayer.src = data.video_url;
+            elements.videoPlayer.onloadedmetadata = () => {
+                clearTimeout(timeout);
+                setupVideoPlayer(elements.videoPlayer);
+                resolve();
+            };
+            elements.videoPlayer.onerror = () => {
+                clearTimeout(timeout);
+                reject(new Error('Failed to load saved video'));
+            };
+        });
+
+        state.currentVideoId = data.video_id;
+        elements.detectScenesBtn.disabled = false;
+        elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
+
+        if (data.transcript) {
+            state.currentTranscript = data.transcript;
+            state.currentTranscriptSource = 'whisper';
+            loadTranscript(data.transcript);
+            elements.generateSummaryBtn.disabled = false;
+            elements.exportChaptersBtn.disabled = false;
+            const summaryResponse = await fetch(`/summary/${data.video_id}`);
+            const summaryData = await summaryResponse.json();
+            if (summaryData.success && summaryData.exists) {
+                updateChapters(summaryData.chapters);
+            }
+        } else if (data.transcript_in_progress) {
+            elements.transcriptContainer.innerHTML = '<p>Whisper transcript is still processing. You can detect slides now.</p>';
+        } else {
+            elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
+        }
+    } catch (error) {
+        showError(`Error loading saved video: ${error.message}`);
+    } finally {
+        showLoading(false);
+    }
+}
+
 export async function detectScenes() {
     const videoId = state.currentVideoId;
     if (!videoId) return;

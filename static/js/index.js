@@ -3,6 +3,7 @@
 
 import { initApp } from './main.js';
 import { elements } from './elements.js';
+import { loadUploadedVideo } from './api.js';
 
 // Example videos that have been pre-processed
 const exampleVideos = [
@@ -35,6 +36,7 @@ function initExampleVideos() {
     // Insert the container at the start of the input section
     const inputSection = document.querySelector('.input-section');
     inputSection.insertBefore(container, inputSection.firstChild);
+    initUploadedVideos(inputSection);
 
     // Add event listener for selection change
     const select = container.querySelector('#exampleVideos');
@@ -54,7 +56,32 @@ function initExampleVideos() {
                 setTimeout(() => notification.remove(), 300);
             }, 3000);
         }
+
     });
+}
+
+async function initUploadedVideos(inputSection) {
+    const container = document.createElement('div');
+    container.className = 'example-videos-container';
+    container.innerHTML = '<select id="uploadedVideos" class="example-videos-select" title="Select a previously uploaded video"><option value="">Saved uploads ▾</option></select>';
+    inputSection.insertBefore(container, inputSection.firstChild);
+    const select = container.querySelector('#uploadedVideos');
+    try {
+        const response = await fetch('/uploaded_videos');
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Could not list saved uploads');
+        data.videos.forEach(video => {
+            const option = document.createElement('option');
+            option.value = video.video_id;
+            option.textContent = `${video.filename} (${(video.size_bytes / 1048576).toFixed(1)} MB)`;
+            select.appendChild(option);
+        });
+        select.addEventListener('change', () => {
+            if (select.value) loadUploadedVideo(select.value);
+        });
+    } catch (error) {
+        console.error('Error loading saved uploads:', error);
+    }
 }
 
 // Initialize the application when the DOM is loaded
