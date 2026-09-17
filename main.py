@@ -344,9 +344,6 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
             await transcript_processor.start_whisper_generation(video_id, video_path, background_tasks)
             transcript_in_progress = True
         
-        if not has_scenes:
-            await scene_processor.start_scene_detection(video_id, video_path, background_tasks)
-        
         return JSONResponse({
             "success": True,
             "video_url": f"/video/{video_id}",
