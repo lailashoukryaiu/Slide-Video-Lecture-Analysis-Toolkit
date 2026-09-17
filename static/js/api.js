@@ -344,27 +344,28 @@ export async function processVideoUpload(file) {
         showLoading(false);
     }
 
-    export async function detectScenes() {
-        const videoId = state.currentVideoId;
-        if (!videoId) return;
-        const button = elements.detectScenesBtn;
-        button.disabled = true;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting...';
-        state.sceneDetectionStartedAt = Date.now();
-        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
-        try {
-            const response = await fetch(`/detect_scenes/${videoId}`, { method: 'POST' });
-            const data = await response.json();
-            if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
-            await checkSceneDetection(videoId);
-            state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);
-            fetchOcrResults(videoId);
-            loadTranscriptOcrRelationships(videoId);
-        } catch (error) {
-            showError(`Error detecting scenes: ${error.message}`);
-            button.disabled = false;
-            button.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
-        }
+}
+
+export async function detectScenes() {
+    const videoId = state.currentVideoId;
+    if (!videoId) return;
+    const button = elements.detectScenesBtn;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting...';
+    state.sceneDetectionStartedAt = Date.now();
+    elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
+    try {
+        const response = await fetch(`/detect_scenes/${videoId}`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
+        await checkSceneDetection(videoId);
+        state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);
+        fetchOcrResults(videoId);
+        loadTranscriptOcrRelationships(videoId);
+    } catch (error) {
+        showError(`Error detecting scenes: ${error.message}`);
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
     }
 }
 
