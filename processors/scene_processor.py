@@ -1,6 +1,5 @@
 import os
 import cv2
-from scenedetect import open_video, ContentDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -107,43 +106,54 @@ class SceneProcessor:
             error_path.write_text(str(e), encoding="utf-8")
 
     async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5) -> list:
-        """Detect scene changes in the video and return timestamps."""
+        """Detect slide changes using sampled frame differences."""
         try:
-            # Detect scenes using content detection
-            video = open_video(video_path)
-
-            scene_manager = SceneManager()
-            scene_manager.add_detector(
-                ContentDetector(
-                    threshold=max(1.0, adaptive_threshold * 20),
-                    min_scene_len=10,
-                )
-            )
-            scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
-            scenes = scene_manager.get_scene_list()
-            video.close()
-
-            print(f"Detected {len(scenes)} scenes")
-            
-            scene_changes = []
             cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
             duration_seconds = frame_count / fps if fps > 0 else 0
             video_id = os.path.splitext(os.path.basename(video_path))[0]
+            if fps <= 0 or frame_count <= 0:
+                raise ValueError("Could not read video frame rate or frame count")
 
+            # The slider represents the minimum percentage of pixels that must
+            # change between samples. Lower values detect smaller slide changes.
+            change_threshold = adaptive_threshold / 100
+            sample_step = max(1, int(round(fps / 2)))
+            min_scene_gap = max(sample_step, int(round(fps * 1.0)))
+            previous_frame = None
+            timestamps = []
+            last_change_frame = -min_scene_gap
+            frame_number = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_number % sample_step == 0:
+                    sample = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 180))
+                    if previous_frame is not None:
+                        difference = cv2.absdiff(previous_frame, sample)
+                        changed_pixels = cv2.countNonZero(difference > 25)
+                        changed_ratio = changed_pixels / difference.size
+                        if (
+                            changed_ratio >= change_threshold
+                            and frame_number - last_change_frame >= min_scene_gap
+                        ):
+                            timestamps.append(frame_number / fps)
+                            last_change_frame = frame_number
+                    previous_frame = sample
+                frame_number += 1
+            cap.release()
+
+            print(f"Detected {len(timestamps)} slide changes")
+            
             video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
             video_fullsize_dir = str(FULLSIZE_IMAGES_DIR / video_id)
             os.makedirs(video_thumbnails_dir, exist_ok=True)
             os.makedirs(video_fullsize_dir, exist_ok=True)
             
-            timestamps = [
-                scene[0].get_seconds()
-                if hasattr(scene[0], "get_seconds")
-                else float(scene[0])
-                for scene in scenes
-            ]
-
+            scene_changes = []
+            cap = cv2.VideoCapture(video_path)
             for i, timestamp in enumerate(timestamps):
                 minutes = int(timestamp // 60)
                 seconds = int(timestamp % 60)
