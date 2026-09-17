@@ -93,7 +93,7 @@ class SceneProcessor:
         try:
             # Detect scenes using content detection
             video = open_video(video_path)
-            
+
             scene_manager = SceneManager()
             scene_manager.add_detector(
                 AdaptiveDetector(
@@ -107,15 +107,19 @@ class SceneProcessor:
                     )
                 )
             )
-            
-            scene_manager.detect_scenes(
-                video=video,
-                show_progress=True,
-                frame_skip=10
-            )
-            video.close()
-            
+            scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=10)
             scenes = scene_manager.get_scene_list()
+            video.close()
+
+            # A second, less restrictive detector catches hard slide cuts that
+            # adaptive detection can miss on compressed lecture videos.
+            if not scenes:
+                fallback_video = open_video(video_path)
+                fallback_manager = SceneManager()
+                fallback_manager.add_detector(ContentDetector(threshold=12.0, min_scene_len=15))
+                fallback_manager.detect_scenes(video=fallback_video, show_progress=False, frame_skip=5)
+                scenes = fallback_manager.get_scene_list()
+                fallback_video.close()
             print(f"Detected {len(scenes)} scenes")
             
             scene_changes = []

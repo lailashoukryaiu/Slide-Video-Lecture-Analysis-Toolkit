@@ -25,7 +25,7 @@ class SummaryProcessor:
                 raise ValueError("GOOGLE_API_KEY is not configured")
 
             self.client = genai.Client(api_key=GOOGLE_API_KEY)
-            self.model_name = "gemini-3.8-flash"
+            self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
             self.model = True
         except Exception as e:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
@@ -66,14 +66,24 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.5,
-                    response_mime_type="application/json",
-                ),
-            )
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.5,
+                        response_mime_type="application/json",
+                    ),
+                )
+            except Exception as error:
+                chapters = self._fallback_chapters(transcript)
+                self._save_chapters(video_id, chapters)
+                return JSONResponse({
+                    "success": True,
+                    "chapters": chapters,
+                    "fallback": True,
+                    "message": f"Gemini was unavailable ({error}); generated timestamp-based chapters instead."
+                })
             try:
                 # Try to parse the response as JSON
                 chapters = json.loads(response.text)
@@ -88,10 +98,7 @@ Format each chapter exactly like this example:
             if isinstance(chapters, list) and isinstance(chapters[0], list):
                 chapters = [item for sublist in chapters for item in sublist]
 
-            if video_id:
-                summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
-                with open(summary_path, 'w') as f:
-                    json.dump(chapters, f)
+            self._save_chapters(video_id, chapters)
 
             return JSONResponse({
                 "success": True,
@@ -103,6 +110,32 @@ Format each chapter exactly like this example:
                 "success": False,
                 "error": str(e)
             })
+
+    @staticmethod
+    def _fallback_chapters(transcript: list) -> list:
+        """Create usable chapters without an external model."""
+        chapters = []
+        last_start = None
+        for item in transcript:
+            start = float(item.get("start", 0))
+            text = " ".join(str(item.get("text", "")).split())
+            if not text:
+                continue
+            if last_start is None or start - last_start >= 180:
+                title = " ".join(text.split()[:8]).strip(".,!?")
+                chapters.append({
+                    "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
+                    "title": title or f"Chapter {len(chapters) + 1}"
+                })
+                last_start = start
+        return chapters or [{"timestamp": "00:00", "title": "Lecture"}]
+
+    @staticmethod
+    def _save_chapters(video_id: str, chapters: list):
+        if video_id:
+            summary_path = SUMMARIES_DIR / f"{video_id}.json"
+            with summary_path.open("w", encoding="utf-8") as file:
+                json.dump(chapters, file)
 
     async def get_summary(self, video_id: str):
         """Get saved chapter summary for a video."""

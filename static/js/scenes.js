@@ -44,6 +44,8 @@ export async function checkSceneDetection(videoId) {
                 if (data.scenes.length === 0) {
                     elements.scenesContainer.innerHTML = '<p>No scene changes detected.</p>';
                     elements.thumbnailTimeline.innerHTML = '<p>No scenes available for timeline.</p>';
+                } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
+                    elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
                 
                 // Continue checking for YOLO detections
