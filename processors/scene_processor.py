@@ -69,6 +69,9 @@ class SceneProcessor:
 
     async def start_scene_detection(self, video_id: str, video_path: str, background_tasks):
         """Start scene detection in the background."""
+        scene_path = SCENES_DIR / f"{video_id}.json"
+        if scene_path.exists():
+            scene_path.unlink()
         background_tasks.add_task(self.run_scene_detection, video_id, video_path)
 
     async def run_scene_detection(self, video_id: str, video_path: str):

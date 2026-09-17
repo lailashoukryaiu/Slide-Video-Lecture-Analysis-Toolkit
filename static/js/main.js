@@ -16,6 +16,7 @@ export const state = {
     currentTranscript: [],
     videoScenes: [],
     sceneDetectionInterval: null,
+    sceneDetectionStartedAt: null,
     currentVideoId: null,
     currentDebugScene: null,
     showSceneMarkers: true,

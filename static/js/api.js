@@ -350,7 +350,8 @@ export async function processVideoUpload(file) {
         const button = elements.detectScenesBtn;
         button.disabled = true;
         button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting...';
-        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p>';
+        state.sceneDetectionStartedAt = Date.now();
+        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
         try {
             const response = await fetch(`/detect_scenes/${videoId}`, { method: 'POST' });
             const data = await response.json();

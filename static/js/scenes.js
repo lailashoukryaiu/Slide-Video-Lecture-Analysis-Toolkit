@@ -47,12 +47,17 @@ export async function checkSceneDetection(videoId) {
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
+                elements.detectScenesBtn.disabled = false;
+                elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
                 
                 // Continue checking for YOLO detections
                 startDetectionPolling(videoId);
             } else {
                 // Still processing
-                elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p>';
+                const elapsed = state.sceneDetectionStartedAt
+                    ? Math.max(1, Math.round((Date.now() - state.sceneDetectionStartedAt) / 1000))
+                    : 0;
+                elements.scenesContainer.innerHTML = `<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running (${elapsed}s elapsed)...</p>`;
                 elements.thumbnailTimeline.innerHTML = '<p>Generating visual timeline...</p>';
             }
         }

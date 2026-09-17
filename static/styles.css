@@ -197,6 +197,11 @@ body {
     border-left: 4px solid var(--error-color);
 }
 
+.scene-progress-status {
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }

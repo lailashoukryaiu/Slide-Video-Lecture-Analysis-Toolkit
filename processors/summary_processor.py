@@ -186,12 +186,48 @@ Format each chapter exactly like this example:
                 # if chapters is not flat, flatten
                 if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
                     chapters = [item for sublist in chapters for item in sublist]
+                if self._looks_like_legacy_fallback(chapters):
+                    return JSONResponse({
+                        "success": True,
+                        "chapters": [],
+                        "exists": False,
+                        "stale": True
+                    })
                 chapters = self._normalize_chapters(chapters, [])
                 return JSONResponse({
                     "success": True,
                     "chapters": chapters,
                     "exists": True
                 })
+
+    @staticmethod
+    def _looks_like_legacy_fallback(chapters: list) -> bool:
+        if not isinstance(chapters, list) or not chapters:
+                return True
+        titles = [str(item.get("title", "")).strip().lower() for item in chapters if isinstance(item, dict)]
+        if len(titles) != len(chapters) or any(not title for title in titles):
+                return True
+        if all(title == f"chapter {index + 1}" for index, title in enumerate(titles)):
+                return True
+        if all(title == f"interval {index + 1}" for index, title in enumerate(titles)):
+                return True
+        timestamps = []
+        for item in chapters:
+                try:
+                    timestamps.append(SummaryProcessor._timestamp_seconds(str(item["timestamp"])))
+                except (KeyError, TypeError, ValueError):
+                    return True
+        gaps = [right - left for left, right in zip(timestamps, timestamps[1:])]
+        return len(gaps) >= 2 and all(gap == 180 for gap in gaps)
+
+    @staticmethod
+    def _timestamp_seconds(timestamp: str) -> int:
+        parts = [int(float(part)) for part in timestamp.split(":")]
+        if len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+        if len(parts) == 3:
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        raise ValueError("Invalid timestamp")
             except Exception as e:
                 return JSONResponse({
                     "success": False,
