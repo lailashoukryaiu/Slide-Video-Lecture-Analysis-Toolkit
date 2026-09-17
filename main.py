@@ -131,11 +131,19 @@ async def get_scenes(video_id: str):
     return await scene_processor.get_scenes(video_id)
 
 @app.post("/detect_scenes/{video_id}")
-async def detect_scenes(video_id: str, background_tasks: BackgroundTasks):
+async def detect_scenes(video_id: str, request: Request, background_tasks: BackgroundTasks):
     video_path = video_processor.get_video_path(video_id)
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
-    await scene_processor.start_scene_detection(video_id, video_path, background_tasks)
+    data = await request.json()
+    threshold = data.get("adaptive_threshold", 0.5)
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid scene detection threshold")
+    if not 0.1 <= threshold <= 3:
+        raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 3")
+    await scene_processor.start_scene_detection(video_id, video_path, background_tasks, threshold)
     return JSONResponse({"success": True, "message": "Scene detection started"})
 
 @app.get("/scene_detections/{video_id}/{scene_index}")

@@ -77,7 +77,7 @@ class SceneProcessor:
                 "error": str(e)
             })
 
-    async def start_scene_detection(self, video_id: str, video_path: str, background_tasks):
+    async def start_scene_detection(self, video_id: str, video_path: str, background_tasks, adaptive_threshold: float = 0.5):
         """Start scene detection in the background."""
         scene_path = SCENES_DIR / f"{video_id}.json"
         error_path = SCENES_DIR / f"{video_id}_error.txt"
@@ -85,12 +85,12 @@ class SceneProcessor:
             scene_path.unlink()
         if error_path.exists():
             error_path.unlink()
-        background_tasks.add_task(self.run_scene_detection, video_id, video_path)
+        background_tasks.add_task(self.run_scene_detection, video_id, video_path, adaptive_threshold)
 
-    async def run_scene_detection(self, video_id: str, video_path: str):
+    async def run_scene_detection(self, video_id: str, video_path: str, adaptive_threshold: float):
         """Run scene detection and save results."""
         try:
-            scenes = await self.detect_scenes(video_path)
+            scenes = await self.detect_scenes(video_path, adaptive_threshold)
 
             scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
@@ -106,7 +106,7 @@ class SceneProcessor:
             error_path = SCENES_DIR / f"{video_id}_error.txt"
             error_path.write_text(str(e), encoding="utf-8")
 
-    async def detect_scenes(self, video_path: str) -> list:
+    async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5) -> list:
         """Detect scene changes in the video and return timestamps."""
         try:
             # Detect scenes using content detection
@@ -115,7 +115,7 @@ class SceneProcessor:
             scene_manager = SceneManager()
             scene_manager.add_detector(
                 AdaptiveDetector(
-                    adaptive_threshold=0.5,
+                    adaptive_threshold=adaptive_threshold,
                     min_scene_len=10,
                     min_content_val=3
                 )

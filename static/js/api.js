@@ -370,7 +370,11 @@ export async function detectScenes() {
     state.sceneDetectionStartedAt = Date.now();
     elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
     try {
-        const response = await fetch(`/detect_scenes/${videoId}`, { method: 'POST' });
+        const response = await fetch(`/detect_scenes/${videoId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adaptive_threshold: state.sceneDetectionThreshold })
+        });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
         await checkSceneDetection(videoId);

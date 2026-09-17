@@ -135,6 +135,20 @@ body {
     padding: 6px;
 }
 
+.range-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.range-label output {
+    font-weight: 700;
+}
+
+#sceneDetectionThreshold {
+    width: 100%;
+}
+
 /* Alerts */
 .alert {
     padding: 12px 16px;

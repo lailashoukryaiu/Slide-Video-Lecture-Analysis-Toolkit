@@ -77,6 +77,9 @@ export function showNotification(message, type = 'info') {
  */
 export function openSettingsModal() {
     elements.settingsModal.style.display = 'flex';
+
+    elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
+    elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
     
     // Set the current OCR preference
     fetch('/get_ocr_preference')
@@ -136,6 +139,13 @@ export function saveSettings() {
     
     // Get fuzzy search preference
     const fuzzySearchEnabled = document.getElementById('settingsFuzzyToggle')?.checked || state.fuzzySearchEnabled;
+    const sceneDetectionThreshold = Number(elements.sceneDetectionThreshold.value);
+    if (!Number.isFinite(sceneDetectionThreshold) || sceneDetectionThreshold < 0.1 || sceneDetectionThreshold > 3) {
+        showNotification('Scene detection threshold must be between 0.1 and 3.', 'error');
+        return;
+    }
+    state.sceneDetectionThreshold = sceneDetectionThreshold;
+    localStorage.setItem('sceneDetectionThreshold', String(sceneDetectionThreshold));
     
     // Update fuzzy search state
     state.fuzzySearchEnabled = fuzzySearchEnabled;

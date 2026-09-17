@@ -33,7 +33,8 @@ export const state = {
     // Transcript-OCR relationship data
     transcriptOcrRelationships: null,
     ocr_to_transcript: {}, // Map for quick lookup: scene_index_ocrText -> transcript matches
-    transcript_to_ocr: {}  // Map for quick lookup: transcript_index -> OCR matches
+    transcript_to_ocr: {}, // Map for quick lookup: transcript_index -> OCR matches
+    sceneDetectionThreshold: Number(localStorage.getItem('sceneDetectionThreshold')) || 0.5
 };
 
 window.addEventListener('video-file-selected', (event) => {
@@ -216,6 +217,9 @@ function initApp() {
     elements.exportChaptersBtn.addEventListener('click', exportChapters);
     elements.intervalExportToggle.addEventListener('change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;
+    });
+    elements.sceneDetectionThreshold.addEventListener('input', (event) => {
+        elements.sceneDetectionThresholdValue.textContent = event.target.value;
     });
     elements.closeDetectionBtn.addEventListener('click', () => {
         elements.detectionOverlay.style.display = 'none';
