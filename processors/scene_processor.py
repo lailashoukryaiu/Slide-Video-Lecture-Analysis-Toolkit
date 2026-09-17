@@ -89,6 +89,9 @@ class SceneProcessor:
                 
         except Exception as e:
             print(f"Error in background scene detection: {str(e)}")
+            scene_path = SCENES_DIR / f"{video_id}.json"
+            with scene_path.open("w", encoding="utf-8") as file:
+                json.dump([], file)
 
     async def detect_scenes(self, video_path: str) -> list:
         """Detect scene changes in the video and return timestamps."""
@@ -122,6 +125,8 @@ class SceneProcessor:
                 fallback_manager.detect_scenes(video=fallback_video, show_progress=False, frame_skip=5)
                 scenes = fallback_manager.get_scene_list()
                 fallback_video.close()
+            if not scenes:
+                scenes = self.detect_frame_difference_scenes(video_path)
             print(f"Detected {len(scenes)} scenes")
             
             scene_changes = []
@@ -138,7 +143,12 @@ class SceneProcessor:
             
             # A video without detected cuts is still one processable scene.
             timestamps = (
-                [scene[0].get_seconds() for scene in scenes]
+                [
+                    scene[0].get_seconds()
+                    if hasattr(scene[0], "get_seconds")
+                    else float(scene[0])
+                    for scene in scenes
+                ]
                 if scenes else [0.0]
             )
 
@@ -191,6 +201,66 @@ class SceneProcessor:
         except Exception as e:
             print(f"Error detecting scenes: {str(e)}")
             return []
+
+    @staticmethod
+    def detect_frame_difference_scenes(video_path: str) -> list:
+        """Detect hard slide transitions using sampled OpenCV frame differences."""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return []
+
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            duration = frame_count / fps if fps > 0 else 0
+            sample_step = max(1, int(round(fps)))  # approximately one frame per second
+            samples = []
+            frame_index = 0
+            previous = None
+
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_index % sample_step == 0:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
+                    if previous is not None:
+                        difference = float(cv2.absdiff(previous, gray).mean())
+                        samples.append((frame_index / fps if fps > 0 else 0, difference))
+                    previous = gray
+                frame_index += 1
+
+            if len(samples) < 2:
+                return []
+
+            values = sorted(value for _, value in samples)
+            median = values[len(values) // 2]
+            upper_quartile = values[int(len(values) * 0.75)]
+            threshold = max(10.0, median + max(5.0, (upper_quartile - median) * 2.0))
+            candidates = [
+                (timestamp, difference)
+                for timestamp, difference in samples
+                if difference >= threshold
+            ]
+
+            # Suppress repeated detections during animated transitions.
+            changes = []
+            for timestamp, _ in candidates:
+                if not changes or timestamp - changes[-1] >= 3.0:
+                    changes.append(timestamp)
+
+            if not changes:
+                return []
+
+            return [
+                [0, changes[0]]
+            ] + [
+                [changes[index], changes[index + 1] if index + 1 < len(changes) else duration]
+                for index in range(len(changes))
+            ]
+        finally:
+            cap.release()
 
     async def create_fallback_scene(self, video_path: str) -> list:
         """Create one processable scene when detection fails or finds no cuts."""
