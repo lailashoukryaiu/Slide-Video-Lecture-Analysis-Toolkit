@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload } from './api.js';
+import { processVideo, checkYoloStatus, processVideoUpload, detectScenes } from './api.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -202,6 +202,7 @@ function initApp() {
     elements.uploadVideoBtn.addEventListener('click', () => {
         elements.videoFile.click();
     });
+    elements.detectScenesBtn.addEventListener('click', detectScenes);
     elements.videoFile.addEventListener('change', (event) => {
         const file = event.target.files[0];
         if (file) {

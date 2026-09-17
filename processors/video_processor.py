@@ -78,8 +78,6 @@ class VideoProcessor:
             await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
             transcript_in_progress = True
         
-        if not has_scenes:
-            await scene_processor.start_scene_detection(video_hash, video_path, background_tasks)
         print(transcript_to_use)
         return JSONResponse({
             "success": True,
@@ -105,9 +103,6 @@ class VideoProcessor:
         
         # Start Whisper transcript generation in the background
         await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
-        
-        # Start scene detection in the background
-        await scene_processor.start_scene_detection(video_hash, video_path, background_tasks)
         
         return JSONResponse({
             "success": True,

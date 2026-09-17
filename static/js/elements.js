@@ -59,4 +59,5 @@ export const elements = {
     get whisperProgressFill() { return document.querySelector('#whisperProgress .progress-fill'); },
     get whisperProgressText() { return document.querySelector('#whisperProgress .progress-text'); },
     get uploadVideoBtn() { return document.getElementById('uploadVideoBtn'); }
-}; 
+    get detectScenesBtn() { return document.getElementById('detectScenesBtn'); }
+};

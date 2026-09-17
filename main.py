@@ -130,6 +130,14 @@ async def stream_video(video_id: str, range: Optional[str] = Header(None)):
 async def get_scenes(video_id: str):
     return await scene_processor.get_scenes(video_id)
 
+@app.post("/detect_scenes/{video_id}")
+async def detect_scenes(video_id: str, background_tasks: BackgroundTasks):
+    video_path = video_processor.get_video_path(video_id)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+    await scene_processor.start_scene_detection(video_id, video_path, background_tasks)
+    return JSONResponse({"success": True, "message": "Scene detection started"})
+
 @app.get("/scene_detections/{video_id}/{scene_index}")
 async def get_scene_detections(video_id: str, scene_index: int):
     return await scene_processor.get_scene_detections(video_id, scene_index)

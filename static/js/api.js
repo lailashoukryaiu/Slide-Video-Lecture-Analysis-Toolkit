@@ -49,6 +49,7 @@ function resetVideoStates() {
         state.sceneDetectionInterval = null;
     }
     state.videoScenes = [];
+    elements.detectScenesBtn.disabled = true;
     
     // Reset slide content and disable search
     elements.slideContentContainer.innerHTML = `
@@ -127,6 +128,7 @@ export async function processVideo() {
 
         // Store video ID
         state.currentVideoId = videoId;
+        elements.detectScenesBtn.disabled = false;
         
         // Check transcript availability
         const hasYoutubeTranscript = data.has_youtube_transcript;
@@ -191,22 +193,7 @@ export async function processVideo() {
             elements.generateSummaryBtn.disabled = true;
         }
 
-        // Start polling for scene detection results
-        if (state.sceneDetectionInterval) {
-            clearInterval(state.sceneDetectionInterval);
-        }
-        
-        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p>';
-        
-        // Check immediately and then every 2 seconds
-        await checkSceneDetection(videoId);
-        state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);
-        
-        // Fetch OCR results (will connect to SSE for real-time updates)
-        fetchOcrResults(videoId);
-
-        // Load transcript-OCR relationships if available
-        loadTranscriptOcrRelationships(videoId);
+        elements.scenesContainer.innerHTML = '<p>Click "Detect Scenes" to analyze this video.</p>';
 
     } catch (error) {
         showError(`Error: ${error.message}`);
@@ -258,6 +245,7 @@ export async function processVideoUpload(file) {
 
         // Store video ID
         state.currentVideoId = data.video_id;
+        elements.detectScenesBtn.disabled = false;
         
         // Check if we have an existing transcript in the response
         console.log("check transcript", data.transcript)
@@ -348,25 +336,34 @@ export async function processVideoUpload(file) {
             elements.generateSummaryBtn.disabled = true;
         }
         
-        // Start polling for scene detection results
-        if (state.sceneDetectionInterval) {
-            clearInterval(state.sceneDetectionInterval);
-        }
-        
-        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p>';
-        
-        // Check immediately and then every 2 seconds
-        await checkSceneDetection(data.video_id);
-        state.sceneDetectionInterval = setInterval(() => checkSceneDetection(data.video_id), 2000);
-        
-        // Fetch OCR results (will connect to SSE for real-time updates)
-        fetchOcrResults(data.video_id);
-        loadTranscriptOcrRelationships(data.video_id);
+        elements.scenesContainer.innerHTML = '<p>Click "Detect Scenes" to analyze this video.</p>';
 
     } catch (error) {
         showError(`Error: ${error.message}`);
     } finally {
         showLoading(false);
+    }
+
+    export async function detectScenes() {
+        const videoId = state.currentVideoId;
+        if (!videoId) return;
+        const button = elements.detectScenesBtn;
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting...';
+        elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p>';
+        try {
+            const response = await fetch(`/detect_scenes/${videoId}`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
+            await checkSceneDetection(videoId);
+            state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);
+            fetchOcrResults(videoId);
+            loadTranscriptOcrRelationships(videoId);
+        } catch (error) {
+            showError(`Error detecting scenes: ${error.message}`);
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-film"></i> Detect Scenes';
+        }
     }
 }
 
