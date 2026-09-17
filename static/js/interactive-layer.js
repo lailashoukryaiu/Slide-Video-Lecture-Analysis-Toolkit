@@ -3600,26 +3600,19 @@ function toggleBoundingBoxes() {
  * @param {string} type - The notification type (success, error, info, warning)
  */
 function showNotification(message, type = 'info') {
-    // Create notification element
-    // const notification = document.createElement('div');
-    // notification.className = `notification ${type}`;
-    // notification.textContent = message;
-    
-    // // Add to document
-    // document.body.appendChild(notification);
-    
-    // // Show notification
-    // setTimeout(() => {
-    //     notification.style.opacity = '1';
-    // }, 10);
-    
-    // // Hide and remove after 5 seconds
-    // setTimeout(() => {
-    //     notification.style.opacity = '0';
-    //     setTimeout(() => {
-    //         notification.remove();
-    //     }, 300);
-    // }, 5000);
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    requestAnimationFrame(() => {
+        notification.style.opacity = '1';
+    });
+
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 500);
+    }, 3000);
 }
 
 /**
