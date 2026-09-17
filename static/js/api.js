@@ -98,6 +98,7 @@ export async function processVideo() {
     showError('');
     showLoading(true);
     elements.generateSummaryBtn.disabled = true;
+    elements.exportChaptersBtn.disabled = true;
 
     try {
         // Reset all video-related states

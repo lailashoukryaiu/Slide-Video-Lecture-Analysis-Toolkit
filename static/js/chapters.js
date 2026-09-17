@@ -4,6 +4,32 @@ import { elements } from './elements.js';
 import { state } from './main.js';
 import { showError } from './ui.js';
 
+export async function exportChapters() {
+    const button = elements.exportChaptersBtn;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+    showError('');
+    try {
+        const response = await fetch(`/export_chapters/${state.currentVideoId}`, { method: 'POST' });
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Chapter export failed');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${state.currentVideoId}_chapters.zip`;
+        link.click();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        showError(`Error exporting chapters: ${error.message}`);
+    } finally {
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-download"></i> Export Chapters';
+    }
+}
+
 /**
  * Generates chapter markers from the transcript
  */
@@ -35,6 +61,7 @@ export async function generateChapters() {
 
         // Store the chapters in state
         state.videoChapters = data.chapters;
+        elements.exportChaptersBtn.disabled = false;
         
         updateChapters(data.chapters);
     } catch (error) {
@@ -77,6 +104,7 @@ export function updateChapters(chapters) {
     
     // Store the chapters in state
     state.videoChapters = chapters;
+    elements.exportChaptersBtn.disabled = false;
     
     // Add chapter markers to the timeline
     addChapterMarkersToTimeline(chapters);

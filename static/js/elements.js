@@ -8,6 +8,7 @@ export const elements = {
     get errorAlert() { return document.getElementById('errorAlert'); },
     get loadingIndicator() { return document.getElementById('loadingIndicator'); },
     get generateSummaryBtn() { return document.getElementById('generateSummaryBtn'); },
+    get exportChaptersBtn() { return document.getElementById('exportChaptersBtn'); },
     get timeMarker() { return document.getElementById('timeMarker'); },
     get progressHoverTime() { return document.getElementById('progressHoverTime'); },
     get videoProgress() { return document.getElementById('videoProgress'); },

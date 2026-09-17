@@ -10,6 +10,7 @@ FULLSIZE_IMAGES_DIR = STATIC_DIR / "fullsize_images"
 SUMMARIES_DIR = STATIC_DIR / "summaries"
 DETECTIONS_DIR = STATIC_DIR / "detections"
 OCR_RESULTS_DIR = STATIC_DIR / "ocr_results"
+EXPORTS_DIR = STATIC_DIR / "exports"
 
 MODEL_CANDIDATES = [
     "slide-model.pt",
@@ -29,6 +30,7 @@ def ensure_app_directories():
         SUMMARIES_DIR,
         DETECTIONS_DIR,
         OCR_RESULTS_DIR,
+        EXPORTS_DIR,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

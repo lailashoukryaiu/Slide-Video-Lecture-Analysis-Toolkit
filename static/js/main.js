@@ -3,7 +3,7 @@
 import { setupVideoPlayer, updateTimeMarker } from './video.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
 import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime } from './scenes.js';
-import { generateChapters, updateChapters } from './chapters.js';
+import { generateChapters, updateChapters, exportChapters } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
@@ -209,6 +209,7 @@ function initApp() {
         }
     });
     elements.generateSummaryBtn.addEventListener('click', generateChapters);
+    elements.exportChaptersBtn.addEventListener('click', exportChapters);
     elements.closeDetectionBtn.addEventListener('click', () => {
         elements.detectionOverlay.style.display = 'none';
     });

@@ -10,11 +10,14 @@ from pathlib import Path
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import glob
+import subprocess
+import tempfile
+import zipfile
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
-from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
+from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
 # Import processing modules
 from processors.video_processor import VideoProcessor
@@ -369,6 +372,132 @@ async def generate_summary(request: Request):
 @app.get("/summary/{video_id}")
 async def get_summary(video_id: str):
     return await summary_processor.get_summary(video_id)
+
+def parse_chapter_timestamp(timestamp: str) -> float:
+    parts = [float(part) for part in timestamp.split(":")]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    raise ValueError(f"Invalid chapter timestamp: {timestamp}")
+
+def format_chapter_timestamp(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+@app.post("/export_chapters/{video_id}")
+async def export_chapters(video_id: str):
+    """Create a ZIP containing chapter clips, screenshots, and transcripts."""
+    video_path = video_processor.get_video_path(video_id)
+    summary_path = SUMMARIES_DIR / f"{video_id}.json"
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if not summary_path.is_file():
+        raise HTTPException(status_code=400, detail="Generate a chapter summary first")
+
+    try:
+        with summary_path.open("r", encoding="utf-8") as file:
+            chapters = json.load(file)
+        if not isinstance(chapters, list) or not chapters:
+            raise HTTPException(status_code=400, detail="No chapters available")
+
+        transcript = []
+        for transcript_path in [
+            TRANSCRIPTS_DIR / f"{video_id}_whisper.json",
+            TRANSCRIPTS_DIR / f"{video_id}_youtube.json",
+            TRANSCRIPTS_DIR / f"{video_id}.json",
+        ]:
+            if transcript_path.is_file():
+                with transcript_path.open("r", encoding="utf-8") as file:
+                    transcript = json.load(file)
+                break
+        if not transcript:
+            raise HTTPException(status_code=400, detail="No transcript available")
+
+        chapter_data = []
+        for index, chapter in enumerate(chapters):
+            if not isinstance(chapter, dict) or "timestamp" not in chapter:
+                continue
+            start = parse_chapter_timestamp(str(chapter["timestamp"]))
+            end = (
+                parse_chapter_timestamp(str(chapters[index + 1]["timestamp"]))
+                if index + 1 < len(chapters)
+                else None
+            )
+            chapter_data.append({
+                "index": len(chapter_data) + 1,
+                "title": str(chapter.get("title", f"Chapter {index + 1}")),
+                "start": start,
+                "end": end,
+            })
+        if not chapter_data:
+            raise HTTPException(status_code=400, detail="Chapter timestamps are invalid")
+
+        export_dir = EXPORTS_DIR / video_id
+        export_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = EXPORTS_DIR / f"{video_id}_chapters.zip"
+
+        with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            chaptered_lines = [f"# Chapters for {video_id}", ""]
+            for chapter in chapter_data:
+                number = chapter["index"]
+                safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", chapter["title"]).strip("_") or f"chapter_{number}"
+                base_name = f"{number:02d}_{safe_title}"
+                clip_path = temp_dir / f"{base_name}.mp4"
+                image_path = temp_dir / f"{base_name}.jpg"
+                transcript_path = temp_dir / f"{base_name}.txt"
+
+                ffmpeg_clip = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", str(chapter["start"]),
+                    "-i", str(video_path),
+                ]
+                if chapter["end"] is not None:
+                    ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["start"])])
+                ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
+                subprocess.run(ffmpeg_clip, check=True)
+                subprocess.run([
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", str(chapter["start"]), "-i", str(video_path),
+                    "-frames:v", "1", str(image_path)
+                ], check=True)
+
+                chapter_transcript = [
+                    item for item in transcript
+                    if chapter["start"] <= float(item.get("start", 0))
+                    and (chapter["end"] is None or float(item.get("start", 0)) < chapter["end"])
+                ]
+                transcript_text = "\n".join(
+                    f"[{format_chapter_timestamp(float(item.get('start', 0)))}] {item.get('text', '').strip()}"
+                    for item in chapter_transcript
+                )
+                transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
+                chaptered_lines.extend([
+                    f"## Chapter {number}: {chapter['title']}",
+                    f"Start: {format_chapter_timestamp(chapter['start'])}",
+                    "",
+                    transcript_text,
+                    "",
+                ])
+
+            (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
+            (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for file_path in temp_dir.iterdir():
+                    archive.write(file_path, file_path.name)
+
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"{video_id}_chapters.zip"
+        )
+    except HTTPException:
+        raise
+    except (ValueError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail=f"Chapter export failed: {error}")
 
 if __name__ == "__main__":
     import uvicorn
