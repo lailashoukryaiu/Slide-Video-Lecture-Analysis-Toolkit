@@ -98,6 +98,7 @@ export async function processVideo() {
 
     showError('');
     showLoading(true);
+    elements.loadingIndicator.querySelector('p').textContent = 'Uploading video...';
     elements.generateSummaryBtn.disabled = true;
     elements.exportChaptersBtn.disabled = true;
 
@@ -114,14 +115,19 @@ export async function processVideo() {
 
         // Set new source and wait for metadata to load
         await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Upload completed, but the browser could not load the video preview.'));
+            }, 30000);
             elements.videoPlayer.src = data.video_url;
             
             elements.videoPlayer.onloadedmetadata = () => {
+                clearTimeout(timeout);
                 setupVideoPlayer(elements.videoPlayer);
                 resolve();
             };
             
             elements.videoPlayer.onerror = () => {
+                clearTimeout(timeout);
                 reject(new Error('Failed to load video'));
             };
         });
