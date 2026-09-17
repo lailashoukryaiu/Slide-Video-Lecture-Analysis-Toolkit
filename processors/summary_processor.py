@@ -176,30 +176,6 @@ Format each chapter exactly like this example:
             with summary_path.open("w", encoding="utf-8") as file:
                 json.dump(chapters, file)
 
-    async def get_summary(self, video_id: str):
-        """Get saved chapter summary for a video."""
-        summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
-        if os.path.exists(summary_path):
-            try:
-                with open(summary_path, 'r') as f:
-                    chapters = json.load(f)
-                # if chapters is not flat, flatten
-                if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
-                    chapters = [item for sublist in chapters for item in sublist]
-                if self._looks_like_legacy_fallback(chapters):
-                    return JSONResponse({
-                        "success": True,
-                        "chapters": [],
-                        "exists": False,
-                        "stale": True
-                    })
-                chapters = self._normalize_chapters(chapters, [])
-                return JSONResponse({
-                    "success": True,
-                    "chapters": chapters,
-                    "exists": True
-                })
-
     @staticmethod
     def _looks_like_legacy_fallback(chapters: list) -> bool:
         if not isinstance(chapters, list) or not chapters:
@@ -228,14 +204,36 @@ Format each chapter exactly like this example:
         if len(parts) == 3:
                 return parts[0] * 3600 + parts[1] * 60 + parts[2]
         raise ValueError("Invalid timestamp")
+
+    async def get_summary(self, video_id: str):
+        """Get saved chapter summary for a video."""
+        summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path, 'r') as f:
+                    chapters = json.load(f)
+                if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
+                    chapters = [item for sublist in chapters for item in sublist]
+                if self._looks_like_legacy_fallback(chapters):
+                    return JSONResponse({
+                        "success": True,
+                        "chapters": [],
+                        "exists": False,
+                        "stale": True
+                    })
+                chapters = self._normalize_chapters(chapters, [])
+                return JSONResponse({
+                    "success": True,
+                    "chapters": chapters,
+                    "exists": True
+                })
             except Exception as e:
                 return JSONResponse({
                     "success": False,
                     "error": str(e)
                 })
-        else:
-            return JSONResponse({
-                "success": True,
-                "chapters": [],
-                "exists": False
-            }) 
+        return JSONResponse({
+            "success": True,
+            "chapters": [],
+            "exists": False
+        })
