@@ -58,6 +58,6 @@ export const elements = {
     get whisperProgress() { return document.getElementById('whisperProgress'); },
     get whisperProgressFill() { return document.querySelector('#whisperProgress .progress-fill'); },
     get whisperProgressText() { return document.querySelector('#whisperProgress .progress-text'); },
-    get uploadVideoBtn() { return document.getElementById('uploadVideoBtn'); }
+    get uploadVideoBtn() { return document.getElementById('uploadVideoBtn'); },
     get detectScenesBtn() { return document.getElementById('detectScenesBtn'); }
 };
