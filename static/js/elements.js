@@ -15,6 +15,7 @@ export const elements = {
     get thumbnailTimeline() { return document.getElementById('thumbnailTimeline'); },
     get scenesContainer() { return document.getElementById('scenesContainer'); },
     get chaptersContainer() { return document.getElementById('chaptersContainer'); },
+    get summaryStatus() { return document.getElementById('summaryStatus'); },
     get transcriptContainer() { return document.getElementById('transcriptContainer'); },
     get slideContentContainer() { return document.getElementById('slideContentContainer'); },
     get detectionOverlay() { return document.getElementById('detectionOverlay'); },

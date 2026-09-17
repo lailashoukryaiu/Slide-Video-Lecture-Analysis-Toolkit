@@ -157,6 +157,32 @@ body {
     margin: 0 auto 16px;
 }
 
+.summary-status {
+    display: block;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    border-radius: var(--border-radius);
+    font-weight: 500;
+}
+
+.summary-status-generating {
+    color: #8a5a00;
+    background-color: #fff8e1;
+    border-left: 4px solid var(--warning-color);
+}
+
+.summary-status-complete {
+    color: #256029;
+    background-color: #e8f5e9;
+    border-left: 4px solid var(--success-color);
+}
+
+.summary-status-error {
+    color: #a12622;
+    background-color: #ffebee;
+    border-left: 4px solid var(--error-color);
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }

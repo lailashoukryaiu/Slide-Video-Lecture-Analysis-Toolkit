@@ -38,7 +38,9 @@ export async function generateChapters() {
     const chaptersContainer = elements.chaptersContainer;
     
     generateSummaryBtn.disabled = true;
-    chaptersContainer.innerHTML = '<p>Generating summary...</p>';
+    generateSummaryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+    setSummaryStatus('generating', '<i class="fas fa-spinner fa-spin"></i> Generating summary and chapters. This may take a minute...');
+    chaptersContainer.querySelectorAll(':scope > p').forEach(element => element.remove());
     showError('');
 
     try {
@@ -64,12 +66,33 @@ export async function generateChapters() {
         elements.exportChaptersBtn.disabled = false;
         
         updateChapters(data.chapters);
+        setSummaryStatus(
+            data.fallback ? 'complete fallback' : 'complete',
+            data.fallback
+                ? '<i class="fas fa-check-circle"></i> Summary ready using timestamp-based fallback chapters.'
+                : '<i class="fas fa-check-circle"></i> Summary and chapters ready.'
+        );
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
+        setSummaryStatus('error', '<i class="fas fa-exclamation-circle"></i> Summary generation failed.');
         chaptersContainer.innerHTML = '<p>Failed to generate summary. Please try again.</p>';
     } finally {
         generateSummaryBtn.disabled = false;
+        generateSummaryBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Summary';
     }
+}
+
+function setSummaryStatus(state, message) {
+    let status = elements.summaryStatus;
+    if (!status) {
+        status = document.createElement('div');
+        status.id = 'summaryStatus';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        elements.chaptersContainer.prepend(status);
+    }
+    status.className = `summary-status summary-status-${state.split(' ')[0]}`;
+    status.innerHTML = message;
 }
 
 /**
@@ -78,10 +101,15 @@ export async function generateChapters() {
  */
 export function updateChapters(chapters) {
     const chaptersContainer = elements.chaptersContainer;
-    chaptersContainer.innerHTML = '';
+    const status = elements.summaryStatus;
+    chaptersContainer.querySelectorAll(':scope > .chapter-item, :scope > p').forEach(element => element.remove());
+    if (status) {
+        status.hidden = false;
+    }
     
     if (!chapters || chapters.length === 0) {
         chaptersContainer.innerHTML = '<p>No chapters available.</p>';
+        setSummaryStatus('complete', '<i class="fas fa-info-circle"></i> No chapters are available.');
         return;
     }
 
@@ -105,6 +133,7 @@ export function updateChapters(chapters) {
     // Store the chapters in state
     state.videoChapters = chapters;
     elements.exportChaptersBtn.disabled = false;
+    setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     
     // Add chapter markers to the timeline
     addChapterMarkersToTimeline(chapters);
