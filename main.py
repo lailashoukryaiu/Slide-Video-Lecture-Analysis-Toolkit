@@ -16,6 +16,7 @@ import zipfile
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+from dotenv import load_dotenv
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
@@ -26,6 +27,8 @@ from processors.ocr_processor import OCRProcessor
 from processors.transcript_processor import TranscriptProcessor
 from processors.embedding_processor import EmbeddingProcessor
 from processors.summary_processor import SummaryProcessor
+
+load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -254,8 +257,26 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
                 'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
                 'merge_output_format': 'mp4',
             }
+            cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+            if cookies_file:
+                cookies_path = Path(cookies_file).expanduser().resolve()
+                if not cookies_path.is_file():
+                    raise RuntimeError(
+                        f"YTDLP_COOKIES_FILE does not exist: {cookies_path}"
+                    )
+                ydl_opts["cookiefile"] = str(cookies_path)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
+                try:
+                    ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
+                except yt_dlp.utils.DownloadError as error:
+                    error_text = str(error)
+                    if "Sign in to confirm you're not a bot" in error_text:
+                        raise RuntimeError(
+                            "YouTube requires authentication for this download. "
+                            "Export YouTube cookies in Netscape format, upload the "
+                            "cookie file to Colab, and set YTDLP_COOKIES_FILE to its path."
+                        ) from error
+                    raise
 
         downloaded_files = os.listdir(VIDEO_DIR)
         for file in downloaded_files:
