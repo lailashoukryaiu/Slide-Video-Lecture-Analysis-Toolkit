@@ -146,7 +146,7 @@ class SceneProcessor:
             cap.release()
 
             print(f"Detected {len(timestamps)} slide changes")
-            
+
             video_thumbnails_dir = str(THUMBNAILS_DIR / video_id)
             video_fullsize_dir = str(FULLSIZE_IMAGES_DIR / video_id)
             os.makedirs(video_thumbnails_dir, exist_ok=True)
