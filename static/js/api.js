@@ -185,6 +185,7 @@ export async function processVideo() {
 
             // Enable generate summary button if transcript is available
             elements.generateSummaryBtn.disabled = false;
+            elements.exportChaptersBtn.disabled = false;
         } else {
             elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
             elements.generateSummaryBtn.disabled = true;
@@ -270,6 +271,7 @@ export async function processVideoUpload(file) {
             
             // Enable generate summary button
             elements.generateSummaryBtn.disabled = false;
+            elements.exportChaptersBtn.disabled = false;
             
             // Check for existing summary
             const summaryResponse = await fetch(`/summary/${data.video_id}`);

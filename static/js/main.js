@@ -210,6 +210,9 @@ function initApp() {
     });
     elements.generateSummaryBtn.addEventListener('click', generateChapters);
     elements.exportChaptersBtn.addEventListener('click', exportChapters);
+    elements.intervalExportToggle.addEventListener('change', (event) => {
+        elements.intervalDuration.disabled = !event.target.checked;
+    });
     elements.closeDetectionBtn.addEventListener('click', () => {
         elements.detectionOverlay.style.display = 'none';
     });

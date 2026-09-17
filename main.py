@@ -415,18 +415,40 @@ def format_chapter_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 @app.post("/export_chapters/{video_id}")
-async def export_chapters(video_id: str):
+async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
+    options = await request.json()
+    interval_minutes = options.get("interval_minutes")
     video_path = video_processor.get_video_path(video_id)
     summary_path = SUMMARIES_DIR / f"{video_id}.json"
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
-    if not summary_path.is_file():
+    if interval_minutes is None and not summary_path.is_file():
         raise HTTPException(status_code=400, detail="Generate a chapter summary first")
 
     try:
-        with summary_path.open("r", encoding="utf-8") as file:
-            chapters = json.load(file)
+        if interval_minutes is not None:
+            try:
+                interval_seconds = float(interval_minutes) * 60
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Interval duration must be a number of minutes")
+            if interval_seconds <= 0:
+                raise HTTPException(status_code=400, detail="Interval duration must be greater than zero")
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+                check=True, capture_output=True, text=True
+            )
+            duration = float(probe.stdout.strip())
+            chapters = [
+                {"timestamp": format_chapter_timestamp(start), "title": f"Interval {index + 1}"}
+                for index, start in enumerate(
+                    range(0, max(1, int(duration)), max(1, int(interval_seconds)))
+                )
+            ]
+        else:
+            with summary_path.open("r", encoding="utf-8") as file:
+                chapters = json.load(file)
         if not isinstance(chapters, list) or not chapters:
             raise HTTPException(status_code=400, detail="No chapters available")
 

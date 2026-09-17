@@ -76,13 +76,9 @@ Format each chapter exactly like this example:
                     ),
                 )
             except Exception as error:
-                chapters = self._fallback_chapters(transcript)
-                self._save_chapters(video_id, chapters)
                 return JSONResponse({
-                    "success": True,
-                    "chapters": chapters,
-                    "fallback": True,
-                    "message": f"Gemini was unavailable ({error}); generated timestamp-based chapters instead."
+                    "success": False,
+                    "error": f"Gemini could not generate a summary: {error}"
                 })
             try:
                 # Try to parse the response as JSON
@@ -135,7 +131,7 @@ Format each chapter exactly like this example:
     def _normalize_chapters(chapters: list, transcript: list) -> list:
         """Ensure every chapter has a usable timestamp and title."""
         if not isinstance(chapters, list):
-            return SummaryProcessor._fallback_chapters(transcript)
+            raise ValueError("Gemini returned chapters in an invalid format")
 
         normalized = []
         for index, chapter in enumerate(chapters):
@@ -169,7 +165,9 @@ Format each chapter exactly like this example:
                 "timestamp": f"{total_seconds // 60:02d}:{total_seconds % 60:02d}",
                 "title": raw_title,
             })
-        return normalized or SummaryProcessor._fallback_chapters(transcript)
+        if not normalized:
+            raise ValueError("Gemini returned no valid chapters")
+        return normalized
 
     @staticmethod
     def _save_chapters(video_id: str, chapters: list):

@@ -9,6 +9,8 @@ export const elements = {
     get loadingIndicator() { return document.getElementById('loadingIndicator'); },
     get generateSummaryBtn() { return document.getElementById('generateSummaryBtn'); },
     get exportChaptersBtn() { return document.getElementById('exportChaptersBtn'); },
+    get intervalExportToggle() { return document.getElementById('intervalExportToggle'); },
+    get intervalDuration() { return document.getElementById('intervalDuration'); },
     get timeMarker() { return document.getElementById('timeMarker'); },
     get progressHoverTime() { return document.getElementById('progressHoverTime'); },
     get videoProgress() { return document.getElementById('videoProgress'); },

@@ -10,7 +10,16 @@ export async function exportChapters() {
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
     showError('');
     try {
-        const response = await fetch(`/export_chapters/${state.currentVideoId}`, { method: 'POST' });
+        const useIntervals = elements.intervalExportToggle?.checked;
+        const intervalMinutes = Number(elements.intervalDuration?.value);
+        if (useIntervals && (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0)) {
+            throw new Error('Enter an interval duration greater than zero minutes.');
+        }
+        const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(useIntervals ? { interval_minutes: intervalMinutes } : {})
+        });
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'Chapter export failed');
@@ -19,7 +28,7 @@ export async function exportChapters() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${state.currentVideoId}_chapters.zip`;
+        link.download = `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
         link.click();
         URL.revokeObjectURL(url);
     } catch (error) {
@@ -66,12 +75,7 @@ export async function generateChapters() {
         elements.exportChaptersBtn.disabled = false;
         
         updateChapters(data.chapters);
-        setSummaryStatus(
-            data.fallback ? 'complete fallback' : 'complete',
-            data.fallback
-                ? '<i class="fas fa-check-circle"></i> Summary ready using timestamp-based fallback chapters.'
-                : '<i class="fas fa-check-circle"></i> Summary and chapters ready.'
-        );
+        setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
         setSummaryStatus('error', '<i class="fas fa-exclamation-circle"></i> Summary generation failed.');
