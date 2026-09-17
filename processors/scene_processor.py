@@ -1,6 +1,6 @@
 import os
 import cv2
-from scenedetect import open_video, AdaptiveDetector, SceneManager
+from scenedetect import open_video, ContentDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -114,10 +114,9 @@ class SceneProcessor:
 
             scene_manager = SceneManager()
             scene_manager.add_detector(
-                AdaptiveDetector(
-                    adaptive_threshold=adaptive_threshold,
+                ContentDetector(
+                    threshold=max(1.0, adaptive_threshold * 20),
                     min_scene_len=10,
-                    min_content_val=3
                 )
             )
             scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
