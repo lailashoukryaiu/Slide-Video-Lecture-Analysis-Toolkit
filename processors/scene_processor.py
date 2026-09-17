@@ -115,11 +115,12 @@ class SceneProcessor:
             scene_manager = SceneManager()
             scene_manager.add_detector(
                 AdaptiveDetector(
-                    adaptive_threshold=1,
-                    min_content_val=5
+                    adaptive_threshold=0.5,
+                    min_scene_len=10,
+                    min_content_val=3
                 )
             )
-            scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=10)
+            scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
             scenes = scene_manager.get_scene_list()
             video.close()
 
