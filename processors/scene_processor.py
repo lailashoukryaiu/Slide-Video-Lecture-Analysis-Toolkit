@@ -1,6 +1,6 @@
 import os
 import cv2
-from scenedetect import open_video, AdaptiveDetector, SceneManager, ContentDetector
+from scenedetect import open_video, AdaptiveDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -75,8 +75,6 @@ class SceneProcessor:
         """Run scene detection and save results."""
         try:
             scenes = await self.detect_scenes(video_path)
-            if not scenes:
-                scenes = await self.create_fallback_scene(video_path)
 
             scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
@@ -116,17 +114,6 @@ class SceneProcessor:
             scenes = scene_manager.get_scene_list()
             video.close()
 
-            # A second, less restrictive detector catches hard slide cuts that
-            # adaptive detection can miss on compressed lecture videos.
-            if not scenes:
-                fallback_video = open_video(video_path)
-                fallback_manager = SceneManager()
-                fallback_manager.add_detector(ContentDetector(threshold=12.0, min_scene_len=15))
-                fallback_manager.detect_scenes(video=fallback_video, show_progress=False, frame_skip=5)
-                scenes = fallback_manager.get_scene_list()
-                fallback_video.close()
-            if not scenes:
-                scenes = self.detect_frame_difference_scenes(video_path)
             print(f"Detected {len(scenes)} scenes")
             
             scene_changes = []
@@ -141,16 +128,12 @@ class SceneProcessor:
             os.makedirs(video_thumbnails_dir, exist_ok=True)
             os.makedirs(video_fullsize_dir, exist_ok=True)
             
-            # A video without detected cuts is still one processable scene.
-            timestamps = (
-                [
-                    scene[0].get_seconds()
-                    if hasattr(scene[0], "get_seconds")
-                    else float(scene[0])
-                    for scene in scenes
-                ]
-                if scenes else [0.0]
-            )
+            timestamps = [
+                scene[0].get_seconds()
+                if hasattr(scene[0], "get_seconds")
+                else float(scene[0])
+                for scene in scenes
+            ]
 
             for i, timestamp in enumerate(timestamps):
                 minutes = int(timestamp // 60)
@@ -201,109 +184,6 @@ class SceneProcessor:
         except Exception as e:
             print(f"Error detecting scenes: {str(e)}")
             return []
-
-    @staticmethod
-    def detect_frame_difference_scenes(video_path: str) -> list:
-        """Detect hard slide transitions using sampled OpenCV frame differences."""
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return []
-
-        try:
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            duration = frame_count / fps if fps > 0 else 0
-            sample_step = max(1, int(round(fps)))  # approximately one frame per second
-            samples = []
-            frame_index = 0
-            previous = None
-
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                if frame_index % sample_step == 0:
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    gray = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
-                    if previous is not None:
-                        difference = float(cv2.absdiff(previous, gray).mean())
-                        samples.append((frame_index / fps if fps > 0 else 0, difference))
-                    previous = gray
-                frame_index += 1
-
-            if len(samples) < 2:
-                return []
-
-            values = sorted(value for _, value in samples)
-            median = values[len(values) // 2]
-            upper_quartile = values[int(len(values) * 0.75)]
-            threshold = max(10.0, median + max(5.0, (upper_quartile - median) * 2.0))
-            candidates = [
-                (timestamp, difference)
-                for timestamp, difference in samples
-                if difference >= threshold
-            ]
-
-            # Suppress repeated detections during animated transitions.
-            changes = []
-            for timestamp, _ in candidates:
-                if not changes or timestamp - changes[-1] >= 3.0:
-                    changes.append(timestamp)
-
-            if not changes:
-                return []
-
-            return [
-                [0, changes[0]]
-            ] + [
-                [changes[index], changes[index + 1] if index + 1 < len(changes) else duration]
-                for index in range(len(changes))
-            ]
-        finally:
-            cap.release()
-
-    async def create_fallback_scene(self, video_path: str) -> list:
-        """Create one processable scene when detection fails or finds no cuts."""
-        cap = cv2.VideoCapture(video_path)
-        try:
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            duration = frame_count / fps if fps > 0 else 0
-            video_id = os.path.splitext(os.path.basename(video_path))[0]
-            thumbnail_dir = THUMBNAILS_DIR / video_id
-            fullsize_dir = FULLSIZE_IMAGES_DIR / video_id
-            thumbnail_dir.mkdir(parents=True, exist_ok=True)
-            fullsize_dir.mkdir(parents=True, exist_ok=True)
-
-            ret, frame = cap.read()
-            if not ret:
-                return []
-
-            fullsize_path = fullsize_dir / "0.jpg"
-            thumbnail_path = thumbnail_dir / "0.jpg"
-            height, width = frame.shape[:2]
-            if height > 1080:
-                ratio = 1080 / height
-                frame = cv2.resize(
-                    frame,
-                    (int(width * ratio), 1080),
-                    interpolation=cv2.INTER_AREA,
-                )
-            cv2.imwrite(str(fullsize_path), frame)
-            cv2.imwrite(
-                str(thumbnail_path),
-                cv2.resize(frame, (max(1, frame.shape[1] // 4), max(1, frame.shape[0] // 4))),
-            )
-            return [{
-                "timestamp": "00:00",
-                "time_seconds": 0,
-                "duration": max(0, duration),
-                "thumbnail": f"/thumbnails/{video_id}/0.jpg",
-                "fullsize": f"/fullsize_images/{video_id}/0.jpg",
-                "detection_note": "Scene detector found no cuts; using the first frame.",
-            }]
-        finally:
-            cap.release()
 
     async def process_scene_images(self, video_id: str):
         """Queue scene images for YOLO processing and wait for completion."""
