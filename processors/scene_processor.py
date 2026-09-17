@@ -1,6 +1,6 @@
 import os
 import cv2
-from scenedetect import open_video, AdaptiveDetector, SceneManager
+from scenedetect import open_video, AdaptiveDetector, ContentDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
 from concurrent.futures import ThreadPoolExecutor
