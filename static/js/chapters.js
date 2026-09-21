@@ -2,7 +2,7 @@
 
 import { elements } from './elements.js';
 import { state } from './main.js';
-import { showError } from './ui.js';
+import { showError, showErrorWithActions, showNotification } from './ui.js';
 
 let chapterMarkerGeneration = 0;
 
@@ -79,6 +79,10 @@ export async function generateChapters() {
 
         // Store the chapters in state
         state.videoChapters = data.chapters;
+        if (state.summaryRetryTimer) {
+            clearInterval(state.summaryRetryTimer);
+            state.summaryRetryTimer = null;
+        }
         elements.exportChaptersBtn.disabled = false;
         
         updateChapters(data.chapters);
@@ -99,6 +103,29 @@ export async function generateChapters() {
         retryButton.innerHTML = '<i class="fas fa-redo"></i> Retry';
         retryButton.addEventListener('click', generateChapters);
         status.appendChild(retryButton);
+        if (isModelError) {
+            const autoRetryButton = document.createElement('button');
+            autoRetryButton.type = 'button';
+            autoRetryButton.className = 'btn btn-secondary summary-retry-btn';
+            autoRetryButton.innerHTML = '<i class="fas fa-sync"></i> Retry automatically';
+            autoRetryButton.addEventListener('click', () => {
+                if (state.summaryRetryTimer) return;
+                state.summaryRetryTimer = setInterval(generateChapters, 15000);
+                showNotification('Automatic Gemini retry enabled. Use Stop automatic retry to stop it.', 'info');
+            });
+            status.appendChild(autoRetryButton);
+            const stopRetryButton = document.createElement('button');
+            stopRetryButton.type = 'button';
+            stopRetryButton.className = 'btn btn-secondary summary-retry-btn';
+            stopRetryButton.innerHTML = '<i class="fas fa-stop"></i> Stop automatic retry';
+            stopRetryButton.addEventListener('click', () => {
+                if (state.summaryRetryTimer) {
+                    clearInterval(state.summaryRetryTimer);
+                    state.summaryRetryTimer = null;
+                }
+                showNotification('Automatic Gemini retry stopped.', 'info');
+            });
+            status.appendChild(stopRetryButton);
     } finally {
         generateSummaryBtn.disabled = false;
         generateSummaryBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Summary';

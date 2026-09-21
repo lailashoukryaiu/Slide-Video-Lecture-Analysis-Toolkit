@@ -19,6 +19,8 @@ export const state = {
     sceneDetectionStartedAt: null,
     currentVideoId: null,
     youtubeTranscriptInterval: null,
+    youtubeRetryTimer: null,
+    summaryRetryTimer: null,
     currentDebugScene: null,
     showSceneMarkers: true,
     showTimestamps: true,

@@ -3,7 +3,7 @@
 import { elements } from './elements.js';
 import { state } from './main.js';
 import { extractVideoId } from './utils.js';
-import { showError, showErrorWithAction, showLoading, showNotification } from './ui.js';
+import { showError, showErrorWithActions, showLoading, showNotification } from './ui.js';
 import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
@@ -227,6 +227,10 @@ export async function processVideo() {
 
         // Store video ID
         state.currentVideoId = videoId;
+        if (state.youtubeRetryTimer) {
+            clearInterval(state.youtubeRetryTimer);
+            state.youtubeRetryTimer = null;
+        }
         elements.detectScenesBtn.disabled = false;
         
         // Check transcript availability
@@ -299,10 +303,25 @@ export async function processVideo() {
         const message = `Error: ${error.message}`;
         const restrictionError = /youtube|sign in|authentication|not a bot|bot|private|age-restricted|unavailable|forbidden|403|429/i.test(error.message);
         if (restrictionError) {
-            showErrorWithAction(
+            const startAutoRetry = () => {
+                if (state.youtubeRetryTimer) return;
+                state.youtubeRetryTimer = setInterval(() => processVideo(), 15000);
+                showNotification('Automatic YouTube retry enabled. Use Stop automatic retry to stop it.', 'info');
+            };
+            const stopAutoRetry = () => {
+                if (state.youtubeRetryTimer) {
+                    clearInterval(state.youtubeRetryTimer);
+                    state.youtubeRetryTimer = null;
+                }
+                showError('');
+            };
+            showErrorWithActions(
                 `${message} YouTube may be restricting this download. You can retry.`,
-                'Retry YouTube download',
-                () => processVideo()
+                [
+                    { label: 'Retry YouTube download', action: () => processVideo() },
+                    { label: 'Retry automatically', action: startAutoRetry },
+                    { label: 'Stop automatic retry', action: stopAutoRetry }
+                ]
             );
         } else {
             showError(message);
