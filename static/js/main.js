@@ -29,6 +29,7 @@ export const state = {
     searchResults: [],
     currentSearchIndex: -1,
     ocrResults: [],
+    ocrProcessing: false,
     slideSearchResults: [],
     currentSlideSearchIndex: -1,
     currentTranscriptSource: 'youtube',  // Default transcript source

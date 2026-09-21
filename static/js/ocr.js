@@ -66,6 +66,7 @@ function handleSSEEvent(data, videoId) {
             break;
             
         case 'ocr_progress':
+            state.ocrProcessing = true;
             // Update progress display
             updateProgressDisplay(data.data);
             
@@ -76,6 +77,7 @@ function handleSSEEvent(data, videoId) {
             break;
             
         case 'ocr_complete':
+            state.ocrProcessing = false;
             console.log('OCR processing complete:', data.data.message);
             
             // If we have final results in the event, update immediately
@@ -86,8 +88,9 @@ function handleSSEEvent(data, videoId) {
                 fetchOcrResults(videoId);
             }
             break;
-            
+
         case 'ocr_error':
+            state.ocrProcessing = false;
             console.error('OCR processing error:', data.data.error);
             // Show error notification
             showNotification('Error during OCR processing: ' + data.data.error, 'error');
@@ -211,6 +214,7 @@ export async function stopOcrProcessing(videoId) {
             window.sseConnection.close();
             window.sseConnection = null;
         }
+        state.ocrProcessing = false;
         if (button) button.remove();
         const progressText = document.querySelector('.ocr-progress-text');
         if (progressText) progressText.textContent = 'OCR processing stopped.';
@@ -306,6 +310,7 @@ export async function fetchOcrResults(videoId) {
                     startButton.disabled = true;
                     startButton.textContent = 'Starting OCR...';
                     try {
+                        state.ocrProcessing = true;
                         const startResponse = await fetch(`/start_ocr/${encodeURIComponent(videoId)}`, { method: 'POST' });
                         const startData = await startResponse.json();
                         if (!startResponse.ok || !startData.success) {
@@ -428,7 +433,7 @@ export function updateSlideContentDisplay(pendingOcrCount = null) {
         }
         
         // If we have pending OCR tasks, show a notice
-        if (pendingOcrCount > 0) {
+        if (state.ocrProcessing && pendingOcrCount > 0) {
             const pendingNotice = document.createElement('div');
             pendingNotice.id = 'pendingOcrNotice';
             pendingNotice.className = 'alert alert-info';
@@ -443,7 +448,7 @@ export function updateSlideContentDisplay(pendingOcrCount = null) {
     
     if (!state.ocrResults || state.ocrResults.length === 0) {
         // Show the "coming soon" message if no OCR results
-        if (pendingOcrCount > 0 || pendingOcrCount === null) {
+        if (state.ocrProcessing && pendingOcrCount > 0) {
             // Show loading indicator if OCR is in progress
             const comingSoon = document.createElement('div');
             comingSoon.className = 'coming-soon';

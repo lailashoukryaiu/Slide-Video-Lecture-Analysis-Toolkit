@@ -58,6 +58,15 @@ async function startYoutubeWhisperPolling(videoId) {
                 clearInterval(state.youtubeTranscriptInterval);
                 state.youtubeTranscriptInterval = null;
             }
+            elements.transcriptContainer.innerHTML = `
+                <div class="transcript-processing transcript-error">
+                    <i class="fas fa-info-circle"></i>
+                    <p>Transcript generation stopped: ${data.error || 'No recognizable speech was found in this video.'}</p>
+                    <p>You can still detect slides, but transcript-based summaries are unavailable.</p>
+                </div>
+            `;
+            elements.generateSummaryBtn.disabled = true;
+            elements.exportChaptersBtn.disabled = true;
             throw new Error(data.error || 'Whisper transcript generation failed.');
         }
         return false;
@@ -111,6 +120,7 @@ function resetVideoStates() {
     
     // Reset OCR state
     state.ocrResults = [];
+    state.ocrProcessing = false;
     
     // Remove any existing progress containers
     const progressContainer = document.getElementById('ocrProgressContainer');
@@ -443,6 +453,15 @@ export async function processVideoUpload(file) {
                         elements.generateSummaryBtn.disabled = false;
                     } else if (whisperData.status === 'error') {
                         clearInterval(whisperCheckInterval);
+                        elements.transcriptContainer.innerHTML = `
+                            <div class="transcript-processing transcript-error">
+                                <i class="fas fa-info-circle"></i>
+                                <p>Transcript generation stopped: ${whisperData.error || 'No recognizable speech was found in this video.'}</p>
+                                <p>You can still detect slides, but transcript-based summaries are unavailable.</p>
+                            </div>
+                        `;
+                        elements.generateSummaryBtn.disabled = true;
+                        elements.exportChaptersBtn.disabled = true;
                         showError(`Error generating transcript: ${whisperData.error}`);
                     } else if (whisperData.status === 'in_progress' && whisperData.progress) {
                         // Update progress indicator
