@@ -192,11 +192,15 @@ function setupKeyboardControls() {
 
 // Initialize the application
 function initApp() {
+    const bind = (element, event, handler) => {
+        if (element) element.addEventListener(event, handler);
+    };
+
     // Wire the core video controls before optional analysis features initialize.
-    elements.loadVideoBtn.addEventListener('click', processVideo);
-    elements.detectScenesBtn.addEventListener('click', detectScenes);
+    bind(elements.loadVideoBtn, 'click', processVideo);
+    bind(elements.detectScenesBtn, 'click', detectScenes);
     if (elements.downloadScreenshotsBtn) {
-        elements.downloadScreenshotsBtn.addEventListener('click', downloadSceneScreenshots);
+        bind(elements.downloadScreenshotsBtn, 'click', downloadSceneScreenshots);
     }
 
     // Check YOLO status when the page loads
@@ -205,44 +209,48 @@ function initApp() {
     // Set up tabs
     setupTabs();
     
-    // Set up search functionality
-    setupSearch();
-    
-    // Set up slide search functionality
-    setupSlideSearch();
-    
-    // Set up keyboard controls for slide navigation
-    setupKeyboardControls();
-    
-    // Initialize interactive layer
-    initInteractiveLayer();
-    console.log('Interactive layer initialized');
+    // Optional analysis features must not prevent the core controls or
+    // dynamically-created video selectors from initializing.
+    try {
+        setupSearch();
+        setupSlideSearch();
+        setupKeyboardControls();
+    } catch (error) {
+        console.error('Search/navigation initialization failed:', error);
+    }
+
+    try {
+        initInteractiveLayer();
+        console.log('Interactive layer initialized');
+    } catch (error) {
+        console.error('Interactive layer initialization failed:', error);
+    }
     
     // Add event listeners
-    elements.generateSummaryBtn.addEventListener('click', generateChapters);
-    elements.exportChaptersBtn.addEventListener('click', exportChapters);
-    elements.intervalExportToggle.addEventListener('change', (event) => {
+    bind(elements.generateSummaryBtn, 'click', generateChapters);
+    bind(elements.exportChaptersBtn, 'click', exportChapters);
+    bind(elements.intervalExportToggle, 'change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;
     });
-    elements.sceneDetectionThreshold.addEventListener('input', (event) => {
+    bind(elements.sceneDetectionThreshold, 'input', (event) => {
         elements.sceneDetectionThresholdValue.textContent = event.target.value;
         state.sceneDetectionThreshold = Number(event.target.value);
         localStorage.setItem('sceneDetectionThreshold', event.target.value);
     });
     elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
     elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
-    elements.closeDetectionBtn.addEventListener('click', () => {
+    bind(elements.closeDetectionBtn, 'click', () => {
         elements.detectionOverlay.style.display = 'none';
     });
-    elements.debugDetectionsBtn.addEventListener('click', () => {
+    bind(elements.debugDetectionsBtn, 'click', () => {
         debugDetections(state.currentDebugScene, state.currentVideoId);
     });
-    elements.closeDebugBtn.addEventListener('click', () => {
+    bind(elements.closeDebugBtn, 'click', () => {
         elements.debugOverlay.style.display = 'none';
     });
-    elements.sceneToggle.addEventListener('change', toggleSceneMarkers);
-    elements.timestampToggle.addEventListener('change', toggleTimestamps);
-    elements.fuzzySearchToggle.addEventListener('change', toggleFuzzySearch);
+    bind(elements.sceneToggle, 'change', toggleSceneMarkers);
+    bind(elements.timestampToggle, 'change', toggleTimestamps);
+    bind(elements.fuzzySearchToggle, 'change', toggleFuzzySearch);
     
     // Settings modal
     elements.settingsBtn.addEventListener('click', openSettingsModal);

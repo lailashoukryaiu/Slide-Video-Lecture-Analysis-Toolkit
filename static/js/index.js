@@ -86,6 +86,10 @@ async function initUploadedVideos(inputSection) {
 
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    initApp();
+    try {
+        initApp();
+    } catch (error) {
+        console.error('Application initialization failed:', error);
+    }
     initExampleVideos();
-}); 
+});
