@@ -126,6 +126,7 @@ export async function generateChapters() {
                 showNotification('Automatic Gemini retry stopped.', 'info');
             });
             status.appendChild(stopRetryButton);
+        }
     } finally {
         generateSummaryBtn.disabled = false;
         generateSummaryBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Summary';
