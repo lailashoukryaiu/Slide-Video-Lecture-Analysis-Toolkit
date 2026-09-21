@@ -195,7 +195,9 @@ function initApp() {
     // Wire the core video controls before optional analysis features initialize.
     elements.loadVideoBtn.addEventListener('click', processVideo);
     elements.detectScenesBtn.addEventListener('click', detectScenes);
-    elements.downloadScreenshotsBtn.addEventListener('click', downloadSceneScreenshots);
+    if (elements.downloadScreenshotsBtn) {
+        elements.downloadScreenshotsBtn.addEventListener('click', downloadSceneScreenshots);
+    }
 
     // Check YOLO status when the page loads
     checkYoloStatus();

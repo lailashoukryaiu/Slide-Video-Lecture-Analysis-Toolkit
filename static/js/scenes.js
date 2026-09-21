@@ -59,7 +59,9 @@ export async function checkSceneDetection(videoId) {
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
-                elements.downloadScreenshotsBtn.disabled = data.scenes.length === 0;
+                if (elements.downloadScreenshotsBtn) {
+                    elements.downloadScreenshotsBtn.disabled = data.scenes.length === 0;
+                }
                 elements.detectScenesBtn.disabled = false;
                 elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
                 
@@ -77,6 +79,10 @@ export async function checkSceneDetection(videoId) {
             export async function downloadSceneScreenshots() {
                 const button = elements.downloadScreenshotsBtn;
                 if (!state.currentVideoId) return;
+                if (!button) {
+                    showError('Screenshot download is unavailable until the page is refreshed with the latest interface.');
+                    return;
+                }
                 button.disabled = true;
                 button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing...';
                 try {
