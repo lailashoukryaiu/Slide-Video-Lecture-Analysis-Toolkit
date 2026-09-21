@@ -272,6 +272,8 @@ function updatePartialOcrResults(partialResults, videoId, isFinal = false) {
  */
 export async function fetchOcrResults(videoId) {
     try {
+        const slideContentContainer = elements.slideContentContainer;
+
         // Connect to SSE for real-time updates if not already connected
         if (!window.sseConnection) {
             connectToSSE(videoId);
@@ -322,7 +324,6 @@ export async function fetchOcrResults(videoId) {
 
             // Add a button to trigger Surya OCR if we have no unmatched results yet
             const hasUnmatchedResults = state.ocrResults.some(result => result.ocr_class === 'unmatched');
-            const slideContentContainer = elements.slideContentContainer;
             
             // Only add the button if we don't already have unmatched results and OCR processing is complete
             if (!hasUnmatchedResults && data.processing_complete) {
