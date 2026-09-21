@@ -4,6 +4,7 @@ import { elements } from './elements.js';
 import { state } from './main.js';
 import { updateTimelineHighlight } from './video.js';
 import { fetchOcrResults } from './ocr.js';
+import { showError } from './ui.js';
 
 // Add state variable for label visibility
 let labelsVisible = true;
@@ -76,35 +77,6 @@ export async function checkSceneDetection(videoId) {
                 elements.thumbnailTimeline.innerHTML = '<p>Generating visual timeline...</p>';
             }
 
-            export async function downloadSceneScreenshots() {
-                const button = elements.downloadScreenshotsBtn;
-                if (!state.currentVideoId) return;
-                if (!button) {
-                    showError('Screenshot download is unavailable until the page is refreshed with the latest interface.');
-                    return;
-                }
-                button.disabled = true;
-                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing...';
-                try {
-                    const response = await fetch(`/download_scene_screenshots/${encodeURIComponent(state.currentVideoId)}`);
-                    if (!response.ok) {
-                        const error = await response.json().catch(() => ({}));
-                        throw new Error(error.detail || 'Could not download slide screenshots');
-                    }
-                    const blob = await response.blob();
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `${state.currentVideoId}_slide_screenshots.zip`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                } catch (error) {
-                    showError(`Error downloading screenshots: ${error.message}`);
-                } finally {
-                    button.disabled = state.videoScenes.length === 0;
-                    button.innerHTML = '<i class="fas fa-images"></i> Download Screenshots';
-                }
-            }
         } else {
             throw new Error(data.error || 'Scene processing failed');
         }
@@ -118,6 +90,36 @@ export async function checkSceneDetection(videoId) {
         elements.detectScenesBtn.disabled = false;
         elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
         showError(`Error checking scene detection: ${error.message}`);
+    }
+}
+
+export async function downloadSceneScreenshots() {
+    const button = elements.downloadScreenshotsBtn;
+    if (!state.currentVideoId) return;
+    if (!button) {
+        showError('Screenshot download is unavailable until the page is refreshed with the latest interface.');
+        return;
+    }
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing...';
+    try {
+        const response = await fetch(`/download_scene_screenshots/${encodeURIComponent(state.currentVideoId)}`);
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Could not download slide screenshots');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${state.currentVideoId}_slide_screenshots.zip`;
+        link.click();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        showError(`Error downloading screenshots: ${error.message}`);
+    } finally {
+        button.disabled = state.videoScenes.length === 0;
+        button.innerHTML = '<i class="fas fa-images"></i> Download Screenshots';
     }
 }
 
