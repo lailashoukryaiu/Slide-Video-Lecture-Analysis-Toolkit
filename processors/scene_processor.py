@@ -179,8 +179,10 @@ class SceneProcessor:
                             stable_frame = previous_frame
                         previous_difference = cv2.absdiff(previous_frame, sample)
                         stable_difference = cv2.absdiff(stable_frame, sample)
-                        previous_ratio = cv2.countNonZero(previous_difference > 25) / previous_difference.size
-                        stable_ratio = cv2.countNonZero(stable_difference > 25) / stable_difference.size
+                        previous_mask = cv2.compare(previous_difference, 25, cv2.CMP_GT)
+                        stable_mask = cv2.compare(stable_difference, 25, cv2.CMP_GT)
+                        previous_ratio = cv2.countNonZero(previous_mask) / previous_difference.size
+                        stable_ratio = cv2.countNonZero(stable_mask) / stable_difference.size
                         changed_ratio = max(previous_ratio, stable_ratio)
                         maximum_changed_ratio = max(maximum_changed_ratio, changed_ratio)
                         if (
