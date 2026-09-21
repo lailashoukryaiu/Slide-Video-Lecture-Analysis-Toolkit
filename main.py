@@ -181,6 +181,7 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
         raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 3")
     if mode not in {"content", "frame_difference"}:
         raise HTTPException(status_code=400, detail="Invalid scene detection mode")
+    print(f"Starting scene detection for {video_id}: mode={mode}, threshold={threshold}")
     await scene_processor.start_scene_detection(video_id, video_path, background_tasks, threshold, mode)
     return JSONResponse({"success": True, "message": "Scene detection started"})
 
