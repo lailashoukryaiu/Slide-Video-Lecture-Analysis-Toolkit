@@ -237,8 +237,9 @@ export async function processVideo() {
             };
         });
 
-        // Store video ID
-        state.currentVideoId = videoId;
+        // Store the ID returned by the server so downloaded files and
+        // subsequent scene requests always refer to the same video.
+        state.currentVideoId = data.video_id || videoId;
         if (state.youtubeRetryTimer) {
             clearInterval(state.youtubeRetryTimer);
             state.youtubeRetryTimer = null;
@@ -283,6 +284,10 @@ export async function processVideo() {
         // Update current transcript source
         state.currentTranscriptSource = transcriptSource;
 
+        // Transcript generation is independent from slide detection. Make
+        // scene controls available even when Whisper has no usable speech.
+        elements.detectScenesBtn.disabled = false;
+
         if (transcriptToUse) {
             state.currentTranscript = transcriptToUse;
             
@@ -304,9 +309,17 @@ export async function processVideo() {
             elements.generateSummaryBtn.disabled = false;
             elements.exportChaptersBtn.disabled = false;
         } else if (data.transcript_in_progress) {
-            await startYoutubeWhisperPolling(videoId);
+            try {
+                await startYoutubeWhisperPolling(state.currentVideoId);
+            } catch (error) {
+                showError(`Transcript unavailable: ${error.message}`);
+            }
         } else {
-            await startYoutubeWhisperPolling(videoId);
+            try {
+                await startYoutubeWhisperPolling(state.currentVideoId);
+            } catch (error) {
+                showError(`Transcript unavailable: ${error.message}`);
+            }
         }
 
         elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
