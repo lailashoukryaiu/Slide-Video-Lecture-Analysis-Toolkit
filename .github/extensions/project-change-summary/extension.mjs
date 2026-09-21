@@ -89,14 +89,34 @@ function normalizeSummary(input) {
 
 function renderHtml(instanceId, input) {
     const summary = normalizeSummary(input);
-    const sections = summary.sections.map((section) => `
-      <section class="section">
-        <h2>${escapeHtml(section.heading || "Changes")}</h2>
-        <ul>${(Array.isArray(section.items) ? section.items : [])
-            .map((item) => `<li>${escapeHtml(item)}</li>`)
-            .join("")}</ul>
+    const totalItems = summary.sections.reduce(
+        (count, section) => count + (Array.isArray(section.items) ? section.items.length : 0),
+        0
+    );
+    const sections = summary.sections.map((section, sectionIndex) => {
+        const items = Array.isArray(section.items) ? section.items : [];
+        const itemMarkup = items.map((item, itemIndex) => `
+          <li class="change" data-search="${escapeHtml(`${section.heading || ""} ${item}`.toLowerCase())}">
+            <label>
+              <input type="checkbox" data-item="${sectionIndex}-${itemIndex}" />
+              <span>${escapeHtml(item)}</span>
+            </label>
+          </li>
+        `).join("");
+        return `
+      <section class="section" data-section>
+        <button class="section-toggle" type="button" aria-expanded="true">
+          <span><span class="chevron">⌄</span> ${escapeHtml(section.heading || "Changes")}</span>
+          <span class="section-count">${items.length}</span>
+        </button>
+        <ul>${itemMarkup}</ul>
       </section>
-    `).join("");
+        `;
+    }).join("");
+    const copyText = summary.sections.map((section) =>
+        `${section.heading || "Changes"}\n${(Array.isArray(section.items) ? section.items : [])
+            .map((item) => `- ${item}`).join("\n")}`
+    ).join("\n\n");
     return `<!doctype html>
 <html>
   <head>
@@ -108,10 +128,27 @@ function renderHtml(instanceId, input) {
       body { margin: 0; padding: 24px; background: var(--background-color-default, #fff); color: var(--text-color-default, #1f2328); font-family: var(--font-sans, system-ui, sans-serif); line-height: 1.5; }
       main { max-width: 900px; margin: 0 auto; }
       h1 { margin: 0; font-size: 26px; }
-      .subtitle { color: var(--text-color-muted, #656d76); margin: 6px 0 24px; }
-      .section { border-top: 1px solid var(--border-color-default, #d0d7de); padding: 16px 0; }
-      h2 { font-size: 18px; margin: 0 0 8px; }
-      li { margin: 6px 0; }
+      .subtitle { color: var(--text-color-muted, #656d76); margin: 6px 0 18px; }
+      .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; }
+      input[type="search"] { flex: 1 1 220px; min-width: 180px; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 9px 11px; background: var(--background-color-default, #fff); color: inherit; }
+      button { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 8px 11px; background: var(--background-color-default, #fff); color: inherit; cursor: pointer; }
+      button:hover { background: var(--background-color-muted, #f6f8fa); }
+      .progress { display: flex; justify-content: space-between; color: var(--text-color-muted, #656d76); font-size: 13px; margin-bottom: 14px; }
+      .progress-bar { height: 6px; border-radius: 99px; background: var(--background-color-muted, #f6f8fa); overflow: hidden; margin-bottom: 20px; }
+      .progress-bar span { display: block; height: 100%; width: 0; background: var(--true-color-blue, #0969da); transition: width .2s ease; }
+      .section { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+      .section-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; border-radius: 0; padding: 13px 15px; text-align: left; font-size: 16px; font-weight: 600; }
+      .chevron { display: inline-block; width: 18px; transition: transform .2s ease; }
+      .section.collapsed .chevron { transform: rotate(-90deg); }
+      .section-count { color: var(--text-color-muted, #656d76); font-size: 12px; font-weight: 400; }
+      .section ul { list-style: none; margin: 0; padding: 4px 15px 12px 42px; }
+      .section.collapsed ul { display: none; }
+      .change { margin: 9px 0; }
+      .change label { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+      .change input { margin-top: 5px; accent-color: var(--true-color-blue, #0969da); }
+      .change input:checked + span { color: var(--text-color-muted, #656d76); text-decoration: line-through; }
+      .change.hidden { display: none; }
+      .empty { display: none; padding: 16px; border: 1px dashed var(--border-color-default, #d0d7de); border-radius: 8px; color: var(--text-color-muted, #656d76); }
       .meta { color: var(--text-color-muted, #656d76); font-size: 12px; margin-top: 28px; }
     </style>
   </head>
@@ -119,9 +156,85 @@ function renderHtml(instanceId, input) {
     <main>
       <h1>${escapeHtml(summary.title)}</h1>
       <p class="subtitle">${escapeHtml(summary.subtitle)}</p>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Filter changes..." aria-label="Filter changes" />
+        <button id="expand" type="button">Collapse all</button>
+        <button id="copy" type="button">Copy summary</button>
+      </div>
+      <div class="progress"><span id="progress-label">0 of ${totalItems} changes reviewed</span><span id="visible-label">${totalItems} shown</span></div>
+      <div class="progress-bar" aria-hidden="true"><span id="progress-bar"></span></div>
       ${sections}
+      <p class="empty" id="empty">No changes match your filter.</p>
       <p class="meta">Canvas instance: ${escapeHtml(instanceId)}</p>
     </main>
+    <script>
+      const storageKey = "project-change-summary:${escapeHtml(instanceId)}";
+      const checks = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      const boxes = [...document.querySelectorAll("[data-item]")];
+      const sections = [...document.querySelectorAll("[data-section]")];
+      const search = document.querySelector("#search");
+      const progressLabel = document.querySelector("#progress-label");
+      const progressBar = document.querySelector("#progress-bar");
+      const visibleLabel = document.querySelector("#visible-label");
+      const empty = document.querySelector("#empty");
+      const expand = document.querySelector("#expand");
+      const copy = document.querySelector("#copy");
+
+      boxes.forEach((box) => {
+        box.checked = Boolean(checks[box.dataset.item]);
+        box.addEventListener("change", () => {
+          checks[box.dataset.item] = box.checked;
+          localStorage.setItem(storageKey, JSON.stringify(checks));
+          updateProgress();
+        });
+      });
+
+      function updateProgress() {
+        const reviewed = boxes.filter((box) => box.checked).length;
+        const visible = document.querySelectorAll(".change:not(.hidden)").length;
+        progressLabel.textContent = reviewed + " of " + boxes.length + " changes reviewed";
+        progressBar.style.width = (boxes.length ? reviewed / boxes.length * 100 : 0) + "%";
+        visibleLabel.textContent = visible + " shown";
+        empty.style.display = visible ? "none" : "block";
+      }
+
+      search.addEventListener("input", () => {
+        const query = search.value.trim().toLowerCase();
+        document.querySelectorAll(".change").forEach((item) => {
+          item.classList.toggle("hidden", Boolean(query) && !item.dataset.search.includes(query));
+        });
+        sections.forEach((section) => {
+          const matches = section.querySelectorAll(".change:not(.hidden)").length;
+          section.style.display = matches ? "" : "none";
+        });
+        updateProgress();
+      });
+
+      document.querySelectorAll(".section-toggle").forEach((button) => {
+        button.addEventListener("click", () => {
+          const section = button.closest(".section");
+          const collapsed = section.classList.toggle("collapsed");
+          button.setAttribute("aria-expanded", String(!collapsed));
+        });
+      });
+
+      expand.addEventListener("click", () => {
+        const shouldCollapse = sections.some((section) => !section.classList.contains("collapsed"));
+        sections.forEach((section) => {
+          section.classList.toggle("collapsed", shouldCollapse);
+          section.querySelector(".section-toggle").setAttribute("aria-expanded", String(!shouldCollapse));
+        });
+        expand.textContent = shouldCollapse ? "Expand all" : "Collapse all";
+      });
+
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(${JSON.stringify(copyText)});
+        copy.textContent = "Copied";
+        setTimeout(() => { copy.textContent = "Copy summary"; }, 1200);
+      });
+
+      updateProgress();
+    </script>
   </body>
 </html>`;
 }
