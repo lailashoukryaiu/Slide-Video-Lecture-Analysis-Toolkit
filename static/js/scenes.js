@@ -42,8 +42,15 @@ export async function checkSceneDetection(videoId) {
                 
                 // Update the scenes container
                 if (data.scenes.length === 0) {
-                    elements.scenesContainer.innerHTML = '<p>No scene changes detected.</p>';
-                    elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated.</p>';
+                    elements.scenesContainer.innerHTML = `
+                        <p>No scene changes detected.</p>
+                        <p class="scene-help">
+                            Try Frame difference with a lower sensitivity such as 0.2, or switch to Content cuts
+                            if the video uses clear hard cuts. If this repeats, check that the video contains visible
+                            slide changes rather than only a talking-head view.
+                        </p>
+                    `;
+                    elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated because no changes crossed the selected threshold.</p>';
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }

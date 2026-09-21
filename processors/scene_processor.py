@@ -108,13 +108,9 @@ class SceneProcessor:
 
     async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5, mode: str = "frame_difference") -> list:
         """Detect slide changes using the selected configured detector."""
-        try:
-            if mode == "content":
-                return await self.detect_content_scenes(video_path, adaptive_threshold)
-            return await self.detect_frame_difference_scenes(video_path, adaptive_threshold)
-        except Exception as e:
-            print(f"Error detecting scenes: {str(e)}")
-            return []
+        if mode == "content":
+            return await self.detect_content_scenes(video_path, adaptive_threshold)
+        return await self.detect_frame_difference_scenes(video_path, adaptive_threshold)
 
     async def detect_content_scenes(self, video_path: str, adaptive_threshold: float) -> list:
         """Detect hard cuts using PySceneDetect's content detector."""
@@ -132,8 +128,8 @@ class SceneProcessor:
 
     async def detect_frame_difference_scenes(self, video_path: str, adaptive_threshold: float) -> list:
         """Detect slide changes using sampled frame differences."""
+        cap = cv2.VideoCapture(video_path)
         try:
-            cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
             duration_seconds = frame_count / fps if fps > 0 else 0
@@ -147,9 +143,11 @@ class SceneProcessor:
             sample_step = max(1, int(round(fps / 2)))
             min_scene_gap = max(sample_step, int(round(fps * 1.0)))
             previous_frame = None
+            stable_frame = None
             timestamps = []
             last_change_frame = -min_scene_gap
             frame_number = 0
+            maximum_changed_ratio = 0.0
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -157,24 +155,31 @@ class SceneProcessor:
                 if frame_number % sample_step == 0:
                     sample = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 180))
                     if previous_frame is not None:
-                        difference = cv2.absdiff(previous_frame, sample)
-                        changed_pixels = cv2.countNonZero(difference > 25)
-                        changed_ratio = changed_pixels / difference.size
+                        if stable_frame is None:
+                            stable_frame = previous_frame
+                        previous_difference = cv2.absdiff(previous_frame, sample)
+                        stable_difference = cv2.absdiff(stable_frame, sample)
+                        previous_ratio = cv2.countNonZero(previous_difference > 25) / previous_difference.size
+                        stable_ratio = cv2.countNonZero(stable_difference > 25) / stable_difference.size
+                        changed_ratio = max(previous_ratio, stable_ratio)
+                        maximum_changed_ratio = max(maximum_changed_ratio, changed_ratio)
                         if (
                             changed_ratio >= change_threshold
                             and frame_number - last_change_frame >= min_scene_gap
                         ):
                             timestamps.append(frame_number / fps)
                             last_change_frame = frame_number
+                            stable_frame = sample
                     previous_frame = sample
                 frame_number += 1
-            cap.release()
 
-            print(f"Detected {len(timestamps)} slide changes")
+            print(
+                f"Detected {len(timestamps)} slide changes "
+                f"(threshold={change_threshold:.4f}, max_changed_ratio={maximum_changed_ratio:.4f})"
+            )
             return await self.build_scene_changes(video_path, timestamps)
-        except Exception as e:
-            print(f"Error detecting frame differences: {str(e)}")
-            return []
+        finally:
+            cap.release()
 
     async def build_scene_changes(self, video_path: str, timestamps: list) -> list:
         """Create scene records and preview images for detected timestamps."""
