@@ -68,6 +68,7 @@ class OCRProcessor:
         self.yolo_tasks_completed = 0
         self.ocr_tasks_total = 0
         self.ocr_tasks_completed = 0
+        self.cancelled_videos = set()
         self.task_lock = threading.Lock()
         
         # Initialize shared models
@@ -308,13 +309,15 @@ class OCRProcessor:
                 if len(item) == 3:  # Tesseract OCR task
                     video_id, scenes_tasks, scene_path = item
                     task_count = sum(len(tasks) for tasks in scenes_tasks.values())
-                    self.process_tesseract_tasks(video_id, scenes_tasks, scene_path)
+                    if video_id not in self.cancelled_videos:
+                        self.process_tesseract_tasks(video_id, scenes_tasks, scene_path)
                     with self.task_lock:
                         self.ocr_tasks_completed += task_count
                 elif len(item) == 4 and item[3] == "surya_batch":  # Surya OCR task
                     video_id, surya_tasks, scene_path = item[:3]
                     task_count = len(surya_tasks)
-                    self.process_surya_tasks(video_id, surya_tasks, scene_path)
+                    if video_id not in self.cancelled_videos:
+                        self.process_surya_tasks(video_id, surya_tasks, scene_path)
                     with self.task_lock:
                         self.ocr_tasks_completed += task_count
                 
@@ -350,11 +353,15 @@ class OCRProcessor:
             }))
             
             for scene_index, tasks in scenes_tasks.items():
+                if video_id in self.cancelled_videos:
+                    break
                 scene_index = int(scene_index)
                 if scene_index >= len(scenes):
                     continue
                 
                 for detection_index, bbox, image_path in tasks:
+                    if video_id in self.cancelled_videos:
+                        break
                     result = self.perform_tesseract_ocr(image_path, bbox)
                     if result["success"] and "text" in result:
                         if "yolo_detections" in scenes[scene_index]:
@@ -452,6 +459,8 @@ class OCRProcessor:
             }))
             
             for scene_index, image_path in surya_tasks:
+                if video_id in self.cancelled_videos:
+                    break
                 result = self.process_image_with_surya(image_path)
                 if result["success"] and "results" in result:
                     self.update_scene_with_surya_results(scenes, scene_index, result["results"])
@@ -477,7 +486,7 @@ class OCRProcessor:
                         "partial_results": self.extract_ocr_results_for_scene(scenes, scene_index)
                     }
                 }))
-            
+
             # Send completion update
             self.run_async(self.send_progress_update(video_id, {
                 "event": "ocr_complete",
@@ -500,6 +509,18 @@ class OCRProcessor:
                     "error": str(e)
                 }
             }))
+
+    async def stop_ocr(self, video_id: str):
+        """Cancel queued and active OCR work for a video."""
+        with self.task_lock:
+            self.cancelled_videos.add(video_id)
+            self.video_ocr_tasks.pop(video_id, None)
+            self.video_surya_tasks.pop(video_id, None)
+        await self.send_progress_update(video_id, {
+            "event": "ocr_cancelled",
+            "data": {"message": "OCR processing stopped by the user."}
+        })
+        return JSONResponse({"success": True, "message": "OCR processing stopped"})
 
     def process_image_with_surya(self, image_path):
         """Process an image with Surya OCR."""

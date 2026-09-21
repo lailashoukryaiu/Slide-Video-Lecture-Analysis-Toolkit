@@ -255,6 +255,10 @@ async def download_scene_screenshots(video_id: str):
 async def get_ocr_text(video_id: str):
     return await ocr_processor.get_ocr_text(video_id)
 
+@app.post("/stop_ocr/{video_id}")
+async def stop_ocr(video_id: str):
+    return await ocr_processor.stop_ocr(video_id)
+
 @app.post("/process_surya_ocr/{video_id}")
 async def process_surya_ocr(video_id: str):
     return await ocr_processor.process_surya_ocr(video_id)

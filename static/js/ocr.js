@@ -120,6 +120,15 @@ function updateProgressDisplay(progressData) {
             slideContentContainer.appendChild(progressContainer);
         }
     }
+    if (!document.getElementById('stopOcrBtn')) {
+        const stopButton = document.createElement('button');
+        stopButton.id = 'stopOcrBtn';
+        stopButton.type = 'button';
+        stopButton.className = 'btn btn-secondary';
+        stopButton.textContent = 'Stop OCR';
+        stopButton.addEventListener('click', () => stopOcrProcessing(state.currentVideoId));
+        progressContainer.appendChild(stopButton);
+    }
     
     // Find or create progress bar for this type
     const progressId = `ocrProgress_${progressData.type}`;
@@ -160,7 +169,7 @@ function updateProgressDisplay(progressData) {
         // Add to the progress container
         progressContainer.appendChild(progressElement);
     }
-    
+
     // Update progress bar
     const progressFill = progressElement.querySelector('.ocr-progress-fill');
     if (progressFill) {
@@ -182,6 +191,35 @@ function updateProgressDisplay(progressData) {
                 <span>${progressData.type === 'tesseract' ? 'Tesseract' : 'Surya'} OCR Complete</span>
             `;
         }
+    }
+}
+
+export async function stopOcrProcessing(videoId) {
+    if (!videoId) return;
+    const button = document.getElementById('stopOcrBtn');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Stopping OCR...';
+    }
+    try {
+        const response = await fetch(`/stop_ocr/${encodeURIComponent(videoId)}`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Could not stop OCR processing');
+        }
+        if (window.sseConnection) {
+            window.sseConnection.close();
+            window.sseConnection = null;
+        }
+        if (button) button.remove();
+        const progressText = document.querySelector('.ocr-progress-text');
+        if (progressText) progressText.textContent = 'OCR processing stopped.';
+    } catch (error) {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Stop OCR';
+        }
+        console.error('Error stopping OCR:', error);
     }
 }
 

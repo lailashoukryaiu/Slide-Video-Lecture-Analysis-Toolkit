@@ -134,7 +134,6 @@ class SceneProcessor:
         ))
         scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
         detected_scenes = scene_manager.get_scene_list()
-        video.close()
         timestamps = [scene[0].get_seconds() for scene in detected_scenes]
         diagnostics_path = SCENES_DIR / f"{os.path.splitext(os.path.basename(video_path))[0]}_diagnostics.json"
         diagnostics_path.write_text(json.dumps({
