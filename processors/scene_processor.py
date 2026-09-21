@@ -14,6 +14,7 @@ class SceneProcessor:
     async def get_scenes(self, video_id: str):
         """Get scenes for a video."""
         scene_path = str(SCENES_DIR / f"{video_id}.json")
+        diagnostics_path = SCENES_DIR / f"{video_id}_diagnostics.json"
         error_path = SCENES_DIR / f"{video_id}_error.txt"
         if error_path.exists():
             try:
@@ -31,7 +32,8 @@ class SceneProcessor:
                 return JSONResponse({
                     "success": True,
                     "scenes": scenes,
-                    "complete": True
+                    "complete": True,
+                    "diagnostics": self._read_diagnostics(diagnostics_path)
                 })
             except Exception as e:
                 return JSONResponse({
@@ -80,9 +82,12 @@ class SceneProcessor:
     async def start_scene_detection(self, video_id: str, video_path: str, background_tasks, adaptive_threshold: float = 0.5, mode: str = "frame_difference"):
         """Start scene detection in the background."""
         scene_path = SCENES_DIR / f"{video_id}.json"
+        diagnostics_path = SCENES_DIR / f"{video_id}_diagnostics.json"
         error_path = SCENES_DIR / f"{video_id}_error.txt"
         if scene_path.exists():
             scene_path.unlink()
+        if diagnostics_path.exists():
+            diagnostics_path.unlink()
         if error_path.exists():
             error_path.unlink()
         background_tasks.add_task(self.run_scene_detection, video_id, video_path, adaptive_threshold, mode)
@@ -106,6 +111,13 @@ class SceneProcessor:
             error_path = SCENES_DIR / f"{video_id}_error.txt"
             error_path.write_text(str(e), encoding="utf-8")
 
+    @staticmethod
+    def _read_diagnostics(path):
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
     async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5, mode: str = "frame_difference") -> list:
         """Detect slide changes using the selected configured detector."""
         if mode == "content":
@@ -124,6 +136,12 @@ class SceneProcessor:
         detected_scenes = scene_manager.get_scene_list()
         video.close()
         timestamps = [scene[0].get_seconds() for scene in detected_scenes]
+        diagnostics_path = SCENES_DIR / f"{os.path.splitext(os.path.basename(video_path))[0]}_diagnostics.json"
+        diagnostics_path.write_text(json.dumps({
+            "mode": "content",
+            "threshold": max(1.0, adaptive_threshold * 20),
+            "detected_changes": len(timestamps)
+        }), encoding="utf-8")
         return await self.build_scene_changes(video_path, timestamps)
 
     async def detect_frame_difference_scenes(self, video_path: str, adaptive_threshold: float) -> list:
@@ -148,12 +166,14 @@ class SceneProcessor:
             last_change_frame = -min_scene_gap
             frame_number = 0
             maximum_changed_ratio = 0.0
+            sampled_frames = 0
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
                 if frame_number % sample_step == 0:
                     sample = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 180))
+                    sampled_frames += 1
                     if previous_frame is not None:
                         if stable_frame is None:
                             stable_frame = previous_frame
@@ -177,6 +197,18 @@ class SceneProcessor:
                 f"Detected {len(timestamps)} slide changes "
                 f"(threshold={change_threshold:.4f}, max_changed_ratio={maximum_changed_ratio:.4f})"
             )
+            diagnostics_path = SCENES_DIR / f"{video_id}_diagnostics.json"
+            diagnostics_path.write_text(json.dumps({
+                "mode": "frame_difference",
+                "fps": fps,
+                "frame_count": frame_count,
+                "duration_seconds": duration_seconds,
+                "sampled_frames": sampled_frames,
+                "sample_interval_seconds": sample_step / fps,
+                "threshold_percent": adaptive_threshold,
+                "maximum_changed_percent": maximum_changed_ratio * 100,
+                "detected_changes": len(timestamps)
+            }), encoding="utf-8")
             return await self.build_scene_changes(video_path, timestamps)
         finally:
             cap.release()

@@ -42,6 +42,10 @@ export async function checkSceneDetection(videoId) {
                 
                 // Update the scenes container
                 if (data.scenes.length === 0) {
+                    const diagnostics = data.diagnostics;
+                    const diagnosticText = diagnostics && diagnostics.mode === 'frame_difference'
+                        ? `<p class="scene-help">Scanned ${diagnostics.sampled_frames} frames over ${Number(diagnostics.duration_seconds || 0).toFixed(1)} seconds. Largest measured change: ${Number(diagnostics.maximum_changed_percent || 0).toFixed(2)}% (selected threshold: ${Number(diagnostics.threshold_percent || 0).toFixed(2)}%).</p>`
+                        : '';
                     elements.scenesContainer.innerHTML = `
                         <p>No scene changes detected.</p>
                         <p class="scene-help">
@@ -49,6 +53,7 @@ export async function checkSceneDetection(videoId) {
                             if the video uses clear hard cuts. If this repeats, check that the video contains visible
                             slide changes rather than only a talking-head view.
                         </p>
+                        ${diagnosticText}
                     `;
                     elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated because no changes crossed the selected threshold.</p>';
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
