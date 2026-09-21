@@ -32,6 +32,67 @@ async function readJsonResponse(response, operation) {
     return data;
 }
 
+async function startYoutubeWhisperPolling(videoId, startIfQueued = true) {
+    const updateTranscript = (transcript) => {
+        state.currentTranscript = transcript;
+        state.currentTranscriptSource = 'whisper';
+        loadTranscript(transcript);
+        elements.generateSummaryBtn.disabled = false;
+        elements.exportChaptersBtn.disabled = false;
+        showNotification('Whisper transcript generation complete. Generate Summary is ready.', 'success');
+    };
+
+    const checkStatus = async () => {
+        const response = await fetch(`/whisper_transcript_status/${videoId}`);
+        const data = await response.json();
+        if (data.status === 'complete' && Array.isArray(data.transcript)) {
+            updateTranscript(data.transcript);
+            if (state.youtubeTranscriptInterval) {
+                clearInterval(state.youtubeTranscriptInterval);
+                state.youtubeTranscriptInterval = null;
+            }
+            return true;
+        }
+        if (data.status === 'error') {
+            if (state.youtubeTranscriptInterval) {
+                clearInterval(state.youtubeTranscriptInterval);
+                state.youtubeTranscriptInterval = null;
+            }
+            throw new Error(data.error || 'Whisper transcript generation failed.');
+        }
+        return false;
+    };
+
+    let status = await fetch(`/whisper_transcript_status/${videoId}`).then((response) => response.json());
+    if (status.status === 'queued' && startIfQueued) {
+        const response = await fetch(`/generate_whisper_transcript/${videoId}`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Could not start Whisper transcript generation.');
+        }
+    } else if (status.status === 'complete' && Array.isArray(status.transcript)) {
+        updateTranscript(status.transcript);
+        return;
+    } else if (status.status === 'error') {
+        throw new Error(status.error || 'Whisper transcript generation failed.');
+    }
+
+    elements.transcriptContainer.innerHTML = `
+        <div class="transcript-processing">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Generating transcript with Whisper AI. You can generate the summary when it is ready.</p>
+        </div>
+    `;
+    elements.loadingIndicator.querySelector('p').textContent =
+        'Video ready. Generating transcript in the background...';
+    await checkStatus();
+    if (!state.currentTranscript.length) {
+        state.youtubeTranscriptInterval = setInterval(() => {
+            checkStatus().catch((error) => showError(`Error generating transcript: ${error.message}`));
+        }, 5000);
+    }
+}
+
 /**
  * Resets all video-related states when loading a new video
  */
@@ -225,49 +286,9 @@ export async function processVideo() {
             elements.generateSummaryBtn.disabled = false;
             elements.exportChaptersBtn.disabled = false;
         } else if (data.transcript_in_progress) {
-            elements.transcriptContainer.innerHTML = `
-                <div class="transcript-processing">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Generating transcript with Whisper AI. You can generate the summary when it is ready.</p>
-                </div>
-            `;
-            elements.loadingIndicator.querySelector('p').textContent =
-                'Video ready. Generating transcript in the background...';
-
-            const checkYoutubeWhisperTranscript = async () => {
-                try {
-                    const whisperResponse = await fetch(`/whisper_transcript_status/${videoId}`);
-                    const whisperData = await whisperResponse.json();
-                    if (whisperData.status === 'complete') {
-                        if (state.youtubeTranscriptInterval) {
-                            clearInterval(state.youtubeTranscriptInterval);
-                            state.youtubeTranscriptInterval = null;
-                        }
-                        state.currentTranscript = whisperData.transcript;
-                        state.currentTranscriptSource = 'whisper';
-                        loadTranscript(whisperData.transcript);
-                        elements.generateSummaryBtn.disabled = false;
-                        elements.exportChaptersBtn.disabled = false;
-                        showNotification('Whisper transcript generation complete. Generate Summary is ready.', 'success');
-                    } else if (whisperData.status === 'error') {
-                        if (state.youtubeTranscriptInterval) {
-                            clearInterval(state.youtubeTranscriptInterval);
-                            state.youtubeTranscriptInterval = null;
-                        }
-                        showError(`Error generating transcript: ${whisperData.error}`);
-                    }
-                } catch (error) {
-                    console.error('Error checking YouTube Whisper transcript status:', error);
-                }
-            };
-
-            await checkYoutubeWhisperTranscript();
-            if (!state.currentTranscript.length) {
-                state.youtubeTranscriptInterval = setInterval(checkYoutubeWhisperTranscript, 5000);
-            }
+            await startYoutubeWhisperPolling(videoId, false);
         } else {
-            elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
-            elements.generateSummaryBtn.disabled = true;
+            await startYoutubeWhisperPolling(videoId);
         }
 
         elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
