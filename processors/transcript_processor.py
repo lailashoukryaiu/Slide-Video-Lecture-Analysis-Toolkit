@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
 from transcribe import transcribe_audio
@@ -8,6 +9,7 @@ from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
 class TranscriptProcessor:
     def __init__(self):
         self.transcript_preference = "youtube"  # Can be "youtube" or "whisper"
+        self.progress_stale_seconds = int(os.getenv("WHISPER_PROGRESS_STALE_SECONDS", "900"))
 
     async def get_transcript(self, video_id: str, source: str):
         """Get a specific transcript by source."""
@@ -100,6 +102,7 @@ class TranscriptProcessor:
                 })
             
             output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+            progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
 
             # Check if transcript already exists
             if os.path.exists(output_path):
@@ -109,6 +112,13 @@ class TranscriptProcessor:
                     "success": True,
                     "transcript": transcript,
                     "message": "Using existing Whisper transcript"
+                })
+
+            if progress_path.exists():
+                return JSONResponse({
+                    "success": True,
+                    "message": "Transcript generation is already in progress",
+                    "status": "in_progress"
                 })
             
             # Start background task to generate transcript
@@ -130,11 +140,17 @@ class TranscriptProcessor:
         """Start Whisper transcript generation."""
         output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
         error_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"
+        progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
         if error_path.exists():
             error_path.unlink()
+        if progress_path.exists():
+            progress_age = time.time() - progress_path.stat().st_mtime
+            if progress_age <= self.progress_stale_seconds:
+                return
+            progress_path.unlink()
 
         # Create progress file
-        with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"), 'w') as f:
+        with open(progress_path, 'w') as f:
             f.write("0")
         
         # Start background task
@@ -191,6 +207,9 @@ class TranscriptProcessor:
 
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
+            progress_file = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+            if progress_file.exists():
+                progress_file.unlink()
             with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                 f.write(str(e))
 
@@ -232,12 +251,27 @@ class TranscriptProcessor:
 
             progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_path):
+                progress_age = time.time() - os.path.getmtime(progress_path)
+                if progress_age > self.progress_stale_seconds:
+                    stale_message = (
+                        "Whisper transcription stopped responding. "
+                        "The previous job was marked stale and can be retried."
+                    )
+                    os.remove(progress_path)
+                    with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
+                        f.write(stale_message)
+                    return JSONResponse({
+                        "success": False,
+                        "status": "error",
+                        "error": stale_message
+                    })
                 with open(progress_path, 'r') as f:
                     progress = float(f.read())
                 return JSONResponse({
                     "success": True,
                     "status": "in_progress",
-                    "progress": progress
+                    "progress": progress,
+                    "last_updated_seconds_ago": round(progress_age, 1)
                 })
 
             return JSONResponse({
