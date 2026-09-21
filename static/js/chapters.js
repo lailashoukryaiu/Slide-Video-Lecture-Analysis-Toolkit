@@ -52,6 +52,8 @@ export async function exportChapters() {
  * Generates chapter markers from the transcript
  */
 export async function generateChapters() {
+    if (state.summaryGenerationInProgress) return;
+    state.summaryGenerationInProgress = true;
     const generateSummaryBtn = elements.generateSummaryBtn;
     
     generateSummaryBtn.disabled = true;
@@ -110,8 +112,14 @@ export async function generateChapters() {
             autoRetryButton.innerHTML = '<i class="fas fa-sync"></i> Retry automatically';
             autoRetryButton.addEventListener('click', () => {
                 if (state.summaryRetryTimer) return;
-                state.summaryRetryTimer = setInterval(generateChapters, 15000);
-                showNotification('Automatic Gemini retry enabled. Use Stop automatic retry to stop it.', 'info');
+                autoRetryButton.disabled = true;
+                state.summaryRetryTimer = setInterval(() => {
+                    if (!state.summaryGenerationInProgress) {
+                        void generateChapters();
+                    }
+                }, 15000);
+                showNotification('Retrying Gemini now; automatic retries will continue every 15 seconds.', 'info');
+                void generateChapters();
             });
             status.appendChild(autoRetryButton);
             const stopRetryButton = document.createElement('button');
@@ -128,6 +136,7 @@ export async function generateChapters() {
             status.appendChild(stopRetryButton);
         }
     } finally {
+        state.summaryGenerationInProgress = false;
         generateSummaryBtn.disabled = false;
         generateSummaryBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Summary';
     }

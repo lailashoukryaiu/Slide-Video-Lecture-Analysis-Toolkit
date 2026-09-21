@@ -21,6 +21,7 @@ export const state = {
     youtubeTranscriptInterval: null,
     youtubeRetryTimer: null,
     summaryRetryTimer: null,
+    summaryGenerationInProgress: false,
     currentDebugScene: null,
     showSceneMarkers: true,
     showTimestamps: true,
