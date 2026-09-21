@@ -16,6 +16,7 @@ export const elements = {
     get videoProgress() { return document.getElementById('videoProgress'); },
     get thumbnailTimeline() { return document.getElementById('thumbnailTimeline'); },
     get scenesContainer() { return document.getElementById('scenesContainer'); },
+    get downloadScreenshotsBtn() { return document.getElementById('downloadScreenshotsBtn'); },
     get chaptersContainer() { return document.getElementById('chaptersContainer'); },
     get summaryStatus() { return document.getElementById('summaryStatus'); },
     get transcriptContainer() { return document.getElementById('transcriptContainer'); },

@@ -2,7 +2,7 @@
 
 import { setupVideoPlayer, updateTimeMarker } from './video.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
-import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime } from './scenes.js';
+import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots } from './scenes.js';
 import { generateChapters, updateChapters, exportChapters } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
@@ -193,6 +193,7 @@ function initApp() {
     // Wire the core video controls before optional analysis features initialize.
     elements.loadVideoBtn.addEventListener('click', processVideo);
     elements.detectScenesBtn.addEventListener('click', detectScenes);
+    elements.downloadScreenshotsBtn.addEventListener('click', downloadSceneScreenshots);
 
     // Check YOLO status when the page loads
     checkYoloStatus();

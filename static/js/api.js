@@ -140,6 +140,7 @@ function resetVideoStates() {
     }
     state.videoScenes = [];
     elements.detectScenesBtn.disabled = true;
+    elements.downloadScreenshotsBtn.disabled = true;
     
     // Reset slide content and disable search
     elements.slideContentContainer.innerHTML = `

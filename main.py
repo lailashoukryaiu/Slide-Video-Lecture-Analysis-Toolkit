@@ -204,6 +204,53 @@ async def get_fullsize_image(video_id: str, filename: str):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path)
 
+@app.get("/download_scene_screenshots/{video_id}")
+async def download_scene_screenshots(video_id: str):
+    scene_path = SCENES_DIR / f"{video_id}.json"
+    if not scene_path.is_file():
+        raise HTTPException(status_code=404, detail="Run slide detection before downloading screenshots")
+
+    try:
+        scenes = json.loads(scene_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail=f"Could not read detected slides: {error}")
+    if not isinstance(scenes, list) or not scenes:
+        raise HTTPException(status_code=400, detail="No detected slide screenshots are available")
+
+    image_dir = FULLSIZE_IMAGES_DIR / video_id
+    with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        manifest = []
+        image_count = 0
+        for index, scene in enumerate(scenes):
+            source = image_dir / f"{index}.jpg"
+            if not source.is_file():
+                continue
+            filename = f"slide_{index + 1:03d}_{scene.get('timestamp', 'unknown').replace(':', '-')}.jpg"
+            (temp_dir / filename).write_bytes(source.read_bytes())
+            manifest.append({
+                "slide": index + 1,
+                "timestamp": scene.get("timestamp"),
+                "time_seconds": scene.get("time_seconds"),
+                "filename": filename
+            })
+            image_count += 1
+
+        if not image_count:
+            raise HTTPException(status_code=400, detail="Detected slides have no generated screenshots")
+
+        (temp_dir / "screenshots.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        zip_path = EXPORTS_DIR / f"{video_id}_slide_screenshots.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for file_path in temp_dir.iterdir():
+                archive.write(file_path, file_path.name)
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{video_id}_slide_screenshots.zip"
+    )
+
 @app.get("/ocr_text/{video_id}")
 async def get_ocr_text(video_id: str):
     return await ocr_processor.get_ocr_text(video_id)

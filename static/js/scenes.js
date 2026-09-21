@@ -59,6 +59,7 @@ export async function checkSceneDetection(videoId) {
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
                     elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
                 }
+                elements.downloadScreenshotsBtn.disabled = data.scenes.length === 0;
                 elements.detectScenesBtn.disabled = false;
                 elements.detectScenesBtn.innerHTML = '<i class="fas fa-film"></i> Detect Slides';
                 
@@ -71,6 +72,32 @@ export async function checkSceneDetection(videoId) {
                     : 0;
                 elements.scenesContainer.innerHTML = `<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running (${elapsed}s elapsed)...</p>`;
                 elements.thumbnailTimeline.innerHTML = '<p>Generating visual timeline...</p>';
+            }
+
+            export async function downloadSceneScreenshots() {
+                const button = elements.downloadScreenshotsBtn;
+                if (!state.currentVideoId) return;
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing...';
+                try {
+                    const response = await fetch(`/download_scene_screenshots/${encodeURIComponent(state.currentVideoId)}`);
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({}));
+                        throw new Error(error.detail || 'Could not download slide screenshots');
+                    }
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${state.currentVideoId}_slide_screenshots.zip`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    showError(`Error downloading screenshots: ${error.message}`);
+                } finally {
+                    button.disabled = state.videoScenes.length === 0;
+                    button.innerHTML = '<i class="fas fa-images"></i> Download Screenshots';
+                }
             }
         } else {
             throw new Error(data.error || 'Scene processing failed');
