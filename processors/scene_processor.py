@@ -154,9 +154,11 @@ class SceneProcessor:
             if fps <= 0 or frame_count <= 0:
                 raise ValueError("Could not read video frame rate or frame count")
 
-            # Map the UI range (0.1-3) to a useful 1%-30% pixel-change range.
-            # Lower values detect smaller slide changes.
-            change_threshold = adaptive_threshold / 10
+            # Map the UI range (0.1-3) across a nonlinear ratio range. This
+            # keeps low settings sensitive to subtle changes while allowing
+            # high settings to filter out large gradual transitions.
+            normalized_threshold = (adaptive_threshold - 0.1) / 2.9
+            change_threshold = 0.001 + (normalized_threshold ** 2) * 0.899
             sample_step = max(1, int(round(fps / 2)))
             min_scene_gap = max(sample_step, int(round(fps * 1.0)))
             previous_frame = None
