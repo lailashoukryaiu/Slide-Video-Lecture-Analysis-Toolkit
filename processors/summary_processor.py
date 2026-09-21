@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
@@ -67,14 +68,23 @@ Format each chapter exactly like this example:
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
             try:
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.5,
-                        response_mime_type="application/json",
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.5,
+                            response_mime_type="application/json",
+                        ),
                     ),
+                    timeout=90,
                 )
+            except asyncio.TimeoutError:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Gemini summary generation timed out after 90 seconds. Please retry."
+                })
             except Exception as error:
                 return JSONResponse({
                     "success": False,
