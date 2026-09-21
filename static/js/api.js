@@ -565,6 +565,13 @@ export async function detectScenes() {
     const videoId = state.currentVideoId;
     if (!videoId) return;
     const button = elements.detectScenesBtn;
+    const selectedThreshold = Number(elements.sceneDetectionThreshold.value);
+    if (!Number.isFinite(selectedThreshold)) {
+        showError('Please select a valid slide-change sensitivity.');
+        return;
+    }
+    state.sceneDetectionThreshold = selectedThreshold;
+    localStorage.setItem('sceneDetectionThreshold', String(selectedThreshold));
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting Slides...';
     state.sceneDetectionStartedAt = Date.now();
@@ -574,12 +581,16 @@ export async function detectScenes() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                adaptive_threshold: state.sceneDetectionThreshold,
+                adaptive_threshold: selectedThreshold,
                 mode: elements.sceneDetectionMode.value
             })
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
+        elements.scenesContainer.insertAdjacentHTML(
+            'afterbegin',
+            `<p class="scene-progress-status">Sensitivity used: ${selectedThreshold.toFixed(1)}</p>`
+        );
         await checkSceneDetection(videoId);
         state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);
         fetchOcrResults(videoId);

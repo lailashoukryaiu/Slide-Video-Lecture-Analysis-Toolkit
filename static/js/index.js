@@ -1,7 +1,7 @@
 // index.js - Entry point for non-module environments
 // This file is used to import all modules and expose them to the global scope
 
-import { initApp } from './main.js?v=f08fe2a';
+import { initApp } from './main.js?v=39de0f2';
 import { elements } from './elements.js';
 import { loadUploadedVideo } from './api.js';
 
