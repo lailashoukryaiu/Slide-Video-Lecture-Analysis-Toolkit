@@ -129,6 +129,9 @@ class TranscriptProcessor:
     async def start_whisper_generation(self, video_id: str, video_path: str, background_tasks):
         """Start Whisper transcript generation."""
         output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+        error_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"
+        if error_path.exists():
+            error_path.unlink()
 
         # Create progress file
         with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"), 'w') as f:
@@ -174,6 +177,11 @@ class TranscriptProcessor:
                 with open(progress_file, 'w') as f:
                     f.write(str(progress))
 
+            if not transcript:
+                raise RuntimeError(
+                    "Whisper completed without any transcript segments. "
+                    "The video may not contain recognizable speech."
+                )
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
 
@@ -191,8 +199,21 @@ class TranscriptProcessor:
         try:
             transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
             if os.path.exists(transcript_path):
-                with open(transcript_path, 'r') as f:
-                    transcript = json.load(f)
+                try:
+                    with open(transcript_path, 'r') as f:
+                        transcript = json.load(f)
+                except (OSError, json.JSONDecodeError) as error:
+                    return JSONResponse({
+                        "success": False,
+                        "status": "error",
+                        "error": f"Whisper transcript file is invalid: {error}"
+                    })
+                if not isinstance(transcript, list) or not transcript:
+                    return JSONResponse({
+                        "success": False,
+                        "status": "error",
+                        "error": "Whisper completed without any transcript segments."
+                    })
                 return JSONResponse({
                     "success": True,
                     "status": "complete",

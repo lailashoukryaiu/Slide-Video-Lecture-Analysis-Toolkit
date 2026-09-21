@@ -32,7 +32,7 @@ async function readJsonResponse(response, operation) {
     return data;
 }
 
-async function startYoutubeWhisperPolling(videoId, startIfQueued = true) {
+async function startYoutubeWhisperPolling(videoId) {
     const updateTranscript = (transcript) => {
         state.currentTranscript = transcript;
         state.currentTranscriptSource = 'whisper';
@@ -64,7 +64,7 @@ async function startYoutubeWhisperPolling(videoId, startIfQueued = true) {
     };
 
     let status = await fetch(`/whisper_transcript_status/${videoId}`).then((response) => response.json());
-    if (status.status === 'queued' && startIfQueued) {
+    if (status.status === 'queued') {
         const response = await fetch(`/generate_whisper_transcript/${videoId}`, { method: 'POST' });
         const data = await response.json();
         if (!response.ok || !data.success) {
@@ -286,7 +286,7 @@ export async function processVideo() {
             elements.generateSummaryBtn.disabled = false;
             elements.exportChaptersBtn.disabled = false;
         } else if (data.transcript_in_progress) {
-            await startYoutubeWhisperPolling(videoId, false);
+            await startYoutubeWhisperPolling(videoId);
         } else {
             await startYoutubeWhisperPolling(videoId);
         }
