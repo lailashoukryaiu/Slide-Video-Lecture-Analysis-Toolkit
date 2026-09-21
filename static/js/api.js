@@ -10,6 +10,28 @@ import { updateChapters } from './chapters.js';
 import { checkSceneDetection } from './scenes.js';
 import { fetchOcrResults } from './ocr.js';
 
+async function readJsonResponse(response, operation) {
+    const responseText = await response.text();
+    if (!responseText.trim()) {
+        throw new Error(`${operation} failed (HTTP ${response.status}). The server returned an empty response.`);
+    }
+
+    let data;
+    try {
+        data = JSON.parse(responseText);
+    } catch (error) {
+        const detail = responseText.replace(/\s+/g, ' ').trim().slice(0, 240);
+        throw new Error(
+            `${operation} failed (HTTP ${response.status}). The server returned invalid JSON${detail ? `: ${detail}` : '.'}`
+        );
+    }
+
+    if (!response.ok) {
+        throw new Error(data.error || data.detail || `${operation} failed (HTTP ${response.status}).`);
+    }
+    return data;
+}
+
 /**
  * Resets all video-related states when loading a new video
  */
@@ -107,10 +129,10 @@ export async function processVideo() {
         resetVideoStates();
 
         const response = await fetch(`/download/${videoId}`);
-        const data = await response.json();
+        const data = await readJsonResponse(response, 'YouTube video download');
 
         if (!data.success) {
-            throw new Error(data.error);
+            throw new Error(data.error || 'The server could not download this YouTube video.');
         }
 
         // Set new source and wait for metadata to load
