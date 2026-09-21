@@ -297,7 +297,7 @@ export async function fetchOcrResults(videoId) {
             // If OCR processing is not complete, we'll get updates via SSE
             // No need to poll anymore
             
-            if (data.processing_complete && !document.getElementById('startOcrBtn')) {
+            if (data.detections_complete && !document.getElementById('startOcrBtn')) {
                 const startButton = document.createElement('button');
                 startButton.id = 'startOcrBtn';
                 startButton.className = 'btn btn-accent';
@@ -326,7 +326,7 @@ export async function fetchOcrResults(videoId) {
             const hasUnmatchedResults = state.ocrResults.some(result => result.ocr_class === 'unmatched');
             
             // Only add the button if we don't already have unmatched results and OCR processing is complete
-            if (!hasUnmatchedResults && data.processing_complete) {
+            if (!hasUnmatchedResults && data.detections_complete) {
                 // Check if the button already exists
                 if (!document.getElementById('processSuryaBtn')) {
                     const suryaButton = document.createElement('button');

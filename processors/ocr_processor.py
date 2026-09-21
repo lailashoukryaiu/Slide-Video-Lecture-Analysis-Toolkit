@@ -681,7 +681,8 @@ class OCRProcessor:
                 "ocr_count": len(ocr_results),
                 "ocr_results": ocr_results,
                 "pending_ocr_count": pending_ocr_count,
-                "processing_complete": detections_complete and pending_ocr_count == 0
+                "detections_complete": detections_complete,
+                "processing_complete": detections_complete
             })
             
         except Exception as e:
