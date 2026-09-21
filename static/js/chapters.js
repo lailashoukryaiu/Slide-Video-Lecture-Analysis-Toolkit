@@ -4,6 +4,15 @@ import { elements } from './elements.js';
 import { state } from './main.js';
 import { showError } from './ui.js';
 
+let chapterMarkerGeneration = 0;
+
+export function clearChapterMarkers() {
+    chapterMarkerGeneration += 1;
+    const progressContainer = elements.videoProgress;
+    if (!progressContainer) return;
+    progressContainer.querySelectorAll('.chapter-marker, .chapter-segment').forEach((marker) => marker.remove());
+}
+
 export async function exportChapters() {
     const button = elements.exportChaptersBtn;
     button.disabled = true;
@@ -167,6 +176,7 @@ function addChapterMarkersToTimeline(chapters) {
     // Get the progress container and video player
     const progressContainer = elements.videoProgress;
     const videoPlayer = elements.videoPlayer;
+    const generation = chapterMarkerGeneration;
     
     if (!progressContainer || !videoPlayer) {
         console.error('Progress container or video player not found');
@@ -183,6 +193,7 @@ function addChapterMarkersToTimeline(chapters) {
         
         // Set up a one-time event listener for when metadata is loaded
         const onMetadataLoaded = () => {
+            if (generation !== chapterMarkerGeneration) return;
             addChapterMarkersWithDuration(chapters, videoPlayer, progressContainer);
             videoPlayer.removeEventListener('loadedmetadata', onMetadataLoaded);
         };

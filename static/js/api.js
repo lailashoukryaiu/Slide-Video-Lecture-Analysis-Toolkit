@@ -6,7 +6,7 @@ import { extractVideoId } from './utils.js';
 import { showError, showLoading, showNotification } from './ui.js';
 import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
-import { updateChapters } from './chapters.js';
+import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { checkSceneDetection } from './scenes.js';
 import { fetchOcrResults } from './ocr.js';
 
@@ -121,6 +121,7 @@ function resetVideoStates() {
     // Reset video player
     const videoPlayer = elements.videoPlayer;
     state.currentVideoId = null;
+    clearChapterMarkers();
     videoPlayer.pause();
     videoPlayer.removeAttribute('src');
     videoPlayer.load();
