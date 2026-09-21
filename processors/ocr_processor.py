@@ -251,9 +251,6 @@ class OCRProcessor:
                 with open(scene_path, 'w') as f:
                     json.dump(scenes, f)
                 
-                # Queue OCR tasks if needed
-                if result.get('success') and result.get('detections'):
-                    self.queue_ocr_tasks(scenes, scene_index, scene_path)
         except Exception as e:
             print(f"Error updating scene with YOLO results: {str(e)}")
 
@@ -522,6 +519,20 @@ class OCRProcessor:
         })
         return JSONResponse({"success": True, "message": "OCR processing stopped"})
 
+    async def start_ocr(self, video_id: str):
+        """Queue OCR work for completed scene detections."""
+        scene_path = str(SCENES_DIR / f"{video_id}.json")
+        if not os.path.exists(scene_path):
+            return JSONResponse({"success": False, "error": "Scene data not found"})
+        with open(scene_path, "r", encoding="utf-8") as file:
+            scenes = json.load(file)
+        with self.task_lock:
+            self.cancelled_videos.discard(video_id)
+        for scene_index, scene in enumerate(scenes):
+            if scene.get("yolo_detections", {}).get("success"):
+                self.queue_ocr_tasks(scenes, scene_index, scene_path)
+        return JSONResponse({"success": True, "message": "OCR processing started"})
+
     def process_image_with_surya(self, image_path):
         """Process an image with Surya OCR."""
         if not SURYA_AVAILABLE:
@@ -639,6 +650,9 @@ class OCRProcessor:
             
             ocr_results = []
             pending_ocr_count = 0
+            detections_complete = bool(scenes) and all(
+                "yolo_detections" in scene for scene in scenes
+            )
             
             for scene_index, scene in enumerate(scenes):
                 added_from_yolo = set()
@@ -667,7 +681,7 @@ class OCRProcessor:
                 "ocr_count": len(ocr_results),
                 "ocr_results": ocr_results,
                 "pending_ocr_count": pending_ocr_count,
-                "processing_complete": pending_ocr_count == 0
+                "processing_complete": detections_complete and pending_ocr_count == 0
             })
             
         except Exception as e:

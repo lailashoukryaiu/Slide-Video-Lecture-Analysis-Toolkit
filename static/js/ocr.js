@@ -295,6 +295,31 @@ export async function fetchOcrResults(videoId) {
             // If OCR processing is not complete, we'll get updates via SSE
             // No need to poll anymore
             
+            if (data.processing_complete && !document.getElementById('startOcrBtn')) {
+                const startButton = document.createElement('button');
+                startButton.id = 'startOcrBtn';
+                startButton.className = 'btn btn-accent';
+                startButton.textContent = 'Start Slide OCR';
+                startButton.addEventListener('click', async () => {
+                    startButton.disabled = true;
+                    startButton.textContent = 'Starting OCR...';
+                    try {
+                        const startResponse = await fetch(`/start_ocr/${encodeURIComponent(videoId)}`, { method: 'POST' });
+                        const startData = await startResponse.json();
+                        if (!startResponse.ok || !startData.success) {
+                            throw new Error(startData.error || 'Could not start OCR');
+                        }
+                        startButton.remove();
+                        fetchOcrResults(videoId);
+                    } catch (error) {
+                        startButton.disabled = false;
+                        startButton.textContent = 'Start Slide OCR';
+                        console.error('Error starting OCR:', error);
+                    }
+                });
+                slideContentContainer.prepend(startButton);
+            }
+
             // Add a button to trigger Surya OCR if we have no unmatched results yet
             const hasUnmatchedResults = state.ocrResults.some(result => result.ocr_class === 'unmatched');
             const slideContentContainer = elements.slideContentContainer;

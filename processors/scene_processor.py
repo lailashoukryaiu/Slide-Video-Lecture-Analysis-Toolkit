@@ -103,7 +103,7 @@ class SceneProcessor:
                 
             print(f"Saved {len(scenes)} scenes for video {video_id}")
             
-            # Queue and wait for scene images processing
+            # Generate scene images and object detections, but leave OCR opt-in.
             await self.process_scene_images(video_id)
                 
         except Exception as e:
@@ -154,9 +154,9 @@ class SceneProcessor:
             if fps <= 0 or frame_count <= 0:
                 raise ValueError("Could not read video frame rate or frame count")
 
-            # The slider represents the minimum percentage of pixels that must
-            # change between samples. Lower values detect smaller slide changes.
-            change_threshold = adaptive_threshold / 100
+            # Map the UI range (0.1-3) to a useful 1%-30% pixel-change range.
+            # Lower values detect smaller slide changes.
+            change_threshold = adaptive_threshold / 10
             sample_step = max(1, int(round(fps / 2)))
             min_scene_gap = max(sample_step, int(round(fps * 1.0)))
             previous_frame = None
@@ -206,7 +206,7 @@ class SceneProcessor:
                 "duration_seconds": duration_seconds,
                 "sampled_frames": sampled_frames,
                 "sample_interval_seconds": sample_step / fps,
-                "threshold_percent": adaptive_threshold,
+                "threshold_percent": change_threshold * 100,
                 "maximum_changed_percent": maximum_changed_ratio * 100,
                 "detected_changes": len(timestamps)
             }), encoding="utf-8")

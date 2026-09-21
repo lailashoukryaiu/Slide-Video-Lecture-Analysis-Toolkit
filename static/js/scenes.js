@@ -68,6 +68,7 @@ export async function checkSceneDetection(videoId) {
                 
                 // Continue checking for YOLO detections
                 startDetectionPolling(videoId);
+                fetchOcrResults(videoId);
             } else {
                 // Still processing
                 const elapsed = state.sceneDetectionStartedAt
@@ -280,17 +281,14 @@ function startDetectionPolling(videoId) {
             if (data.success && data.complete) {
                 // Check if any scenes have YOLO detections
                 let hasDetections = false;
-                let allProcessed = true;
+                let allProcessed = data.scenes.length > 0
+                    && data.scenes.every(scene => scene.yolo_detections);
                 
                 for (const scene of data.scenes) {
                     if (scene.yolo_detections) {
                         hasDetections = true;
                     }
                 }
-                if (data.processed) {
-                    allProcessed = true;
-                }
-                
                 if (hasDetections) {
                     // Clear the scene cache before updating scenes
                     clearSceneCache();
@@ -299,17 +297,14 @@ function startDetectionPolling(videoId) {
                     const videoPlayer = elements.videoPlayer;
                     updateScenes(data.scenes, videoPlayer);
                     
-                    // Fetch OCR results if we have detections
-                    fetchOcrResults(videoId);
                 }
                 
                 if (allProcessed) {
                     // All scenes have been processed, stop polling
                     console.log("All scenes processed with YOLO, stopping detection polling");
                     clearInterval(detectionInterval);
+                    fetchOcrResults(videoId);
                     
-                    // // Final fetch of OCR results
-                    // fetchOcrResults(videoId);
                 }
             }
         } catch (error) {
