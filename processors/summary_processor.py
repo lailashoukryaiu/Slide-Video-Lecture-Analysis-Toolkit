@@ -6,6 +6,10 @@ from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 from project_paths import SUMMARIES_DIR
 
@@ -21,6 +25,13 @@ class SummaryProcessor:
         # process. The server process receives the key through the environment.
         # Do not call google.colab.userdata from the FastAPI/Uvicorn process.
 
+        self.client = None
+        self.model = None
+        self.openai_client = None
+        self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        if OpenAI and os.getenv("OPENAI_API_KEY"):
+            self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
         try:
             if not GOOGLE_API_KEY:
                 raise ValueError("GOOGLE_API_KEY is not configured")
@@ -35,10 +46,10 @@ class SummaryProcessor:
     async def generate_summary(self, transcript: list, video_id: str = None):
         """Generate chapter summary using Gemini."""
         try:
-            if not transcript or not self.model:
+            if not transcript or (not self.model and not self.openai_client):
                 return JSONResponse({
                     "success": False,
-                    "error": "No transcript available or Gemini API not initialized"
+                    "error": "No transcript available or no summary model is configured"
                 })
 
             # Combine transcript text with timestamps
@@ -51,7 +62,6 @@ class SummaryProcessor:
                 full_text += timestamp + item["text"] + "\n"
             
 
-            # Generate chapter summary using Gemini
             prompt = f"""Based on the following transcript with timestamps, create chapters that outline the main topics.
 For each chapter, provide:
 The timestamp where the chapter starts (in MM:SS format)
@@ -67,8 +77,11 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
+            provider = "Gemini"
             try:
-                response = await asyncio.wait_for(
+                if not self.model:
+                    raise RuntimeError("Gemini is not configured")
+                response_text = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.client.models.generate_content,
                         model=self.model_name,
@@ -80,22 +93,43 @@ Format each chapter exactly like this example:
                     ),
                     timeout=90,
                 )
-            except asyncio.TimeoutError:
-                return JSONResponse({
-                    "success": False,
-                    "error": "Gemini summary generation timed out after 90 seconds. Please retry."
-                })
+                response_text = response_text.text
             except Exception as error:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Gemini could not generate a summary: {error}"
-                })
+                if not self._is_quota_error(error):
+                    return JSONResponse({
+                        "success": False,
+                        "error": f"Gemini could not generate a summary: {error}"
+                    })
+                if not self.openai_client:
+                    return JSONResponse({
+                        "success": False,
+                        "error": "Gemini quota is exhausted. Configure OPENAI_API_KEY to use the OpenAI fallback."
+                    })
+                provider = "OpenAI fallback"
+                try:
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.openai_client.chat.completions.create,
+                            model=self.openai_model_name,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.5,
+                        ),
+                        timeout=90,
+                    )
+                    response_text = response.choices[0].message.content
+                except Exception as fallback_error:
+                    return JSONResponse({
+                        "success": False,
+                        "error": f"Gemini quota is exhausted and OpenAI fallback failed: {fallback_error}"
+                    })
             try:
                 # Try to parse the response as JSON
-                chapters = json.loads(response.text)
+                chapters = json.loads(response_text)
+                if isinstance(chapters, dict) and isinstance(chapters.get("chapters"), list):
+                    chapters = chapters["chapters"]
             except json.JSONDecodeError:
                 # If parsing fails, try to extract JSON from the response text
-                match = re.search(r'\[.*\]', response.text.replace('\n', ' '), re.DOTALL)
+                match = re.search(r'\[.*\]', response_text.replace('\n', ' '), re.DOTALL)
                 if match:
                     chapters = json.loads(match.group())
                 else:
@@ -109,7 +143,10 @@ Format each chapter exactly like this example:
 
             return JSONResponse({
                 "success": True,
-                "chapters": chapters
+                "chapters": chapters,
+                "provider": provider,
+                "notice": "Gemini quota was exceeded; the OpenAI fallback generated these chapters."
+                    if provider == "OpenAI fallback" else None
             })
 
         except Exception as e:
@@ -117,6 +154,13 @@ Format each chapter exactly like this example:
                 "success": False,
                 "error": str(e)
             })
+
+    @staticmethod
+    def _is_quota_error(error: Exception) -> bool:
+        text = str(error).lower()
+        return any(marker in text for marker in (
+            "429", "resource_exhausted", "quota", "rate limit", "too many requests"
+        ))
 
     @staticmethod
     def _fallback_chapters(transcript: list) -> list:

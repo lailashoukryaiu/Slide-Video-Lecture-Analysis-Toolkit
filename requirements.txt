@@ -5,6 +5,7 @@ youtube-transcript-api
 python-multipart
 jinja2
 google-genai
+openai
 python-dotenv
 scenedetect
 opencv-python

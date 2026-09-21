@@ -88,6 +88,9 @@ export async function generateChapters() {
         elements.exportChaptersBtn.disabled = false;
         
         updateChapters(data.chapters);
+        if (data.notice) {
+            showNotification(data.notice, 'info');
+        }
         setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
