@@ -36,6 +36,11 @@ async function readJsonResponse(response, operation) {
  * Resets all video-related states when loading a new video
  */
 function resetVideoStates() {
+    if (state.youtubeTranscriptInterval) {
+        clearInterval(state.youtubeTranscriptInterval);
+        state.youtubeTranscriptInterval = null;
+    }
+
     // Reset SSE connection if it exists
     if (window.sseConnection) {
         console.log('Closing existing SSE connection');
@@ -216,6 +221,47 @@ export async function processVideo() {
             // Enable generate summary button if transcript is available
             elements.generateSummaryBtn.disabled = false;
             elements.exportChaptersBtn.disabled = false;
+        } else if (data.transcript_in_progress) {
+            elements.transcriptContainer.innerHTML = `
+                <div class="transcript-processing">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Generating transcript with Whisper AI. You can generate the summary when it is ready.</p>
+                </div>
+            `;
+            elements.loadingIndicator.querySelector('p').textContent =
+                'Video ready. Generating transcript in the background...';
+
+            const checkYoutubeWhisperTranscript = async () => {
+                try {
+                    const whisperResponse = await fetch(`/whisper_transcript_status/${videoId}`);
+                    const whisperData = await whisperResponse.json();
+                    if (whisperData.status === 'complete') {
+                        if (state.youtubeTranscriptInterval) {
+                            clearInterval(state.youtubeTranscriptInterval);
+                            state.youtubeTranscriptInterval = null;
+                        }
+                        state.currentTranscript = whisperData.transcript;
+                        state.currentTranscriptSource = 'whisper';
+                        loadTranscript(whisperData.transcript);
+                        elements.generateSummaryBtn.disabled = false;
+                        elements.exportChaptersBtn.disabled = false;
+                        showNotification('Whisper transcript generation complete. Generate Summary is ready.', 'success');
+                    } else if (whisperData.status === 'error') {
+                        if (state.youtubeTranscriptInterval) {
+                            clearInterval(state.youtubeTranscriptInterval);
+                            state.youtubeTranscriptInterval = null;
+                        }
+                        showError(`Error generating transcript: ${whisperData.error}`);
+                    }
+                } catch (error) {
+                    console.error('Error checking YouTube Whisper transcript status:', error);
+                }
+            };
+
+            await checkYoutubeWhisperTranscript();
+            if (!state.currentTranscript.length) {
+                state.youtubeTranscriptInterval = setInterval(checkYoutubeWhisperTranscript, 5000);
+            }
         } else {
             elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
             elements.generateSummaryBtn.disabled = true;
