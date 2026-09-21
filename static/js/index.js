@@ -1,7 +1,7 @@
 // index.js - Entry point for non-module environments
 // This file is used to import all modules and expose them to the global scope
 
-import { initApp } from './main.js';
+import { initApp } from './main.js?v=7850000';
 import { elements } from './elements.js';
 import { loadUploadedVideo } from './api.js';
 
@@ -22,6 +22,12 @@ const exampleVideos = [
 
 // Initialize example videos dropdown
 function initExampleVideos() {
+    const inputSection = document.querySelector('.input-section');
+    if (!inputSection) {
+        console.error('Cannot initialize video selectors: .input-section is missing');
+        return;
+    }
+
     const container = document.createElement('div');
     container.className = 'example-videos-container';
     container.innerHTML = `
@@ -34,7 +40,6 @@ function initExampleVideos() {
     `;
 
     // Insert the container at the start of the input section
-    const inputSection = document.querySelector('.input-section');
     inputSection.insertBefore(container, inputSection.firstChild);
     initUploadedVideos(inputSection);
 
@@ -91,5 +96,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
         console.error('Application initialization failed:', error);
     }
-    initExampleVideos();
+    try {
+        initExampleVideos();
+    } catch (error) {
+        console.error('Video selector initialization failed:', error);
+    }
 });

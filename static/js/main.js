@@ -203,11 +203,19 @@ function initApp() {
         bind(elements.downloadScreenshotsBtn, 'click', downloadSceneScreenshots);
     }
 
-    // Check YOLO status when the page loads
-    checkYoloStatus();
+    // Non-essential startup checks must not block the rest of the interface.
+    try {
+        checkYoloStatus();
+    } catch (error) {
+        console.error('YOLO status check failed:', error);
+    }
     
     // Set up tabs
-    setupTabs();
+    try {
+        setupTabs();
+    } catch (error) {
+        console.error('Tab initialization failed:', error);
+    }
     
     // Optional analysis features must not prevent the core controls or
     // dynamically-created video selectors from initializing.
@@ -237,28 +245,32 @@ function initApp() {
         state.sceneDetectionThreshold = Number(event.target.value);
         localStorage.setItem('sceneDetectionThreshold', event.target.value);
     });
-    elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
-    elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
+    if (elements.sceneDetectionThreshold) {
+        elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
+    }
+    if (elements.sceneDetectionThresholdValue) {
+        elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
+    }
     bind(elements.closeDetectionBtn, 'click', () => {
-        elements.detectionOverlay.style.display = 'none';
+        if (elements.detectionOverlay) elements.detectionOverlay.style.display = 'none';
     });
     bind(elements.debugDetectionsBtn, 'click', () => {
         debugDetections(state.currentDebugScene, state.currentVideoId);
     });
     bind(elements.closeDebugBtn, 'click', () => {
-        elements.debugOverlay.style.display = 'none';
+        if (elements.debugOverlay) elements.debugOverlay.style.display = 'none';
     });
     bind(elements.sceneToggle, 'change', toggleSceneMarkers);
     bind(elements.timestampToggle, 'change', toggleTimestamps);
     bind(elements.fuzzySearchToggle, 'change', toggleFuzzySearch);
     
     // Settings modal
-    elements.settingsBtn.addEventListener('click', openSettingsModal);
-    elements.closeSettingsBtn.addEventListener('click', closeSettingsModal);
-    elements.saveSettingsBtn.addEventListener('click', saveSettings);
+    bind(elements.settingsBtn, 'click', openSettingsModal);
+    bind(elements.closeSettingsBtn, 'click', closeSettingsModal);
+    bind(elements.saveSettingsBtn, 'click', saveSettings);
     
     // Whisper transcript generation
-    elements.generateWhisperBtn.addEventListener('click', () => {
+    bind(elements.generateWhisperBtn, 'click', () => {
         if (state.currentVideoId) {
             generateWhisperTranscript(state.currentVideoId);
         } else {
@@ -274,7 +286,7 @@ function initApp() {
     // Check for last URL in localStorage
     const lastUrl = localStorage.getItem('lastYoutubeUrl');
     if (lastUrl) {
-        elements.youtubeUrl.value = lastUrl;
+        if (elements.youtubeUrl) elements.youtubeUrl.value = lastUrl;
     }
     
     // Fetch current transcript preference
@@ -317,17 +329,6 @@ function debugDetections(scene, videoId) {
             showError("Error debugging detections. See console for details.");
         });
 }
-
-// Run initialization when DOM is fully loaded
-document.addEventListener('DOMContentLoaded', function() {
-    // Restore the last entered YouTube URL from localStorage if available
-    const lastYoutubeUrl = localStorage.getItem('lastYoutubeUrl');
-    if (lastYoutubeUrl) {
-        elements.youtubeUrl.value = lastYoutubeUrl;
-    }
-    
-    initApp();
-});
 
 // Export functions and state for use in other modules
 export {
