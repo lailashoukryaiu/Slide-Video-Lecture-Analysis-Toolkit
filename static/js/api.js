@@ -3,7 +3,7 @@
 import { elements } from './elements.js';
 import { state } from './main.js';
 import { extractVideoId } from './utils.js';
-import { showError, showLoading, showNotification } from './ui.js';
+import { showError, showErrorWithAction, showLoading, showNotification } from './ui.js';
 import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
@@ -296,7 +296,17 @@ export async function processVideo() {
         elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
 
     } catch (error) {
-        showError(`Error: ${error.message}`);
+        const message = `Error: ${error.message}`;
+        const restrictionError = /youtube|sign in|authentication|not a bot|bot|private|age-restricted|unavailable|forbidden|403|429/i.test(error.message);
+        if (restrictionError) {
+            showErrorWithAction(
+                `${message} YouTube may be restricting this download. You can retry.`,
+                'Retry YouTube download',
+                () => processVideo()
+            );
+        } else {
+            showError(message);
+        }
     } finally {
         showLoading(false);
     }

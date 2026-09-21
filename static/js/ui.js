@@ -18,6 +18,23 @@ export function showError(message) {
     }
 }
 
+export function showErrorWithAction(message, label, action) {
+    elements.errorAlert.replaceChildren();
+    const messageNode = document.createElement('span');
+    messageNode.textContent = message;
+    elements.errorAlert.appendChild(messageNode);
+
+    if (message) {
+        const actionButton = document.createElement('button');
+        actionButton.type = 'button';
+        actionButton.className = 'btn btn-secondary error-action-btn';
+        actionButton.textContent = label;
+        actionButton.addEventListener('click', action);
+        elements.errorAlert.appendChild(actionButton);
+    }
+    elements.errorAlert.style.display = message ? 'block' : 'none';
+}
+
 /**
  * Shows or hides the loading indicator
  * @param {boolean} isLoading - Whether to show the loading indicator
