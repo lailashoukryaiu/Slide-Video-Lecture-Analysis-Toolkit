@@ -13,35 +13,57 @@ export function setupVideoPlayer(videoPlayer) {
     const progressBar = elements.videoProgress;
     const hoverTime = elements.progressHoverTime;
 
-    progressBar.addEventListener('mousemove', (e) => {
+    if (videoPlayer._navigationHandlers) {
+        videoPlayer.removeEventListener('timeupdate', videoPlayer._navigationHandlers.timeupdate);
+        videoPlayer.removeEventListener('timeupdate', videoPlayer._navigationHandlers.timeline);
+        videoPlayer.removeEventListener('timeupdate', videoPlayer._navigationHandlers.transcript);
+    }
+    if (progressBar._navigationHandlers) {
+        progressBar.removeEventListener('mousemove', progressBar._navigationHandlers.mousemove);
+        progressBar.removeEventListener('mouseleave', progressBar._navigationHandlers.mouseleave);
+        progressBar.removeEventListener('click', progressBar._navigationHandlers.click);
+    }
+
+    const navigationHandlers = {
+        timeupdate: () => updateTimeMarker(videoPlayer),
+        timeline: updateTimelineHighlight,
+        transcript: updateActiveTranscript
+    };
+    videoPlayer._navigationHandlers = navigationHandlers;
+
+    const progressHandlers = {
+        mousemove: (e) => {
         const rect = progressBar.getBoundingClientRect();
         const pos = (e.clientX - rect.left) / rect.width;
         const time = pos * videoPlayer.duration;
         hoverTime.textContent = formatTime(time);
         hoverTime.style.left = `${pos * 100}%`;
         hoverTime.style.display = 'block';
-    });
+        },
 
-    progressBar.addEventListener('mouseleave', () => {
-        hoverTime.style.display = 'none';
-    });
+        mouseleave: () => {
+            hoverTime.style.display = 'none';
+        },
 
-    progressBar.addEventListener('click', (e) => {
-        const rect = progressBar.getBoundingClientRect();
-        const pos = (e.clientX - rect.left) / rect.width;
-        videoPlayer.currentTime = pos * videoPlayer.duration;
-    });
+        click: (e) => {
+            const rect = progressBar.getBoundingClientRect();
+            const pos = (e.clientX - rect.left) / rect.width;
+            videoPlayer.currentTime = pos * videoPlayer.duration;
+        }
+    };
+    progressBar._navigationHandlers = progressHandlers;
+    progressBar.addEventListener('mousemove', progressHandlers.mousemove);
+    progressBar.addEventListener('mouseleave', progressHandlers.mouseleave);
+    progressBar.addEventListener('click', progressHandlers.click);
 
     // Update time marker on timeupdate
-    videoPlayer.addEventListener('timeupdate', () => {
-        updateTimeMarker(videoPlayer);
-    });
+    videoPlayer.addEventListener('timeupdate', navigationHandlers.timeupdate);
     
     // Add timeupdate listener to highlight current thumbnail
-    videoPlayer.addEventListener('timeupdate', updateTimelineHighlight);
+    videoPlayer.addEventListener('timeupdate', navigationHandlers.timeline);
     
     // Add listener for transcript updates
-    videoPlayer.addEventListener('timeupdate', updateActiveTranscript);
+    videoPlayer.addEventListener('timeupdate', navigationHandlers.transcript);
 }
 
 /**

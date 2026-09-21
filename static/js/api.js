@@ -59,6 +59,7 @@ function resetVideoStates() {
 
     // Reset video player
     const videoPlayer = elements.videoPlayer;
+    state.currentVideoId = null;
     videoPlayer.pause();
     videoPlayer.removeAttribute('src');
     videoPlayer.load();
@@ -124,6 +125,8 @@ export async function processVideo() {
     localStorage.setItem('lastYoutubeUrl', url);
 
     showError('');
+    const savedUploads = document.getElementById('uploadedVideos');
+    if (savedUploads) savedUploads.value = '';
     showLoading(true);
     elements.loadingIndicator.querySelector('p').textContent = 'Uploading video...';
     elements.generateSummaryBtn.disabled = true;
@@ -433,6 +436,9 @@ export async function loadUploadedVideo(videoId) {
     showError('');
     showLoading(true);
     elements.loadingIndicator.querySelector('p').textContent = 'Loading saved video...';
+    elements.youtubeUrl.value = '';
+    const exampleVideos = document.getElementById('exampleVideos');
+    if (exampleVideos) exampleVideos.value = '';
     try {
         resetVideoStates();
         const response = await fetch(`/uploaded_videos/${encodeURIComponent(videoId)}`);
