@@ -47,6 +47,14 @@ app = FastAPI()
 
 ensure_app_directories()
 
+@app.middleware("http")
+async def disable_frontend_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 @app.get("/yolo_status")
 async def yolo_status():
     """Return the current availability of the YOLO model."""
