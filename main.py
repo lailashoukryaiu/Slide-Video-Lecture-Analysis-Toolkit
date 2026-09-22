@@ -1118,19 +1118,20 @@ async def export_chapters(video_id: str, request: Request):
                     clip_name = files["clip"].name
                     transcript_html = html.escape(files["transcript"].read_text(encoding="utf-8"))
                     point_details = "".join(
-                        f"<details><summary>{html.escape(line.split('] ', 1)[0] if '] ' in line else 'Key point')}</summary>"
-                        f"<p>{html.escape(line.split('] ', 1)[1] if '] ' in line else line)}</p></details>"
-                        for line in files["transcript"].read_text(encoding="utf-8").splitlines()
-                        if line.strip()
+                        f"<details><summary>Key point — {format_chapter_timestamp(point['start'])}</summary>"
+                        f"<p>{html.escape(point['text'])}</p></details>"
+                        for point in files["outline_points"]
                     )
+                    if not point_details:
+                        point_details = "<p>No key points were available for this part.</p>"
                     webpage_parts.extend([
                         f"<section><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
                         f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
-                            f"<details open><summary><strong>Part {chapter['index']}: {html.escape(chapter['title'])}</strong> "
+                            f"<details><summary><strong>Part {chapter['index']}: {html.escape(chapter['title'])}</strong> "
                             f"({format_chapter_timestamp(chapter['start'])})</summary>",
                             f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
                             f"<video controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
-                            f"<details open><summary>Transcript and key points</summary>{point_details}"
+                            f"<details><summary>Transcript and key points</summary>{point_details}"
                             f"<pre>{transcript_html}</pre></details>",
                             "</details></section>",
                         ])

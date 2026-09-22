@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=modal-options-fix-20260922';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=webpage-key-points-fix-20260922';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
