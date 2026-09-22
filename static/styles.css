@@ -169,6 +169,11 @@ body {
     max-width: 520px;
 }
 
+.transcript-generation-controls[hidden],
+.export-options[hidden] {
+    display: none;
+}
+
 .transcript-generation-controls select,
 .transcript-generation-controls textarea {
     padding: 6px;

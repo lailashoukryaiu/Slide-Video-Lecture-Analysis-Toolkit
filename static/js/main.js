@@ -238,8 +238,20 @@ function initApp() {
     
     // Add event listeners
     bind(elements.generateSummaryBtn, 'click', generateChapters);
-    bind(elements.exportChaptersBtn, 'click', exportChapters);
+    bind(elements.exportOptionsBtn, 'click', () => {
+        elements.exportOptionsPanel.hidden = !elements.exportOptionsPanel.hidden;
+    });
+    bind(elements.exportChaptersBtn, 'click', () => {
+        if (elements.exportOptionsPanel.hidden) {
+            elements.exportOptionsPanel.hidden = false;
+            return;
+        }
+        void exportChapters();
+    });
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
+    bind(elements.transcriptOptionsBtn, 'click', () => {
+        elements.transcriptGenerationControls.hidden = !elements.transcriptGenerationControls.hidden;
+    });
     bind(elements.intervalExportToggle, 'change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;
     });

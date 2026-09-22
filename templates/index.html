@@ -144,7 +144,10 @@
                                 </label>
                                 <span>Fuzzy Search</span>
                             </div>
-                            <div class="transcript-generation-controls">
+                            <button id="transcriptOptionsBtn" class="btn btn-secondary" type="button">
+                                Transcript options
+                            </button>
+                            <div class="transcript-generation-controls" id="transcriptGenerationControls" hidden>
                                 <label for="transcriptModel">Transcription model</label>
                                 <select id="transcriptModel">
                                     <option value="turbo" selected>Turbo (recommended)</option>
@@ -154,7 +157,7 @@
                                 </select>
                                 <label for="transcriptPrompt">Conversation type or correction prompt</label>
                                 <textarea id="transcriptPrompt" rows="2" placeholder="Example: technical lecture about machine learning; preserve acronyms and product names."></textarea>
-                                <button id="regenerateTranscriptBtn" class="btn btn-secondary" type="button">Regenerate transcript</button>
+                                <button id="regenerateTranscriptAction" class="btn btn-secondary" type="button">Regenerate transcript</button>
                             </div>
                         </div>
                         <div class="tab-body" id="transcriptContainer">
@@ -170,16 +173,14 @@
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
                             </button>
-                            <label class="interval-export-option">
-                                <input type="checkbox" id="intervalExportToggle">
-                                Use fixed intervals
-                            </label>
-                            <label class="interval-duration-label" for="intervalDuration">
-                                Minutes:
-                                <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
-                            </label>
-                            <fieldset class="export-options">
+                            <button id="exportOptionsBtn" class="btn btn-secondary" type="button">Export options</button>
+                            <fieldset class="export-options" id="exportOptionsPanel" hidden>
                                 <legend>Export contents</legend>
+                                <label><input type="checkbox" id="intervalExportToggle"> Use fixed intervals</label>
+                                <label class="interval-duration-label" for="intervalDuration">
+                                    Minutes:
+                                    <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
+                                </label>
                                 <label for="chapterGrouping">Divide chapters by:</label>
                                 <select id="chapterGrouping">
                                     <option value="topic" selected>Topic</option>
@@ -369,7 +370,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=transcript-controls-20260922b"></script>
+    <script type="module" src="/static/js/index.js?v=compact-action-controls-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
