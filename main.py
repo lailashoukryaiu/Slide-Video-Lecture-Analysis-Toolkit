@@ -718,6 +718,8 @@ async def export_chapters(video_id: str, request: Request):
         raise
     except (ValueError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         raise HTTPException(status_code=500, detail=f"Chapter export failed: {error}")
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Chapter export failed unexpectedly: {error}")
 
 if __name__ == "__main__":
     import uvicorn

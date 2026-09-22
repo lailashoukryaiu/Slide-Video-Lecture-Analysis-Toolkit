@@ -30,8 +30,18 @@ export async function exportChapters() {
             body: JSON.stringify(useIntervals ? { interval_minutes: intervalMinutes } : {})
         });
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Chapter export failed');
+            const contentType = response.headers.get('content-type') || '';
+            let message = `Chapter export failed (${response.status})`;
+            if (contentType.includes('application/json')) {
+                const error = await response.json();
+                message = error.detail || error.error || message;
+            } else {
+                const text = (await response.text()).trim();
+                if (text) {
+                    message = text;
+                }
+            }
+            throw new Error(message);
         }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
