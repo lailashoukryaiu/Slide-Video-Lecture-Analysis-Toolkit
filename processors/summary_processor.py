@@ -43,7 +43,7 @@ class SummaryProcessor:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
             self.model = None
 
-    async def generate_summary(self, transcript: list, video_id: str = None):
+    async def generate_summary(self, transcript: list, video_id: str = None, requested_model: str = None):
         """Generate chapter summary using Gemini."""
         try:
             if not transcript or (not self.model and not self.openai_client):
@@ -77,14 +77,30 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
-            provider = "Gemini"
+            selected_model = requested_model or self.model_name
+            use_openai = selected_model.startswith("gpt-")
+            provider = "OpenAI" if use_openai else "Gemini"
             try:
-                if not self.model:
+                if use_openai:
+                    if not self.openai_client:
+                        raise RuntimeError("OpenAI is not configured")
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.openai_client.chat.completions.create,
+                            model=selected_model,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.5,
+                        ),
+                        timeout=90,
+                    )
+                    response_text = response.choices[0].message.content
+                elif not self.model:
                     raise RuntimeError("Gemini is not configured")
-                response_text = await asyncio.wait_for(
+                else:
+                    response_text = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.client.models.generate_content,
-                        model=self.model_name,
+                        model=selected_model,
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             temperature=0.5,
@@ -92,9 +108,11 @@ Format each chapter exactly like this example:
                         ),
                     ),
                     timeout=90,
-                )
-                response_text = response_text.text
+                    )
+                    response_text = response_text.text
             except Exception as error:
+                if use_openai:
+                    return JSONResponse({"success": False, "error": f"OpenAI could not generate chapters: {error}"})
                 if not self._is_quota_error(error):
                     return JSONResponse({
                         "success": False,

@@ -170,8 +170,16 @@ body {
 }
 
 .transcript-generation-controls[hidden],
-.export-options[hidden] {
+.export-options[hidden],
+.summary-options[hidden] {
     display: none;
+}
+
+.summary-options {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    min-width: 220px;
 }
 
 .transcript-generation-controls select,

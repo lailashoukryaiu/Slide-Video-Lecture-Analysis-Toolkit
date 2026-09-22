@@ -170,6 +170,15 @@
                             <button id="generateSummaryBtn" class="btn btn-accent" disabled>
                                 <i class="fas fa-magic"></i> Generate Summary
                             </button>
+                            <button id="summaryOptionsBtn" class="btn btn-secondary" type="button">Chapter options</button>
+                            <div id="summaryOptionsPanel" class="summary-options" hidden>
+                                <label for="summaryModel">Chapter generation model</label>
+                                <select id="summaryModel">
+                                    <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash</option>
+                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                    <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini</option>
+                                </select>
+                            </div>
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
                             </button>
@@ -370,7 +379,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=compact-action-controls-20260922"></script>
+    <script type="module" src="/static/js/index.js?v=chapter-model-title-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

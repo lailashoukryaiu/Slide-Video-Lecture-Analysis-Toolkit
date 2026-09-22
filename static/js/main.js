@@ -238,6 +238,9 @@ function initApp() {
     
     // Add event listeners
     bind(elements.generateSummaryBtn, 'click', generateChapters);
+    bind(elements.summaryOptionsBtn, 'click', () => {
+        elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
+    });
     bind(elements.exportOptionsBtn, 'click', () => {
         elements.exportOptionsPanel.hidden = !elements.exportOptionsPanel.hidden;
     });

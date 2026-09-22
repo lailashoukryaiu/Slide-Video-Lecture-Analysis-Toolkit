@@ -509,7 +509,7 @@ async def generate_summary(request: Request):
         data = await request.json()
         transcript = data.get("transcript", [])
         video_id = data.get("video_id")
-        return await summary_processor.generate_summary(transcript, video_id)
+        return await summary_processor.generate_summary(transcript, video_id, data.get("model"))
     except Exception as e:
         return JSONResponse({
             "success": False,
@@ -566,21 +566,25 @@ def combine_chapter_boundaries(topic_chapters, scene_chapters):
 def create_combined_chapter_documents(
     chapters, chapter_files, pdf_path=None, docx_path=None,
     pdf_text=True, pdf_images=True, word_text=True, word_images=True,
-    document_title="Lecture Chapters"
+    document_title="Lecture Chapters", document_subtitle=None
 ):
     """Create title, screenshot, and transcript documents for all chapters."""
     styles = getSampleStyleSheet()
     pdf_story = [Paragraph(document_title, styles["Title"])] if pdf_path else None
+    if pdf_story is not None and document_subtitle:
+        pdf_story.append(Paragraph(document_subtitle, styles["Italic"]))
     word_document = Document() if docx_path else None
     if word_document:
         word_document.add_heading(document_title, level=0)
+        if document_subtitle:
+            word_document.add_paragraph(document_subtitle, style="Subtitle")
 
     for index, chapter in enumerate(chapters):
         files = chapter_files[index]
         title = str(chapter["title"])
         timestamp = format_chapter_timestamp(chapter["start"])
         transcript = files["transcript"].read_text(encoding="utf-8").strip()
-        heading = f"Chapter {index + 1}: {title}"
+        heading = f"Part {index + 1}: {title}"
         image_path = files["image"]
         try:
             with PillowImage.open(image_path) as image:
@@ -730,6 +734,7 @@ async def export_chapters(video_id: str, request: Request):
         zip_path = EXPORTS_DIR / f"{video_id}_chapters.zip"
         direct_export_path = None
         document_title = Path(video_path).stem
+        source_filename = document_title
         metadata_path = VIDEO_DIR / "metadata.json"
         if metadata_path.is_file():
             try:
@@ -742,7 +747,23 @@ async def export_chapters(video_id: str, request: Request):
 
         with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            chaptered_lines = [f"# Chapters for {video_id}", ""]
+            generic_name = (
+                bool(re.fullmatch(r"[0-9a-f]{32,64}", document_title, re.IGNORECASE))
+                or document_title.lower() in {"video", "meeting", "recording", "input"}
+            )
+            topic_title = next(
+                (
+                    str(chapter.get("title", "")).strip()
+                    for chapter in chapter_data
+                    if str(chapter.get("title", "")).strip()
+                    and not str(chapter.get("title", "")).lower().startswith(("part ", "chapter "))
+                ),
+                "",
+            )
+            document_subtitle = f"Source clip: {source_filename}" if topic_title and generic_name else None
+            if topic_title and generic_name:
+                document_title = topic_title
+            chaptered_lines = [f"# {document_title}", ""]
             chapter_files = []
             for chapter in chapter_data:
                 number = chapter["index"]
@@ -782,7 +803,7 @@ async def export_chapters(video_id: str, request: Request):
                     transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
                 chapter_files.append({"image": image_path, "transcript": transcript_path})
                 chaptered_lines.extend([
-                    f"## Chapter {number}: {chapter['title']}",
+                    f"## Part {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
                     "",
                     transcript_text,
@@ -799,6 +820,7 @@ async def export_chapters(video_id: str, request: Request):
                 pdf_text=export_flags["include_pdf"], pdf_images=export_flags["include_pdf"],
                 word_text=export_flags["include_word"], word_images=export_flags["include_word"],
                 document_title=document_title,
+                document_subtitle=document_subtitle,
             )
             only_word = export_flags["include_word"] and not export_flags["include_pdf"]
             only_pdf = export_flags["include_pdf"] and not export_flags["include_word"]
