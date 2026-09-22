@@ -71,7 +71,6 @@ export async function uploadTranscriptFile() {
         state.currentTranscriptSource = 'uploaded';
         updateTranslationOptions(data.source_language);
         showNotification(`Uploaded transcript loaded (${data.source_language}).`, 'success');
-    }
 }
 
 export async function translateTranscript() {
