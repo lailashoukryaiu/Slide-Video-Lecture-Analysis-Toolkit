@@ -6,6 +6,8 @@ python-multipart
 jinja2
 google-genai
 openai
+python-docx
+reportlab
 python-dotenv
 scenedetect
 opencv-python

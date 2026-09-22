@@ -14,6 +14,12 @@ import subprocess
 import tempfile
 import zipfile
 import yt_dlp
+from docx import Document
+from docx.shared import Inches
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Image as PdfImage, PageBreak, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 from dotenv import load_dotenv
@@ -521,6 +527,56 @@ def format_chapter_timestamp(seconds: float) -> str:
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+def create_combined_chapter_documents(chapters, chapter_files, pdf_path, docx_path):
+    """Create title, screenshot, and transcript documents for all chapters."""
+    styles = getSampleStyleSheet()
+    pdf_story = [Paragraph("Lecture Chapters", styles["Title"])]
+    word_document = Document()
+    word_document.add_heading("Lecture Chapters", level=0)
+
+    for index, chapter in enumerate(chapters):
+        files = chapter_files[index]
+        title = str(chapter["title"])
+        timestamp = format_chapter_timestamp(chapter["start"])
+        transcript = files["transcript"].read_text(encoding="utf-8").strip()
+        heading = f"Chapter {index + 1}: {title}"
+
+        pdf_story.extend([
+            Paragraph(heading, styles["Heading1"]),
+            Paragraph(f"Starts at {timestamp}", styles["Normal"]),
+            Spacer(1, 0.15 * inch),
+        ])
+        if files["image"].is_file():
+            pdf_story.extend([
+                PdfImage(str(files["image"]), width=6.5 * inch, height=3.65 * inch, kind="proportional"),
+                Spacer(1, 0.15 * inch),
+            ])
+        pdf_story.append(Paragraph(
+            (transcript or "No transcript available for this chapter.")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\n", "<br/>"),
+            styles["BodyText"],
+        ))
+        if index < len(chapters) - 1:
+            pdf_story.append(PageBreak())
+
+        word_document.add_heading(heading, level=1)
+        word_document.add_paragraph(f"Starts at {timestamp}")
+        if files["image"].is_file():
+            word_document.add_picture(str(files["image"]), width=Inches(6.5))
+        word_document.add_heading("Transcript", level=2)
+        word_document.add_paragraph(transcript or "No transcript available for this chapter.")
+        if index < len(chapters) - 1:
+            word_document.add_page_break()
+
+    footnote = "Transcription model: faster-whisper turbo."
+    pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
+    word_document.add_paragraph(footnote, style="Caption")
+    SimpleDocTemplate(str(pdf_path), pagesize=letter, rightMargin=0.6 * inch,
+                      leftMargin=0.6 * inch, topMargin=0.6 * inch,
+                      bottomMargin=0.6 * inch).build(pdf_story)
+    word_document.save(str(docx_path))
+
 @app.post("/export_chapters/{video_id}")
 async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
@@ -598,6 +654,7 @@ async def export_chapters(video_id: str, request: Request):
         with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             chaptered_lines = [f"# Chapters for {video_id}", ""]
+            chapter_files = []
             for chapter in chapter_data:
                 number = chapter["index"]
                 safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", chapter["title"]).strip("_") or f"chapter_{number}"
@@ -631,6 +688,7 @@ async def export_chapters(video_id: str, request: Request):
                     for item in chapter_transcript
                 )
                 transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
+                chapter_files.append({"image": image_path, "transcript": transcript_path})
                 chaptered_lines.extend([
                     f"## Chapter {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
@@ -641,6 +699,12 @@ async def export_chapters(video_id: str, request: Request):
 
             (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
             (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
+            create_combined_chapter_documents(
+                chapter_data,
+                chapter_files,
+                temp_dir / "chapter_document.pdf",
+                temp_dir / "chapter_document.docx",
+            )
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():
                     archive.write(file_path, file_path.name)
