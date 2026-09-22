@@ -3,6 +3,7 @@
 import { elements } from './elements.js';
 import { state } from './main.js';
 import { showError, showErrorWithActions, showNotification } from './ui.js';
+import { saveBlobToUserLocation } from './utils.js';
 
 let chapterMarkerGeneration = 0;
 
@@ -53,20 +54,16 @@ export async function exportChapters() {
             throw new Error(message);
         }
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
         const directWord = options.include_word && !options.include_pdf
             && !options.include_images && !options.include_transcripts && !options.include_clips;
         const directPdf = options.include_pdf && !options.include_word
             && !options.include_images && !options.include_transcripts && !options.include_clips;
-        link.download = directWord
+        const filename = directWord
             ? `${state.currentVideoId}_chapter_document.docx`
             : directPdf
                 ? `${state.currentVideoId}_chapter_document.pdf`
                 : `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
-        link.click();
-        URL.revokeObjectURL(url);
+        await saveBlobToUserLocation(blob, filename);
     } catch (error) {
         showError(`Error exporting chapters: ${error.message}`);
     } finally {

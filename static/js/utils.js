@@ -21,3 +21,30 @@ export function formatTime(seconds) {
     const secs = Math.floor(seconds % 60);
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 } 
+
+export async function saveBlobToUserLocation(blob, filename) {
+    if (typeof window.showSaveFilePicker === 'function') {
+        const extension = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+        const mimeTypes = {
+            zip: 'application/zip',
+            docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            pdf: 'application/pdf',
+        };
+        const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: extension && mimeTypes[extension]
+                ? [{ description: extension.toUpperCase(), accept: { [mimeTypes[extension]]: [`.${extension}`] } }]
+                : undefined,
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+    }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+}

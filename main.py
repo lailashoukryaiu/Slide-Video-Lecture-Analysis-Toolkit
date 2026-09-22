@@ -157,10 +157,10 @@ ocr_processor = OCRProcessor(send_sse_update=send_sse_update)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse(
-    request=request,
-    name="index.html"
-)
+    response = templates.TemplateResponse(request=request, name="index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 @app.post("/upload_video")
 async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = File(...)):

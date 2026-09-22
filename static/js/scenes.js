@@ -5,6 +5,7 @@ import { state } from './main.js';
 import { updateTimelineHighlight } from './video.js';
 import { fetchOcrResults } from './ocr.js';
 import { showError } from './ui.js';
+import { saveBlobToUserLocation } from './utils.js';
 
 // Add state variable for label visibility
 let labelsVisible = true;
@@ -110,12 +111,7 @@ export async function downloadSceneScreenshots() {
             throw new Error(error.detail || 'Could not download slide screenshots');
         }
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${state.currentVideoId}_slide_screenshots.zip`;
-        link.click();
-        URL.revokeObjectURL(url);
+        await saveBlobToUserLocation(blob, `${state.currentVideoId}_slide_screenshots.zip`);
     } catch (error) {
         showError(`Error downloading screenshots: ${error.message}`);
     } finally {
