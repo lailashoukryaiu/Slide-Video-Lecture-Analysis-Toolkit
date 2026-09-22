@@ -3,7 +3,7 @@
 
 import { initApp } from './main.js?v=frontend-cache-383ee33';
 import { elements } from './elements.js';
-import { loadUploadedVideo } from './api.js?v=frontend-cache-383ee33';
+import { loadUploadedVideo } from './api-module.js?v=api-module-0cc4df4';
 
 // Example videos that have been pre-processed
 const exampleVideos = [
