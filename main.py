@@ -19,6 +19,7 @@ import yt_dlp
 from docx import Document
 from docx.shared import Inches
 from docx.image.exceptions import UnrecognizedImageError
+from docx.oxml import OxmlElement
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -132,9 +133,11 @@ def build_outline_points(transcript, max_points=4):
             sentence = sentence.strip()
             words = re.findall(r"[A-Za-zÀ-ÿ\u0600-\u06ff]{3,}", sentence.lower())
             if sentence and words:
+                title_words = sentence.split()[:8]
                 candidates.append({
                     "start": float(item.get("start", 0)),
                     "text": sentence,
+                    "title": " ".join(title_words).rstrip(".,;:!?") or "Key point",
                     "words": words,
                 })
     if not candidates:
@@ -835,6 +838,10 @@ def create_combined_chapter_documents(
         word_document.add_paragraph(footnote, style="Caption")
         word_document.save(str(docx_path))
 
+def collapse_word_heading(paragraph):
+    paragraph_properties = paragraph._p.get_or_add_pPr()
+    paragraph_properties.append(OxmlElement("w:collapsed"))
+
 @app.post("/export_chapters/{video_id}")
 async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
@@ -1151,36 +1158,60 @@ async def export_chapters(video_id: str, request: Request):
                             f"Timestamp: {format_chapter_timestamp(chapter['start'])}"
                         )
                         outline_document.add_paragraph(
-                            "Summary of the most important points:",
+                            "Key points",
                             style="Intense Quote",
                         )
                         outline_items = []
                         if subpart_mode in {"points", "both"}:
                             outline_items.extend(
-                                ("Important point", point["start"], point["text"])
+                                ("point", point["start"], point["title"], point["text"])
                                 for point in files["outline_points"]
                             )
                         if subpart_mode in {"slides", "both"}:
                             outline_items.extend(
-                                ("Slide change", parse_chapter_timestamp(scene["timestamp"]), scene["title"])
+                                (
+                                    "slide",
+                                    parse_chapter_timestamp(scene["timestamp"]),
+                                    scene["title"],
+                                    scene["title"],
+                                )
                                 for scene in files["slide_subparts"]
                             )
                         outline_items.sort(key=lambda item: item[1])
                         if outline_items:
-                            for label, start, text in outline_items:
+                            for label, start, title, text in outline_items:
                                 outline_document.add_heading(
-                                    f"Subpart — {label} — {format_chapter_timestamp(start)}",
+                                    f"{title} ({format_chapter_timestamp(start)})",
                                     level=3,
                                 )
-                                outline_document.add_paragraph(
-                                    text,
-                                    style="List Bullet 2",
-                                )
+                                if label == "point":
+                                    outline_document.add_paragraph(
+                                        text,
+                                        style="List Bullet 2",
+                                    )
                         else:
                             outline_document.add_paragraph(
                                 "No spoken content was available for this part.",
                                 style="List Bullet 2",
                             )
+                        supporting_heading = outline_document.add_heading(
+                            "Picture and transcript",
+                            level=3,
+                        )
+                        collapse_word_heading(supporting_heading)
+                        image_path = files["image"]
+                        if image_path.is_file():
+                            try:
+                                outline_document.add_picture(
+                                    str(image_path), width=Inches(6.5)
+                                )
+                            except UnrecognizedImageError:
+                                pass
+                        outline_document.add_heading("Transcript", level=4)
+                        outline_document.add_paragraph(
+                            files["transcript"].read_text(encoding="utf-8").strip()
+                            or "No transcript available for this part."
+                        )
                 outline_document.save(str(temp_dir / "video_outline.docx"))
             if export_flags["include_scorm"]:
                 (temp_dir / "scorm_api.js").write_text(
