@@ -13,6 +13,7 @@ import glob
 import subprocess
 import tempfile
 import zipfile
+import traceback
 import yt_dlp
 from docx import Document
 from docx.shared import Inches
@@ -719,7 +720,12 @@ async def export_chapters(video_id: str, request: Request):
     except (ValueError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         raise HTTPException(status_code=500, detail=f"Chapter export failed: {error}")
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"Chapter export failed unexpectedly: {error}")
+        error_type = type(error).__name__
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chapter export failed unexpectedly ({error_type}): {error!r}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
