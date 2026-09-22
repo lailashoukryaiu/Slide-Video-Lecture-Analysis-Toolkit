@@ -21,7 +21,7 @@ from docx.image.exceptions import UnrecognizedImageError
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image as PdfImage, PageBreak, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 from PIL import Image as PillowImage, UnidentifiedImageError
@@ -606,9 +606,6 @@ def create_combined_chapter_documents(
             .replace("\n", "<br/>"),
             styles["BodyText"],
             ))
-        if pdf_story is not None and index < len(chapters) - 1:
-            pdf_story.append(PageBreak())
-
         if word_document:
             word_document.add_heading(heading, level=1)
             word_document.add_paragraph(f"Starts at {timestamp}")
@@ -620,9 +617,6 @@ def create_combined_chapter_documents(
         if word_document and word_text:
             word_document.add_heading("Transcript", level=2)
             word_document.add_paragraph(transcript or "No transcript available for this chapter.")
-        if word_document and index < len(chapters) - 1:
-            word_document.add_page_break()
-
     footnote = "Transcription model: faster-whisper turbo."
     if pdf_story is not None:
         pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
