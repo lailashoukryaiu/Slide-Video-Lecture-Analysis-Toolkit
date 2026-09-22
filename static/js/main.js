@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=translated-export-fix-20260922';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=modal-options-fix-20260922';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -293,26 +293,14 @@ function initApp() {
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });
-    bind(elements.exportOptionsBtn, 'click', () => {
-        elements.exportOptionsPanel.hidden = !elements.exportOptionsPanel.hidden;
-        if (!elements.exportOptionsPanel.hidden) {
+    bind(elements.exportChaptersBtn, 'click', () => {
+        if (!elements.exportOptionsDialog.open) {
             void loadExportSuggestions();
-            const suggestedTitle = (state.videoChapters || [])
-                .map((chapter) => String(chapter.title || '').trim())
-                .find((title) => title && !/^(part|chapter)\b/i.test(title));
-            if (suggestedTitle && !elements.exportTitle.value.trim()) {
-                elements.exportTitle.value = suggestedTitle;
-            }
-            if (suggestedTitle && !elements.exportFilename.value.trim()) {
-                elements.exportFilename.value = suggestedTitle.replace(/[^A-Za-z0-9._-]+/g, '_');
-            }
+            elements.exportOptionsDialog.showModal();
         }
     });
-    bind(elements.exportChaptersBtn, 'click', () => {
-        if (elements.exportOptionsPanel.hidden) {
-            elements.exportOptionsPanel.hidden = false;
-            return;
-        }
+    bind(elements.startExportBtn, 'click', () => {
+        elements.exportOptionsDialog.close();
         void exportChapters();
     });
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
@@ -324,7 +312,9 @@ function initApp() {
         elements.videoPlayer.playbackRate = Number(event.target.value);
     });
     bind(elements.transcriptOptionsBtn, 'click', () => {
-        elements.transcriptGenerationControls.hidden = !elements.transcriptGenerationControls.hidden;
+        if (!elements.transcriptOptionsDialog.open) {
+            elements.transcriptOptionsDialog.showModal();
+        }
     });
     bind(elements.intervalExportToggle, 'change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;

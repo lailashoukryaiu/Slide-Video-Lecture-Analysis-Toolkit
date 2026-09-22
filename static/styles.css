@@ -184,6 +184,61 @@ body {
     min-width: 220px;
 }
 
+.options-dialog {
+    width: min(92vw, 720px);
+    max-height: 88vh;
+    padding: 0;
+    border: 0;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    background: var(--card-color);
+    box-shadow: var(--shadow);
+}
+
+.options-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.options-dialog form {
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.dialog-header h2 {
+    margin: 0;
+}
+
+.dialog-close {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 28px;
+    line-height: 1;
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.options-dialog .export-options,
+.options-dialog .transcript-generation-controls {
+    max-width: none;
+    margin: 0;
+}
+
 .transcript-generation-controls select,
 .transcript-generation-controls textarea {
     padding: 6px;

@@ -164,7 +164,13 @@
                             <button id="transcriptOptionsBtn" class="btn btn-secondary" type="button">
                                 Transcript options
                             </button>
-                            <div class="transcript-generation-controls" id="transcriptGenerationControls" hidden>
+                            <dialog id="transcriptOptionsDialog" class="options-dialog">
+                                <form method="dialog">
+                                <div class="dialog-header">
+                                    <h2>Transcript options</h2>
+                                    <button id="closeTranscriptOptionsBtn" class="dialog-close" type="submit" value="cancel" aria-label="Close transcript options">&times;</button>
+                                </div>
+                            <div class="transcript-generation-controls" id="transcriptGenerationControls">
                                 <label for="transcriptModel">Transcription model</label>
                                 <select id="transcriptModel">
                                     <option value="turbo" selected>Turbo (recommended)</option>
@@ -190,6 +196,11 @@
                                 </select>
                                 <button id="translateTranscriptBtn" class="btn btn-secondary" type="button">Translate transcript</button>
                             </div>
+                            <div class="dialog-actions">
+                                <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
+                            </div>
+                                </form>
+                            </dialog>
                         </div>
                         <div class="tab-body" id="transcriptContainer">
                             <!-- Transcript lines will be added here -->
@@ -213,8 +224,13 @@
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
                             </button>
-                            <button id="exportOptionsBtn" class="btn btn-secondary" type="button">Export options</button>
-                            <fieldset class="export-options" id="exportOptionsPanel" hidden>
+                            <dialog id="exportOptionsDialog" class="options-dialog">
+                                <form method="dialog">
+                                <div class="dialog-header">
+                                    <h2>Export chapters</h2>
+                                    <button id="closeExportOptionsBtn" class="dialog-close" type="submit" value="cancel" aria-label="Close export options">&times;</button>
+                                </div>
+                            <fieldset class="export-options" id="exportOptionsPanel">
                                 <legend>Export contents</legend>
                                 <label><input type="checkbox" id="intervalExportToggle"> Use fixed intervals</label>
                                 <label class="interval-duration-label" for="intervalDuration">
@@ -254,6 +270,12 @@
                                 <label><input type="checkbox" id="exportOutline"> Hierarchical outline Word document</label>
                                 <label><input type="checkbox" id="exportScorm"> SCORM 1.2 LMS package</label>
                             </fieldset>
+                            <div class="dialog-actions">
+                                <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
+                                <button id="startExportBtn" class="btn btn-accent" type="button">Start export</button>
+                            </div>
+                                </form>
+                            </dialog>
                         </div>
                         <div class="tab-body" id="chaptersContainer">
                             <div id="summaryStatus" class="summary-status" role="status" aria-live="polite"></div>
@@ -431,7 +453,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=translated-export-fix-20260922"></script>
+    <script type="module" src="/static/js/index.js?v=modal-options-fix-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
