@@ -75,20 +75,21 @@ export async function uploadTranscriptFile() {
 }
 
 export async function translateTranscript() {
-        if (!state.currentVideoId || !state.currentTranscript.length) {
-            showError('Load a transcript before translating it.');
-            return;
-        }
-        const target = elements.translationTarget.value;
-        const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
-        });
-        const data = await readJsonResponse(response, 'Transcript translation');
-        loadTranscript(data.transcript);
-        state.currentTranscriptSource = `translation:${target}`;
-        showNotification(`Transcript translated to ${data.language}.`, 'success');
+    if (!state.currentVideoId || !state.currentTranscript.length) {
+        showError('Load a transcript before translating it.');
+        return;
     }
+    const target = elements.translationTarget.value;
+    const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
+    });
+    const data = await readJsonResponse(response, 'Transcript translation');
+    loadTranscript(data.transcript);
+    state.currentTranscriptSource = `translation:${target}`;
+    showNotification(`Transcript translated to ${data.language}.`, 'success');
+}
 
 function updateTranslationOptions(sourceLanguage) {
         [...elements.translationTarget.options].forEach((option) => {
