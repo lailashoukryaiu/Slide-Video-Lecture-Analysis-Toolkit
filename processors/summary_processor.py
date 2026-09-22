@@ -173,6 +173,35 @@ Format each chapter exactly like this example:
                 "error": str(e)
             })
 
+    async def translate_transcript(self, transcript, target_language):
+        if not self.model and not self.openai_client:
+            raise RuntimeError("No translation model is configured")
+        prompt = (
+            f"Translate each transcript segment into language code {target_language}. "
+            "Return only a JSON array with the same start, duration, and translated text fields.\n"
+            + json.dumps(transcript, ensure_ascii=False)
+        )
+        if self.model:
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            result = response.text
+        else:
+            response = await asyncio.to_thread(
+                self.openai_client.chat.completions.create,
+                model=self.openai_model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            result = response.choices[0].message.content
+        translated = json.loads(result)
+        if not isinstance(translated, list):
+            raise ValueError("Translation model returned an invalid transcript")
+        return translated
+
     @staticmethod
     def _is_quota_error(error: Exception) -> bool:
         text = str(error).lower()

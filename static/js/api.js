@@ -15,6 +15,43 @@ export async function regenerateTranscript() {
         showError('Load a video before regenerating its transcript.');
         return;
     }
+
+    export async function uploadTranscriptFile() {
+        const file = elements.transcriptFile?.files?.[0];
+        if (!state.currentVideoId || !file) {
+            showError('Select a transcript file after loading a video.');
+            return;
+        }
+        const form = new FormData();
+        form.append('transcript', file);
+        const response = await fetch(`/upload_transcript/${encodeURIComponent(state.currentVideoId)}`, { method: 'POST', body: form });
+        const data = await readJsonResponse(response, 'Transcript upload');
+        loadTranscript(data.transcript);
+        state.currentTranscriptSource = 'uploaded';
+        [...elements.translationTarget.options].forEach((option) => {
+            option.disabled = option.value === data.source_language;
+        });
+        if (elements.translationTarget.value === data.source_language) {
+            elements.translationTarget.value = [...elements.translationTarget.options].find((option) => !option.disabled)?.value || 'en';
+        }
+        showNotification(`Uploaded transcript loaded (${data.source_language}).`, 'success');
+    }
+
+    export async function translateTranscript() {
+        if (!state.currentVideoId || !state.currentTranscript.length) {
+            showError('Load a transcript before translating it.');
+            return;
+        }
+        const target = elements.translationTarget.value;
+        const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
+        });
+        const data = await readJsonResponse(response, 'Transcript translation');
+        loadTranscript(data.transcript);
+        state.currentTranscriptSource = `translation:${target}`;
+        showNotification(`Transcript translated to ${data.language}.`, 'success');
+    }
     const model = elements.transcriptModel?.value || 'turbo';
     const prompt = elements.transcriptPrompt?.value.trim() || '';
     const button = elements.regenerateTranscriptBtn;

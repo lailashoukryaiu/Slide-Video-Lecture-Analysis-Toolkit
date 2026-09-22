@@ -75,6 +75,65 @@ transcript_processor = TranscriptProcessor()
 embedding_processor = EmbeddingProcessor()
 summary_processor = SummaryProcessor()
 
+def parse_uploaded_transcript(text, suffix):
+    if suffix == ".json":
+        data = json.loads(text)
+        return data if isinstance(data, list) else data.get("segments", [])
+    lines = text.replace("\r\n", "\n").split("\n")
+    result = []
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        if "-->" in line:
+            start = line.split("-->")[0].strip().replace(",", ".")
+            parts = start.split(":")
+            seconds = sum(float(value) * (60 ** position) for position, value in enumerate(reversed(parts)))
+            index += 1
+            text_lines = []
+            while index < len(lines) and lines[index].strip():
+                text_lines.append(lines[index].strip())
+                index += 1
+            if text_lines:
+                result.append({"start": seconds, "duration": 0, "text": " ".join(text_lines)})
+        elif line and not line.isdigit():
+            result.append({"start": result[-1]["start"] + 1 if result else 0, "duration": 0, "text": line})
+        index += 1
+    return result
+
+def detect_transcript_language(transcript):
+    sample = " ".join(item.get("text", "") for item in transcript[:30])
+    if re.search(r"[\u0600-\u06ff]", sample):
+        return "ar"
+    words = set(re.findall(r"[A-Za-zÀ-ÿ]+", sample.lower()))
+    if words & {"der", "die", "das", "und", "ist"}:
+        return "de"
+    if words & {"jest", "nie", "oraz", "dla"}:
+        return "pl"
+    return "en"
+
+@app.post("/upload_transcript/{video_id}")
+async def upload_transcript(video_id: str, transcript: UploadFile = File(...)):
+    text = (await transcript.read()).decode("utf-8-sig")
+    transcript_data = parse_uploaded_transcript(text, Path(transcript.filename or "").suffix.lower())
+    if not transcript_data:
+        raise HTTPException(status_code=400, detail="No transcript segments found")
+    output_path = TRANSCRIPTS_DIR / f"{video_id}_uploaded.json"
+    output_path.write_text(json.dumps(transcript_data, ensure_ascii=False), encoding="utf-8")
+    return {"success": True, "transcript": transcript_data, "source_language": detect_transcript_language(transcript_data)}
+
+@app.post("/translate_transcript/{video_id}")
+async def translate_transcript(video_id: str, request: Request):
+    data = await request.json()
+    transcript = data.get("transcript", [])
+    target = data.get("target_language")
+    if target not in {"de", "en", "ar", "pl"}:
+        raise HTTPException(status_code=400, detail="Unsupported translation language")
+    translated = await summary_processor.translate_transcript(transcript, target)
+    (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
+        json.dumps(translated, ensure_ascii=False), encoding="utf-8"
+    )
+    return {"success": True, "transcript": translated, "language": target}
+
 # Create thread pool for background tasks
 executor = ThreadPoolExecutor(max_workers=2)
 

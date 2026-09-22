@@ -158,6 +158,17 @@
                                 <label for="transcriptPrompt">Conversation type or correction prompt</label>
                                 <textarea id="transcriptPrompt" rows="2" placeholder="Example: technical lecture about machine learning; preserve acronyms and product names."></textarea>
                                 <button id="regenerateTranscriptAction" class="btn btn-secondary" type="button">Regenerate transcript</button>
+                                <label for="transcriptFile">Upload transcript file</label>
+                                <input id="transcriptFile" type="file" accept=".txt,.srt,.vtt,.json">
+                                <button id="uploadTranscriptBtn" class="btn btn-secondary" type="button">Use uploaded transcript</button>
+                                <label for="translationTarget">Translate transcript</label>
+                                <select id="translationTarget">
+                                    <option value="de">German</option>
+                                    <option value="en">English</option>
+                                    <option value="ar">Arabic</option>
+                                    <option value="pl">Polish</option>
+                                </select>
+                                <button id="translateTranscriptBtn" class="btn btn-secondary" type="button">Translate transcript</button>
                             </div>
                         </div>
                         <div class="tab-body" id="transcriptContainer">
@@ -379,7 +390,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=chapter-model-title-20260922"></script>
+    <script type="module" src="/static/js/index.js?v=transcript-upload-translation-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

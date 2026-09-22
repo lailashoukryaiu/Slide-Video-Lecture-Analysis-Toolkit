@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript } from './api.js';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -252,6 +252,8 @@ function initApp() {
         void exportChapters();
     });
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
+    bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
+    bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));
     bind(elements.transcriptOptionsBtn, 'click', () => {
         elements.transcriptGenerationControls.hidden = !elements.transcriptGenerationControls.hidden;
     });
