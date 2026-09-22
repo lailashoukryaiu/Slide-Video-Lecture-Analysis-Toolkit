@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=webpage-key-points-fix-20260922';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=export-modal-suggestions-fix-20260922';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -213,6 +213,15 @@ function setupKeyboardControls() {
 
 async function loadExportSuggestions() {
     if (!state.currentVideoId) return;
+    const fallbackSuggestion = state.currentVideoId;
+    const titleWasEmpty = !elements.exportTitle.value.trim();
+    const filenameWasEmpty = !elements.exportFilename.value.trim();
+    if (!elements.exportTitle.value.trim()) {
+        elements.exportTitle.value = fallbackSuggestion;
+    }
+    if (!elements.exportFilename.value.trim()) {
+        elements.exportFilename.value = fallbackSuggestion;
+    }
     try {
         const response = await fetch(
             `/export_suggestions/${encodeURIComponent(state.currentVideoId)}`
@@ -221,11 +230,11 @@ async function loadExportSuggestions() {
             throw new Error(`Could not load export suggestions (${response.status})`);
         }
         const suggestions = await response.json();
-        if (!elements.exportTitle.value.trim()) {
-            elements.exportTitle.value = suggestions.title_suggestion || '';
+        if (suggestions.title_suggestion && (titleWasEmpty || elements.exportTitle.value === fallbackSuggestion)) {
+            elements.exportTitle.value = suggestions.title_suggestion;
         }
-        if (!elements.exportFilename.value.trim()) {
-            elements.exportFilename.value = suggestions.filename_suggestion || '';
+        if (suggestions.filename_suggestion && (filenameWasEmpty || elements.exportFilename.value === fallbackSuggestion)) {
+            elements.exportFilename.value = suggestions.filename_suggestion;
         }
         const titleSuggestion = document.getElementById('exportTitleSuggestion');
         const filenameSuggestion = document.getElementById('exportFilenameSuggestion');
@@ -293,9 +302,9 @@ function initApp() {
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });
-    bind(elements.exportChaptersBtn, 'click', () => {
+    bind(elements.exportChaptersBtn, async () => {
         if (!elements.exportOptionsDialog.open) {
-            void loadExportSuggestions();
+            await loadExportSuggestions();
             elements.exportOptionsDialog.showModal();
         }
     });
