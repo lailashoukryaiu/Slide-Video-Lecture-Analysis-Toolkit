@@ -162,6 +162,18 @@ body {
     padding: 6px;
 }
 
+.transcript-generation-controls {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+    max-width: 520px;
+}
+
+.transcript-generation-controls select,
+.transcript-generation-controls textarea {
+    padding: 6px;
+}
+
 .range-label {
     display: flex;
     justify-content: space-between;

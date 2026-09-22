@@ -56,7 +56,15 @@ export async function exportChapters() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
+        const directWord = options.include_word && !options.include_pdf
+            && !options.include_images && !options.include_transcripts && !options.include_clips;
+        const directPdf = options.include_pdf && !options.include_word
+            && !options.include_images && !options.include_transcripts && !options.include_clips;
+        link.download = directWord
+            ? `${state.currentVideoId}_chapter_document.docx`
+            : directPdf
+                ? `${state.currentVideoId}_chapter_document.pdf`
+                : `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
         link.click();
         URL.revokeObjectURL(url);
     } catch (error) {

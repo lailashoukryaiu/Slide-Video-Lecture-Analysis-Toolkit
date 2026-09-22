@@ -10,6 +10,50 @@ import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { checkSceneDetection, updateScenes } from './scenes.js';
 import { fetchOcrResults } from './ocr.js';
 
+export async function regenerateTranscript() {
+    if (!state.currentVideoId) {
+        showError('Load a video before regenerating its transcript.');
+        return;
+    }
+    const model = elements.transcriptModel?.value || 'turbo';
+    const prompt = elements.transcriptPrompt?.value.trim() || '';
+    const button = elements.regenerateTranscriptBtn;
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Regenerating...';
+    }
+    elements.transcriptContainer.innerHTML = '<p>Regenerating transcript...</p>';
+    try {
+        const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(state.currentVideoId)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt })
+        });
+        const data = await readJsonResponse(response, 'Transcript regeneration');
+        if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
+        const poll = async () => {
+            const statusResponse = await fetch(`/whisper_transcript_status/${encodeURIComponent(state.currentVideoId)}`);
+            const status = await readJsonResponse(statusResponse, 'Transcript status');
+            if (status.status === 'complete') {
+                state.currentTranscriptSource = 'whisper';
+                loadTranscript(status.transcript);
+                showNotification(`Transcript generated with ${status.model || model}.`, 'success');
+                return;
+            }
+            if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
+            setTimeout(() => poll().catch((error) => showError(error.message)), 3000);
+        };
+        await poll();
+    } catch (error) {
+        showError(`Error regenerating transcript: ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Regenerate transcript';
+        }
+    }
+}
+
 async function readJsonResponse(response, operation) {
     const responseText = await response.text();
     if (!responseText.trim()) {

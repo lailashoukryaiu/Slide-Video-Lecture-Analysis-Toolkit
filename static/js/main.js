@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes } from './api.js';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript } from './api.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -239,6 +239,7 @@ function initApp() {
     // Add event listeners
     bind(elements.generateSummaryBtn, 'click', generateChapters);
     bind(elements.exportChaptersBtn, 'click', exportChapters);
+    bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
     bind(elements.intervalExportToggle, 'change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;
     });

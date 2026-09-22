@@ -13,6 +13,7 @@ import glob
 import subprocess
 import tempfile
 import zipfile
+import shutil
 import traceback
 import yt_dlp
 from docx import Document
@@ -291,8 +292,11 @@ async def get_transcript(video_id: str, source: str):
     return await transcript_processor.get_transcript(video_id, source)
 
 @app.post("/generate_whisper_transcript/{video_id}")
-async def generate_whisper_transcript(video_id: str, background_tasks: BackgroundTasks):
-    return await transcript_processor.generate_whisper_transcript(video_id, background_tasks)
+async def generate_whisper_transcript(video_id: str, request: Request, background_tasks: BackgroundTasks):
+    options = await request.json()
+    return await transcript_processor.generate_whisper_transcript(
+        video_id, background_tasks, options.get("model", "turbo"), options.get("prompt")
+    )
 
 @app.get("/whisper_transcript_status/{video_id}")
 async def whisper_transcript_status(video_id: str):
@@ -724,6 +728,7 @@ async def export_chapters(video_id: str, request: Request):
         export_dir = EXPORTS_DIR / video_id
         export_dir.mkdir(parents=True, exist_ok=True)
         zip_path = EXPORTS_DIR / f"{video_id}_chapters.zip"
+        direct_export_path = None
         document_title = Path(video_path).stem
         metadata_path = VIDEO_DIR / "metadata.json"
         if metadata_path.is_file():
@@ -795,6 +800,15 @@ async def export_chapters(video_id: str, request: Request):
                 word_text=export_flags["include_word"], word_images=export_flags["include_word"],
                 document_title=document_title,
             )
+            only_word = export_flags["include_word"] and not export_flags["include_pdf"]
+            only_pdf = export_flags["include_pdf"] and not export_flags["include_word"]
+            no_extra_files = not any(
+                export_flags[name] for name in ("include_images", "include_transcripts", "include_clips")
+            )
+            if no_extra_files and (only_word or only_pdf):
+                document_name = "chapter_document.docx" if only_word else "chapter_document.pdf"
+                direct_export_path = EXPORTS_DIR / f"{video_id}_{document_name}"
+                shutil.copy2(temp_dir / document_name, direct_export_path)
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():
                     if file_path.suffix == ".mp4" and not export_flags["include_clips"]:
@@ -805,6 +819,15 @@ async def export_chapters(video_id: str, request: Request):
                         continue
                     archive.write(file_path, file_path.name)
 
+        if direct_export_path is not None:
+            return FileResponse(
+                direct_export_path,
+                media_type=(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    if direct_export_path.suffix == ".docx" else "application/pdf"
+                ),
+                filename=direct_export_path.name,
+            )
         return FileResponse(
             zip_path,
             media_type="application/zip",

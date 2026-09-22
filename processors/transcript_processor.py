@@ -84,7 +84,7 @@ class TranscriptProcessor:
         except Exception as e:
             return None, str(e)
 
-    async def generate_whisper_transcript(self, video_id: str, background_tasks):
+    async def generate_whisper_transcript(self, video_id: str, background_tasks, model="turbo", prompt=None):
         """Generate a transcript using Whisper."""
         try:
             # Check if video exists
@@ -105,7 +105,9 @@ class TranscriptProcessor:
             progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
 
             # Check if transcript already exists
-            if os.path.exists(output_path):
+            if model not in {"turbo", "small", "medium", "large-v3"}:
+                return JSONResponse({"success": False, "error": "Unsupported transcription model"})
+            if os.path.exists(output_path) and model == "turbo" and not prompt:
                 with open(output_path, 'r') as f:
                     transcript = json.load(f)
                 return JSONResponse({
@@ -122,7 +124,11 @@ class TranscriptProcessor:
                 })
             
             # Start background task to generate transcript
-            background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            background_tasks.add_task(
+                self.process_whisper_transcript, video_id, video_path, output_path, model, prompt
+            )
             
             return JSONResponse({
                 "success": True,
@@ -156,12 +162,12 @@ class TranscriptProcessor:
         # Start background task
         background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
 
-    async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str):
+    async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None):
         """Process video with Whisper and save transcript."""
         try:
             transcript = []
             
-            for sentence_data, progress in transcribe_audio(video_path):
+            for sentence_data, progress in transcribe_audio(video_path, model_name=model, prompt=prompt):
                 lines = sentence_data.strip().split('\n')
                 i = 0
                 while i < len(lines):
@@ -200,6 +206,8 @@ class TranscriptProcessor:
                 )
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
+            with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"), "w") as f:
+                json.dump({"model": model, "prompt": prompt or ""}, f)
 
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_file):
@@ -236,7 +244,8 @@ class TranscriptProcessor:
                 return JSONResponse({
                     "success": True,
                     "status": "complete",
-                    "transcript": transcript
+                    "transcript": transcript,
+                    "model": self._read_whisper_model(video_id)
                 })
 
             error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
@@ -285,6 +294,15 @@ class TranscriptProcessor:
                 "status": "error",
                 "error": str(e)
             })
+
+    def _read_whisper_model(self, video_id: str):
+        metadata_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
+        if metadata_path.exists():
+            try:
+                return json.loads(metadata_path.read_text(encoding="utf-8")).get("model", "turbo")
+            except (OSError, json.JSONDecodeError):
+                pass
+        return "turbo"
 
     async def set_preference(self, preference: str):
         """Set the transcript preference."""
