@@ -159,7 +159,8 @@ Format each chapter exactly like this example:
     def _is_quota_error(error: Exception) -> bool:
         text = str(error).lower()
         return any(marker in text for marker in (
-            "429", "resource_exhausted", "quota", "rate limit", "too many requests"
+            "429", "503", "resource_exhausted", "quota", "rate limit",
+            "too many requests", "unavailable", "high demand", "overloaded"
         ))
 
     @staticmethod
