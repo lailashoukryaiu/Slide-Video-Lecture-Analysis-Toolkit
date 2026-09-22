@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=api-module-9cc894f';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=translation-title-fix-20260922';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -210,6 +210,35 @@ function setupKeyboardControls() {
     });
 }
 
+async function loadExportSuggestions() {
+    if (!state.currentVideoId) return;
+    try {
+        const response = await fetch(
+            `/export_suggestions/${encodeURIComponent(state.currentVideoId)}`
+        );
+        if (!response.ok) {
+            throw new Error(`Could not load export suggestions (${response.status})`);
+        }
+        const suggestions = await response.json();
+        if (!elements.exportTitle.value.trim()) {
+            elements.exportTitle.value = suggestions.title_suggestion || '';
+        }
+        if (!elements.exportFilename.value.trim()) {
+            elements.exportFilename.value = suggestions.filename_suggestion || '';
+        }
+        const titleSuggestion = document.getElementById('exportTitleSuggestion');
+        const filenameSuggestion = document.getElementById('exportFilenameSuggestion');
+        if (titleSuggestion && suggestions.title_suggestion) {
+            titleSuggestion.textContent = `Suggestion: ${suggestions.title_suggestion}`;
+        }
+        if (filenameSuggestion && suggestions.filename_suggestion) {
+            filenameSuggestion.textContent = `Suggestion: ${suggestions.filename_suggestion}`;
+        }
+    } catch (error) {
+        showError(`Could not load export suggestions: ${error.message}`);
+    }
+}
+
 // Initialize the application
 function initApp() {
     if (elements.videoPlayer) {
@@ -266,6 +295,7 @@ function initApp() {
     bind(elements.exportOptionsBtn, 'click', () => {
         elements.exportOptionsPanel.hidden = !elements.exportOptionsPanel.hidden;
         if (!elements.exportOptionsPanel.hidden) {
+            void loadExportSuggestions();
             const suggestedTitle = (state.videoChapters || [])
                 .map((chapter) => String(chapter.title || '').trim())
                 .find((title) => title && !/^(part|chapter)\b/i.test(title));

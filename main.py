@@ -632,6 +632,46 @@ async def generate_summary(request: Request):
 async def get_summary(video_id: str):
     return await summary_processor.get_summary(video_id)
 
+@app.get("/export_suggestions/{video_id}")
+async def get_export_suggestions(video_id: str):
+    metadata_path = VIDEO_DIR / "metadata.json"
+    source_title = video_id
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            source_title = Path(
+                metadata.get(video_id, {}).get("filename", source_title)
+            ).stem or source_title
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    title_suggestion = source_title
+    summary_path = SUMMARIES_DIR / f"{video_id}.json"
+    if summary_path.is_file():
+        try:
+            chapters = json.loads(summary_path.read_text(encoding="utf-8"))
+            title_suggestion = next(
+                (
+                    str(chapter.get("title", "")).strip()
+                    for chapter in chapters
+                    if isinstance(chapter, dict)
+                    and str(chapter.get("title", "")).strip()
+                    and not str(chapter.get("title", "")).lower().startswith(("part ", "chapter "))
+                ),
+                source_title,
+            )
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+
+    filename_suggestion = re.sub(
+        r"[^A-Za-z0-9._-]+", "_", title_suggestion
+    ).strip("._-") or f"video_{video_id}"
+    return {
+        "title_suggestion": title_suggestion,
+        "filename_suggestion": filename_suggestion,
+        "source_filename": source_title,
+    }
+
 def parse_chapter_timestamp(timestamp: str) -> float:
     parts = [float(part) for part in timestamp.split(":")]
     if len(parts) == 2:
