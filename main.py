@@ -799,7 +799,7 @@ async def export_chapters(video_id: str, request: Request):
                 for file_path in temp_dir.iterdir():
                     if file_path.suffix == ".mp4" and not export_flags["include_clips"]:
                         continue
-                    if file_path.suffix == ".jpg" and not export_flags["include_images"]:
+                    if file_path.suffix.lower() in {".jpg", ".jpeg", ".png"} and not export_flags["include_images"]:
                         continue
                     if file_path.suffix == ".txt" and not export_flags["include_transcripts"]:
                         continue
