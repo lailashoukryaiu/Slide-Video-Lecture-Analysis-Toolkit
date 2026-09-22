@@ -136,7 +136,6 @@ export function renderSpeakerNames(names = {}) {
             panel.appendChild(row);
         });
     }
-}
 
 function applySpeakerNames(transcript, names) {
     return transcript.map((item) => ({
