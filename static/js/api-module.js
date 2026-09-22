@@ -94,6 +94,11 @@ export async function translateTranscript() {
         const data = await readJsonResponse(response, 'Transcript translation');
         loadTranscript(data.transcript);
         state.currentTranscriptSource = `translation:${target}`;
+        state.currentTranslationLanguage = target;
+        if (Array.isArray(data.chapters)) {
+            state.videoChapters = data.chapters;
+            updateChapters(data.chapters);
+        }
         showNotification(`Transcript translated to ${data.language}.`, 'success');
     } finally {
         if (button) {
@@ -278,6 +283,7 @@ function resetVideoStates() {
     // Reset video player
     const videoPlayer = elements.videoPlayer;
     state.currentVideoId = null;
+    state.currentTranslationLanguage = null;
     clearChapterMarkers();
     videoPlayer.pause();
     videoPlayer.removeAttribute('src');

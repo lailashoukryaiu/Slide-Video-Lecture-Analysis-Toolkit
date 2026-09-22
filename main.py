@@ -173,7 +173,55 @@ async def translate_transcript(video_id: str, request: Request):
     (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
         json.dumps(translated, ensure_ascii=False), encoding="utf-8"
     )
-    return {"success": True, "transcript": translated, "language": target}
+    translated_chapters = []
+    summary_path = SUMMARIES_DIR / f"{video_id}.json"
+    if summary_path.is_file():
+        try:
+            chapters = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not read chapter summary: {error}",
+            )
+        try:
+            chapter_segments = [
+                {
+                    "start": index,
+                    "duration": 0,
+                    "text": str(chapter.get("title", "")),
+                }
+                for index, chapter in enumerate(chapters)
+                if isinstance(chapter, dict) and str(chapter.get("title", "")).strip()
+            ]
+            translated_titles = await summary_processor.translate_transcript(
+                chapter_segments, target
+            )
+            title_by_index = {
+                index: str(item.get("text", "")).strip()
+                for index, item in enumerate(translated_titles)
+                if isinstance(item, dict) and str(item.get("text", "")).strip()
+            }
+            for index, chapter in enumerate(chapters):
+                if not isinstance(chapter, dict):
+                    continue
+                translated_chapter = dict(chapter)
+                if index in title_by_index:
+                    translated_chapter["title"] = title_by_index[index]
+                translated_chapters.append(translated_chapter)
+            (SUMMARIES_DIR / f"{video_id}_summary_{target}.json").write_text(
+                json.dumps(translated_chapters, ensure_ascii=False), encoding="utf-8"
+            )
+        except (OSError, ValueError, TypeError) as error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not translate chapter titles: {error}",
+            )
+    return {
+        "success": True,
+        "transcript": translated,
+        "chapters": translated_chapters,
+        "language": target,
+    }
 
 # Create thread pool for background tasks
 executor = ThreadPoolExecutor(max_workers=2)
@@ -792,6 +840,9 @@ async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
     options = await request.json()
     interval_minutes = options.get("interval_minutes")
+    transcript_language = str(options.get("transcript_language", "")).strip()
+    if transcript_language and transcript_language not in {"de", "en", "ar", "pl"}:
+        raise HTTPException(status_code=400, detail="Invalid transcript language")
     chapter_grouping = options.get("chapter_grouping", "topic")
     if chapter_grouping not in {"topic", "slides", "combined"}:
         raise HTTPException(status_code=400, detail="Invalid chapter grouping")
@@ -808,7 +859,16 @@ async def export_chapters(video_id: str, request: Request):
     if not any(export_flags.values()):
         raise HTTPException(status_code=400, detail="Select at least one export option")
     video_path = video_processor.get_video_path(video_id)
-    summary_path = SUMMARIES_DIR / f"{video_id}.json"
+    translated_summary_path = (
+        SUMMARIES_DIR / f"{video_id}_summary_{transcript_language}.json"
+        if transcript_language else None
+    )
+    summary_path = translated_summary_path if translated_summary_path and translated_summary_path.is_file() else SUMMARIES_DIR / f"{video_id}.json"
+    if transcript_language and interval_minutes is None and chapter_grouping in {"topic", "combined"} and not summary_path.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail="Translate the transcript and chapters before exporting in the selected language",
+        )
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
     scene_path = SCENES_DIR / f"{video_id}.json"
@@ -859,11 +919,15 @@ async def export_chapters(video_id: str, request: Request):
             raise HTTPException(status_code=400, detail="No chapters available")
 
         transcript = []
-        for transcript_path in [
+        transcript_candidates = (
+            [TRANSCRIPTS_DIR / f"{video_id}_translated_{transcript_language}.json"]
+            if transcript_language else []
+        ) + [
             TRANSCRIPTS_DIR / f"{video_id}_whisper.json",
             TRANSCRIPTS_DIR / f"{video_id}_youtube.json",
             TRANSCRIPTS_DIR / f"{video_id}.json",
-        ]:
+        ]
+        for transcript_path in transcript_candidates:
             if transcript_path.is_file():
                 with transcript_path.open("r", encoding="utf-8") as file:
                     transcript = json.load(file)

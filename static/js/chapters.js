@@ -40,6 +40,7 @@ export async function exportChapters() {
             subpart_mode: elements.subpartMode?.value || 'points',
             document_title: elements.exportTitle?.value.trim() || '',
             export_filename: elements.exportFilename?.value.trim() || '',
+            transcript_language: state.currentTranslationLanguage || '',
         };
         const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
             method: 'POST',
