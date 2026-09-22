@@ -24,10 +24,20 @@ export async function exportChapters() {
         if (useIntervals && (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0)) {
             throw new Error('Enter an interval duration greater than zero minutes.');
         }
+        const options = {
+            ...(useIntervals ? { interval_minutes: intervalMinutes } : {}),
+            include_images: elements.exportImages?.checked ?? true,
+            include_transcripts: elements.exportTranscripts?.checked ?? true,
+            include_clips: elements.exportClips?.checked ?? true,
+            include_word_text: elements.exportWordText?.checked ?? true,
+            include_word_images: elements.exportWordImages?.checked ?? true,
+            include_pdf_text: elements.exportPdfText?.checked ?? true,
+            include_pdf_images: elements.exportPdfImages?.checked ?? true,
+        };
         const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(useIntervals ? { interval_minutes: intervalMinutes } : {})
+            body: JSON.stringify(options)
         });
         if (!response.ok) {
             const contentType = response.headers.get('content-type') || '';

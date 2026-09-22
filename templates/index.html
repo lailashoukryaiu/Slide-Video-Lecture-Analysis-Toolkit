@@ -166,6 +166,16 @@
                                 Minutes:
                                 <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
                             </label>
+                            <fieldset class="export-options">
+                                <legend>Export contents</legend>
+                                <label><input type="checkbox" id="exportImages" checked> Images</label>
+                                <label><input type="checkbox" id="exportTranscripts" checked> Transcript files</label>
+                                <label><input type="checkbox" id="exportClips" checked> Video clips</label>
+                                <label><input type="checkbox" id="exportWordText" checked> Word: text</label>
+                                <label><input type="checkbox" id="exportWordImages" checked> Word: images</label>
+                                <label><input type="checkbox" id="exportPdfText" checked> PDF: text</label>
+                                <label><input type="checkbox" id="exportPdfImages" checked> PDF: images</label>
+                            </fieldset>
                         </div>
                         <div class="tab-body" id="chaptersContainer">
                             <div id="summaryStatus" class="summary-status" role="status" aria-live="polite"></div>
@@ -343,7 +353,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=5d53c95"></script>
+    <script type="module" src="/static/js/index.js?v=export-options-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

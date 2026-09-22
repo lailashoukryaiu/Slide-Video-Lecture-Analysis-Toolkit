@@ -23,6 +23,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, PageBreak, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
@@ -528,12 +529,16 @@ def format_chapter_timestamp(seconds: float) -> str:
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def create_combined_chapter_documents(chapters, chapter_files, pdf_path, docx_path):
+def create_combined_chapter_documents(
+    chapters, chapter_files, pdf_path=None, docx_path=None,
+    pdf_text=True, pdf_images=True, word_text=True, word_images=True
+):
     """Create title, screenshot, and transcript documents for all chapters."""
     styles = getSampleStyleSheet()
-    pdf_story = [Paragraph("Lecture Chapters", styles["Title"])]
-    word_document = Document()
-    word_document.add_heading("Lecture Chapters", level=0)
+    pdf_story = [Paragraph("Lecture Chapters", styles["Title"])] if pdf_path else None
+    word_document = Document() if docx_path else None
+    if word_document:
+        word_document.add_heading("Lecture Chapters", level=0)
 
     for index, chapter in enumerate(chapters):
         files = chapter_files[index]
@@ -541,48 +546,67 @@ def create_combined_chapter_documents(chapters, chapter_files, pdf_path, docx_pa
         timestamp = format_chapter_timestamp(chapter["start"])
         transcript = files["transcript"].read_text(encoding="utf-8").strip()
         heading = f"Chapter {index + 1}: {title}"
+        image_path = files["image"]
+        try:
+            with PillowImage.open(image_path) as image:
+                image.verify()
+        except (FileNotFoundError, UnidentifiedImageError, OSError):
+            image_path = None
 
-        pdf_story.extend([
+        if pdf_story is not None:
+            pdf_story.extend([
             Paragraph(heading, styles["Heading1"]),
             Paragraph(f"Starts at {timestamp}", styles["Normal"]),
             Spacer(1, 0.15 * inch),
-        ])
-        if files["image"].is_file():
+            ])
+        if pdf_story is not None and pdf_images and image_path is not None:
             pdf_story.extend([
-                PdfImage(str(files["image"]), width=6.5 * inch, height=3.65 * inch, kind="proportional"),
+                PdfImage(str(image_path), width=6.5 * inch, height=3.65 * inch, kind="proportional"),
                 Spacer(1, 0.15 * inch),
             ])
-        pdf_story.append(Paragraph(
+        if pdf_story is not None and pdf_text:
+            pdf_story.append(Paragraph(
             (transcript or "No transcript available for this chapter.")
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace("\n", "<br/>"),
             styles["BodyText"],
-        ))
-        if index < len(chapters) - 1:
+            ))
+        if pdf_story is not None and index < len(chapters) - 1:
             pdf_story.append(PageBreak())
 
-        word_document.add_heading(heading, level=1)
-        word_document.add_paragraph(f"Starts at {timestamp}")
-        if files["image"].is_file():
-            word_document.add_picture(str(files["image"]), width=Inches(6.5))
-        word_document.add_heading("Transcript", level=2)
-        word_document.add_paragraph(transcript or "No transcript available for this chapter.")
-        if index < len(chapters) - 1:
+        if word_document:
+            word_document.add_heading(heading, level=1)
+            word_document.add_paragraph(f"Starts at {timestamp}")
+        if word_document and word_images and image_path is not None:
+            word_document.add_picture(str(image_path), width=Inches(6.5))
+        if word_document and word_text:
+            word_document.add_heading("Transcript", level=2)
+            word_document.add_paragraph(transcript or "No transcript available for this chapter.")
+        if word_document and index < len(chapters) - 1:
             word_document.add_page_break()
 
     footnote = "Transcription model: faster-whisper turbo."
-    pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
-    word_document.add_paragraph(footnote, style="Caption")
-    SimpleDocTemplate(str(pdf_path), pagesize=letter, rightMargin=0.6 * inch,
+    if pdf_story is not None:
+        pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
+        SimpleDocTemplate(str(pdf_path), pagesize=letter, rightMargin=0.6 * inch,
                       leftMargin=0.6 * inch, topMargin=0.6 * inch,
                       bottomMargin=0.6 * inch).build(pdf_story)
-    word_document.save(str(docx_path))
+    if word_document:
+        word_document.add_paragraph(footnote, style="Caption")
+        word_document.save(str(docx_path))
 
 @app.post("/export_chapters/{video_id}")
 async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
     options = await request.json()
     interval_minutes = options.get("interval_minutes")
+    export_flags = {name: bool(options.get(name, True)) for name in (
+        "include_images", "include_transcripts", "include_clips",
+        "include_word_text", "include_word_images", "include_pdf_text",
+        "include_pdf_images",
+    )}
+    if not any(export_flags.values()):
+        raise HTTPException(status_code=400, detail="Select at least one export option")
     video_path = video_processor.get_video_path(video_id)
     summary_path = SUMMARIES_DIR / f"{video_id}.json"
     if not video_path:
@@ -672,12 +696,14 @@ async def export_chapters(video_id: str, request: Request):
                 if chapter["end"] is not None:
                     ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["start"])])
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
-                subprocess.run(ffmpeg_clip, check=True)
-                subprocess.run([
+                if export_flags["include_clips"]:
+                    subprocess.run(ffmpeg_clip, check=True)
+                if export_flags["include_images"] or export_flags["include_word_images"] or export_flags["include_pdf_images"]:
+                    subprocess.run([
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                     "-ss", str(chapter["start"]), "-i", str(video_path),
                     "-frames:v", "1", str(image_path)
-                ], check=True)
+                    ], check=True)
 
                 chapter_transcript = [
                     item for item in transcript
@@ -688,7 +714,8 @@ async def export_chapters(video_id: str, request: Request):
                     f"[{format_chapter_timestamp(float(item.get('start', 0)))}] {item.get('text', '').strip()}"
                     for item in chapter_transcript
                 )
-                transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
+                if export_flags["include_transcripts"] or export_flags["include_word_text"] or export_flags["include_pdf_text"]:
+                    transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
                 chapter_files.append({"image": image_path, "transcript": transcript_path})
                 chaptered_lines.extend([
                     f"## Chapter {number}: {chapter['title']}",
@@ -698,16 +725,24 @@ async def export_chapters(video_id: str, request: Request):
                     "",
                 ])
 
-            (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
+            if export_flags["include_transcripts"]:
+                (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
             (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
             create_combined_chapter_documents(
-                chapter_data,
-                chapter_files,
-                temp_dir / "chapter_document.pdf",
-                temp_dir / "chapter_document.docx",
+                chapter_data, chapter_files,
+                temp_dir / "chapter_document.pdf" if export_flags["include_pdf_text"] or export_flags["include_pdf_images"] else None,
+                temp_dir / "chapter_document.docx" if export_flags["include_word_text"] or export_flags["include_word_images"] else None,
+                pdf_text=export_flags["include_pdf_text"], pdf_images=export_flags["include_pdf_images"],
+                word_text=export_flags["include_word_text"], word_images=export_flags["include_word_images"],
             )
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():
+                    if file_path.suffix == ".mp4" and not export_flags["include_clips"]:
+                        continue
+                    if file_path.suffix == ".jpg" and not export_flags["include_images"]:
+                        continue
+                    if file_path.suffix == ".txt" and not export_flags["include_transcripts"]:
+                        continue
                     archive.write(file_path, file_path.name)
 
         return FileResponse(
