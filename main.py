@@ -17,6 +17,7 @@ import traceback
 import yt_dlp
 from docx import Document
 from docx.shared import Inches
+from docx.image.exceptions import UnrecognizedImageError
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -529,16 +530,46 @@ def format_chapter_timestamp(seconds: float) -> str:
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+
+def chapter_boundaries_from_topics(chapters):
+    return [
+        {"timestamp": str(chapter["timestamp"]), "title": str(chapter.get("title", f"Chapter {index + 1}"))}
+        for index, chapter in enumerate(chapters)
+        if isinstance(chapter, dict) and "timestamp" in chapter
+    ]
+
+
+def chapter_boundaries_from_scenes(scenes):
+    return [
+        {"timestamp": str(scene["timestamp"]), "title": f"Slide change {index + 1}"}
+        for index, scene in enumerate(scenes)
+        if isinstance(scene, dict) and "timestamp" in scene
+    ]
+
+
+def combine_chapter_boundaries(topic_chapters, scene_chapters):
+    boundaries = {}
+    for chapter in topic_chapters + scene_chapters:
+        seconds = parse_chapter_timestamp(chapter["timestamp"])
+        existing = boundaries.get(seconds)
+        if existing is None or existing.startswith("Slide change"):
+            boundaries[seconds] = chapter["title"]
+    return [
+        {"timestamp": format_chapter_timestamp(seconds), "title": title}
+        for seconds, title in sorted(boundaries.items())
+    ]
+
 def create_combined_chapter_documents(
     chapters, chapter_files, pdf_path=None, docx_path=None,
-    pdf_text=True, pdf_images=True, word_text=True, word_images=True
+    pdf_text=True, pdf_images=True, word_text=True, word_images=True,
+    document_title="Lecture Chapters"
 ):
     """Create title, screenshot, and transcript documents for all chapters."""
     styles = getSampleStyleSheet()
-    pdf_story = [Paragraph("Lecture Chapters", styles["Title"])] if pdf_path else None
+    pdf_story = [Paragraph(document_title, styles["Title"])] if pdf_path else None
     word_document = Document() if docx_path else None
     if word_document:
-        word_document.add_heading("Lecture Chapters", level=0)
+        word_document.add_heading(document_title, level=0)
 
     for index, chapter in enumerate(chapters):
         files = chapter_files[index]
@@ -550,6 +581,10 @@ def create_combined_chapter_documents(
         try:
             with PillowImage.open(image_path) as image:
                 image.verify()
+            normalized_image_path = image_path.with_suffix(".png")
+            with PillowImage.open(image_path) as image:
+                image.convert("RGB").save(normalized_image_path, format="PNG")
+            image_path = normalized_image_path
         except (FileNotFoundError, UnidentifiedImageError, OSError):
             image_path = None
 
@@ -578,7 +613,10 @@ def create_combined_chapter_documents(
             word_document.add_heading(heading, level=1)
             word_document.add_paragraph(f"Starts at {timestamp}")
         if word_document and word_images and image_path is not None:
-            word_document.add_picture(str(image_path), width=Inches(6.5))
+            try:
+                word_document.add_picture(str(image_path), width=Inches(6.5))
+            except UnrecognizedImageError:
+                pass
         if word_document and word_text:
             word_document.add_heading("Transcript", level=2)
             word_document.add_paragraph(transcript or "No transcript available for this chapter.")
@@ -600,10 +638,12 @@ async def export_chapters(video_id: str, request: Request):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
     options = await request.json()
     interval_minutes = options.get("interval_minutes")
+    chapter_grouping = options.get("chapter_grouping", "topic")
+    if chapter_grouping not in {"topic", "slides", "combined"}:
+        raise HTTPException(status_code=400, detail="Invalid chapter grouping")
     export_flags = {name: bool(options.get(name, True)) for name in (
         "include_images", "include_transcripts", "include_clips",
-        "include_word_text", "include_word_images", "include_pdf_text",
-        "include_pdf_images",
+        "include_word", "include_pdf",
     )}
     if not any(export_flags.values()):
         raise HTTPException(status_code=400, detail="Select at least one export option")
@@ -611,8 +651,11 @@ async def export_chapters(video_id: str, request: Request):
     summary_path = SUMMARIES_DIR / f"{video_id}.json"
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
-    if interval_minutes is None and not summary_path.is_file():
+    scene_path = SCENES_DIR / f"{video_id}.json"
+    if interval_minutes is None and chapter_grouping in {"topic", "combined"} and not summary_path.is_file():
         raise HTTPException(status_code=400, detail="Generate a chapter summary first")
+    if interval_minutes is None and chapter_grouping in {"slides", "combined"} and not scene_path.is_file():
+        raise HTTPException(status_code=400, detail="Detect slides before exporting by slide changes")
 
     try:
         if interval_minutes is not None:
@@ -635,8 +678,20 @@ async def export_chapters(video_id: str, request: Request):
                 )
             ]
         else:
-            with summary_path.open("r", encoding="utf-8") as file:
-                chapters = json.load(file)
+            topic_chapters = []
+            scene_chapters = []
+            if summary_path.is_file():
+                with summary_path.open("r", encoding="utf-8") as file:
+                    topic_chapters = chapter_boundaries_from_topics(json.load(file))
+            if scene_path.is_file():
+                with scene_path.open("r", encoding="utf-8") as file:
+                    scene_chapters = chapter_boundaries_from_scenes(json.load(file))
+            if chapter_grouping == "topic":
+                chapters = topic_chapters
+            elif chapter_grouping == "slides":
+                chapters = scene_chapters
+            else:
+                chapters = combine_chapter_boundaries(topic_chapters, scene_chapters)
         if not isinstance(chapters, list) or not chapters:
             raise HTTPException(status_code=400, detail="No chapters available")
 
@@ -698,7 +753,7 @@ async def export_chapters(video_id: str, request: Request):
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
                 if export_flags["include_clips"]:
                     subprocess.run(ffmpeg_clip, check=True)
-                if export_flags["include_images"] or export_flags["include_word_images"] or export_flags["include_pdf_images"]:
+                if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"]:
                     subprocess.run([
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                     "-ss", str(chapter["start"]), "-i", str(video_path),
@@ -714,7 +769,7 @@ async def export_chapters(video_id: str, request: Request):
                     f"[{format_chapter_timestamp(float(item.get('start', 0)))}] {item.get('text', '').strip()}"
                     for item in chapter_transcript
                 )
-                if export_flags["include_transcripts"] or export_flags["include_word_text"] or export_flags["include_pdf_text"]:
+                if export_flags["include_transcripts"] or export_flags["include_word"] or export_flags["include_pdf"]:
                     transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
                 chapter_files.append({"image": image_path, "transcript": transcript_path})
                 chaptered_lines.extend([
@@ -730,10 +785,11 @@ async def export_chapters(video_id: str, request: Request):
             (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
             create_combined_chapter_documents(
                 chapter_data, chapter_files,
-                temp_dir / "chapter_document.pdf" if export_flags["include_pdf_text"] or export_flags["include_pdf_images"] else None,
-                temp_dir / "chapter_document.docx" if export_flags["include_word_text"] or export_flags["include_word_images"] else None,
-                pdf_text=export_flags["include_pdf_text"], pdf_images=export_flags["include_pdf_images"],
-                word_text=export_flags["include_word_text"], word_images=export_flags["include_word_images"],
+                temp_dir / "chapter_document.pdf" if export_flags["include_pdf"] else None,
+                temp_dir / "chapter_document.docx" if export_flags["include_word"] else None,
+                pdf_text=export_flags["include_pdf"], pdf_images=export_flags["include_pdf"],
+                word_text=export_flags["include_word"], word_images=export_flags["include_word"],
+                document_title=Path(video_path).stem,
             )
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():

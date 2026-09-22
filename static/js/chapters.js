@@ -29,10 +29,9 @@ export async function exportChapters() {
             include_images: elements.exportImages?.checked ?? true,
             include_transcripts: elements.exportTranscripts?.checked ?? true,
             include_clips: elements.exportClips?.checked ?? true,
-            include_word_text: elements.exportWordText?.checked ?? true,
-            include_word_images: elements.exportWordImages?.checked ?? true,
-            include_pdf_text: elements.exportPdfText?.checked ?? true,
-            include_pdf_images: elements.exportPdfImages?.checked ?? true,
+            include_word: elements.exportWord?.checked ?? true,
+            include_pdf: elements.exportPdf?.checked ?? true,
+            chapter_grouping: elements.chapterGrouping?.value || 'topic',
         };
         const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
             method: 'POST',

@@ -7,7 +7,7 @@ import { showError, showErrorWithActions, showLoading, showNotification } from '
 import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
-import { checkSceneDetection } from './scenes.js';
+import { checkSceneDetection, updateScenes } from './scenes.js';
 import { fetchOcrResults } from './ocr.js';
 
 async function readJsonResponse(response, operation) {
@@ -549,7 +549,19 @@ export async function loadUploadedVideo(videoId) {
 
         state.currentVideoId = data.video_id;
         elements.detectScenesBtn.disabled = false;
-        elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
+        if (Array.isArray(data.scenes) && data.scenes.length > 0) {
+            updateScenes(data.scenes, elements.videoPlayer);
+            elements.scenesContainer.insertAdjacentHTML(
+                'afterbegin',
+                '<p class="scene-help">Loaded previously detected slides.</p>'
+            );
+            if (elements.downloadScreenshotsBtn) {
+                elements.downloadScreenshotsBtn.disabled = false;
+            }
+            fetchOcrResults(data.video_id);
+        } else {
+            elements.scenesContainer.innerHTML = '<p>Click "Detect Slides" to analyze this video.</p>';
+        }
 
         if (data.transcript) {
             state.currentTranscript = data.transcript;
