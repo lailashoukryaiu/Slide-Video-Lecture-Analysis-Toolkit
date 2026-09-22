@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters } from './chapters.js'
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=api-module-0cc4df4';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=api-module-9cc894f';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
