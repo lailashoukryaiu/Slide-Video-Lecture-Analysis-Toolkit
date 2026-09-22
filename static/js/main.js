@@ -163,6 +163,24 @@ function setupKeyboardControls() {
             return;
         }
 
+        function navigateChapter(direction) {
+            const player = elements.videoPlayer;
+            const chapters = state.videoChapters || [];
+            if (!player || !chapters.length) return;
+            const times = chapters.map((chapter) => {
+                const [minutes, seconds] = String(chapter.timestamp).split(':').map(Number);
+                return minutes * 60 + seconds;
+            });
+            const currentIndex = times.reduce((index, time, candidate) => (
+                time <= player.currentTime + 0.5 ? candidate : index
+            ), -1);
+            const targetIndex = direction > 0
+                ? Math.min(times.length - 1, currentIndex + 1)
+                : Math.max(0, currentIndex <= 0 ? 0 : currentIndex - 1);
+            player.currentTime = times[targetIndex];
+            player.play().catch(() => {});
+        }
+
         const currentTime = Date.now();
         
         // Debounce: ignore if same key pressed within 200ms
@@ -194,6 +212,10 @@ function setupKeyboardControls() {
 
 // Initialize the application
 function initApp() {
+    if (elements.videoPlayer) {
+        elements.videoPlayer.controls = true;
+        elements.videoPlayer.setAttribute('controls', '');
+    }
     const bind = (element, event, handler) => {
         if (element) element.addEventListener(event, handler);
     };
@@ -243,6 +265,17 @@ function initApp() {
     });
     bind(elements.exportOptionsBtn, 'click', () => {
         elements.exportOptionsPanel.hidden = !elements.exportOptionsPanel.hidden;
+        if (!elements.exportOptionsPanel.hidden) {
+            const suggestedTitle = (state.videoChapters || [])
+                .map((chapter) => String(chapter.title || '').trim())
+                .find((title) => title && !/^(part|chapter)\b/i.test(title));
+            if (suggestedTitle && !elements.exportTitle.value.trim()) {
+                elements.exportTitle.value = suggestedTitle;
+            }
+            if (suggestedTitle && !elements.exportFilename.value.trim()) {
+                elements.exportFilename.value = suggestedTitle.replace(/[^A-Za-z0-9._-]+/g, '_');
+            }
+        }
     });
     bind(elements.exportChaptersBtn, 'click', () => {
         if (elements.exportOptionsPanel.hidden) {
@@ -254,6 +287,11 @@ function initApp() {
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
     bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
     bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));
+    bind(elements.previousChapterBtn, 'click', () => navigateChapter(-1));
+    bind(elements.nextChapterBtn, 'click', () => navigateChapter(1));
+    bind(elements.playbackSpeed, 'change', (event) => {
+        elements.videoPlayer.playbackRate = Number(event.target.value);
+    });
     bind(elements.transcriptOptionsBtn, 'click', () => {
         elements.transcriptGenerationControls.hidden = !elements.transcriptGenerationControls.hidden;
     });

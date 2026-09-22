@@ -14,6 +14,8 @@
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     --border-radius: 8px;
     --transition: all 0.3s ease;
+    max-height: 70vh;
+    overflow-y: auto;
 }
 
 * {
@@ -35,7 +37,7 @@ body {
     /* max-width: 1400px; */
     margin: 0 auto;
     padding: 20px;
-    max-height: 90vh;
+    min-height: 90vh;
 }
 
 /* Header */
@@ -187,6 +189,76 @@ body {
     padding: 6px;
 }
 
+.video-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 14px;
+    flex-wrap: wrap;
+}
+
+.video-controls .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.video-controls select {
+    padding: 7px;
+}
+
+.speaker-names-panel {
+    display: grid;
+    gap: 6px;
+    border-top: 1px solid var(--divider-color);
+    padding-top: 8px;
+}
+
+.speaker-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.speaker-name-row input {
+    flex: 1;
+    padding: 6px;
+}
+
+.video-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 14px;
+    flex-wrap: wrap;
+}
+
+.video-controls .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.video-controls select {
+    padding: 7px;
+}
+
+.speaker-names-panel {
+    display: grid;
+    gap: 6px;
+    border-top: 1px solid var(--divider-color);
+    padding-top: 8px;
+}
+
+.speaker-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.speaker-name-row input {
+    flex: 1;
+    padding: 6px;
+}
+
 .range-label {
     display: flex;
     justify-content: space-between;
@@ -293,7 +365,7 @@ body {
     grid-template-columns: 3fr 1fr;
     gap: 24px;
     margin-top: 24px;
-    height: 90vh;
+    min-height: 90vh;
 }
 
 @media (max-width: 1000px) {
@@ -317,15 +389,21 @@ body {
     margin: auto;
     position: relative;
     max-width: 100%;
+    width: 100%;
+    min-height: 240px;
     border-radius: var(--border-radius);
     overflow: hidden;
 }
 
 video {
+    display: block;
+    width: 100%;
     max-width: 100%;
     border-radius: var(--border-radius);
     background-color: #000;
-    height: 100%;
+    min-height: 240px;
+    height: auto;
+    aspect-ratio: 16 / 9;
     object-fit: contain;
 }
 

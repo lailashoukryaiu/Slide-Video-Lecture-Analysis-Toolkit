@@ -25,6 +25,8 @@ from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+import html
+from collections import Counter
 from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
 
@@ -111,6 +113,37 @@ def detect_transcript_language(transcript):
         return "pl"
     return "en"
 
+def build_outline_points(transcript, max_points=4):
+    """Select concise, timestamped key points for the Word outline."""
+    candidates = []
+    for item in transcript:
+        text = " ".join(str(item.get("text", "")).split())
+        if not text:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            sentence = sentence.strip()
+            words = re.findall(r"[A-Za-zÀ-ÿ\u0600-\u06ff]{3,}", sentence.lower())
+            if sentence and words:
+                candidates.append({
+                    "start": float(item.get("start", 0)),
+                    "text": sentence,
+                    "words": words,
+                })
+    if not candidates:
+        return []
+    frequencies = Counter(
+        word for candidate in candidates for word in candidate["words"]
+    )
+    for candidate in candidates:
+        candidate["score"] = sum(
+            frequencies[word] for word in set(candidate["words"])
+        ) / max(1, len(candidate["words"]))
+    selected = sorted(
+        candidates,
+        key=lambda candidate: (-candidate["score"], candidate["start"]),
+    )[:max_points]
+    return sorted(selected, key=lambda candidate: candidate["start"])
+
 @app.post("/upload_transcript/{video_id}")
 async def upload_transcript(video_id: str, transcript: UploadFile = File(...)):
     text = (await transcript.read()).decode("utf-8-sig")
@@ -157,7 +190,10 @@ ocr_processor = OCRProcessor(send_sse_update=send_sse_update)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    response = templates.TemplateResponse(request=request, name="index.html")
+    response = templates.TemplateResponse(
+    request=request,
+    name="index.html"
+    )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     return response
@@ -354,12 +390,21 @@ async def get_transcript(video_id: str, source: str):
 async def generate_whisper_transcript(video_id: str, request: Request, background_tasks: BackgroundTasks):
     options = await request.json()
     return await transcript_processor.generate_whisper_transcript(
-        video_id, background_tasks, options.get("model", "turbo"), options.get("prompt")
+        video_id, background_tasks, options.get("model", "turbo"), options.get("prompt"),
+        bool(options.get("diarization", False))
     )
 
 @app.get("/whisper_transcript_status/{video_id}")
 async def whisper_transcript_status(video_id: str):
     return await transcript_processor.get_whisper_status(video_id)
+
+@app.post("/speaker_names/{video_id}")
+async def speaker_names(video_id: str, request: Request):
+    data = await request.json()
+    names = data.get("names")
+    if not isinstance(names, dict):
+        raise HTTPException(status_code=400, detail="Speaker names must be an object")
+    return await transcript_processor.save_speaker_names(video_id, names)
 
 @app.post("/compute_embeddings/{video_id}")
 async def compute_embeddings_endpoint(video_id: str, background_tasks: BackgroundTasks):
@@ -702,9 +747,15 @@ async def export_chapters(video_id: str, request: Request):
     chapter_grouping = options.get("chapter_grouping", "topic")
     if chapter_grouping not in {"topic", "slides", "combined"}:
         raise HTTPException(status_code=400, detail="Invalid chapter grouping")
+    timestamp_mode = options.get("timestamp_mode", "original")
+    if timestamp_mode not in {"original", "part", "subpart"}:
+        raise HTTPException(status_code=400, detail="Invalid timestamp mode")
+    subpart_mode = options.get("subpart_mode", "points")
+    if subpart_mode not in {"points", "slides", "both"}:
+        raise HTTPException(status_code=400, detail="Invalid subpart mode")
     export_flags = {name: bool(options.get(name, True)) for name in (
         "include_images", "include_transcripts", "include_clips",
-        "include_word", "include_pdf",
+        "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
     )}
     if not any(export_flags.values()):
         raise HTTPException(status_code=400, detail="Select at least one export option")
@@ -719,6 +770,7 @@ async def export_chapters(video_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Detect slides before exporting by slide changes")
 
     try:
+        scene_chapters = []
         if interval_minutes is not None:
             try:
                 interval_seconds = float(interval_minutes) * 60
@@ -752,7 +804,9 @@ async def export_chapters(video_id: str, request: Request):
             elif chapter_grouping == "slides":
                 chapters = scene_chapters
             else:
-                chapters = combine_chapter_boundaries(topic_chapters, scene_chapters)
+                # Keep topics as the top-level parts so slide changes can be
+                # represented as subparts in the outline.
+                chapters = topic_chapters
         if not isinstance(chapters, list) or not chapters:
             raise HTTPException(status_code=400, detail="No chapters available")
 
@@ -768,6 +822,15 @@ async def export_chapters(video_id: str, request: Request):
                 break
         if not transcript:
             raise HTTPException(status_code=400, detail="No transcript available")
+        speaker_names = {}
+        speaker_meta_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
+        if speaker_meta_path.is_file():
+            try:
+                speaker_names = json.loads(
+                    speaker_meta_path.read_text(encoding="utf-8")
+                ).get("speaker_names", {})
+            except (OSError, json.JSONDecodeError):
+                speaker_names = {}
 
         chapter_data = []
         for index, chapter in enumerate(chapters):
@@ -803,7 +866,9 @@ async def export_chapters(video_id: str, request: Request):
                 ).stem or document_title
             except (OSError, json.JSONDecodeError):
                 pass
-
+        requested_title = str(options.get("document_title", "")).strip()
+        if requested_title:
+            document_title = requested_title
         with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             generic_name = (
@@ -822,6 +887,15 @@ async def export_chapters(video_id: str, request: Request):
             document_subtitle = f"Source clip: {source_filename}" if topic_title and generic_name else None
             if topic_title and generic_name:
                 document_title = topic_title
+            export_title = re.sub(r"[^A-Za-z0-9._-]+", "_", document_title).strip("._-")
+            export_title = export_title or f"video_{video_id}"
+            requested_filename = re.sub(
+                r"[^A-Za-z0-9._-]+", "_", str(options.get("export_filename", "")).strip()
+            ).strip("._-")
+            zip_path = EXPORTS_DIR / (
+                requested_filename if requested_filename.lower().endswith(".zip")
+                else requested_filename + ".zip"
+            ) if requested_filename else EXPORTS_DIR / f"{export_title}_chapters.zip"
             chaptered_lines = [f"# {document_title}", ""]
             chapter_files = []
             for chapter in chapter_data:
@@ -840,9 +914,9 @@ async def export_chapters(video_id: str, request: Request):
                 if chapter["end"] is not None:
                     ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["start"])])
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
-                if export_flags["include_clips"]:
+                if export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
                     subprocess.run(ffmpeg_clip, check=True)
-                if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"]:
+                if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
                     subprocess.run([
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                     "-ss", str(chapter["start"]), "-i", str(video_path),
@@ -854,13 +928,45 @@ async def export_chapters(video_id: str, request: Request):
                     if chapter["start"] <= float(item.get("start", 0))
                     and (chapter["end"] is None or float(item.get("start", 0)) < chapter["end"])
                 ]
+                def format_export_transcript_item(item):
+                    speaker = item.get("speaker")
+                    speaker_prefix = (
+                        f"[{speaker_names.get(speaker, speaker)}] " if speaker else ""
+                    )
+                    return (
+                        f"[{format_chapter_timestamp(float(item.get('start', 0)))}] "
+                        f"{speaker_prefix}{item.get('text', '').strip()}"
+                    )
+
                 transcript_text = "\n".join(
-                    f"[{format_chapter_timestamp(float(item.get('start', 0)))}] {item.get('text', '').strip()}"
-                    for item in chapter_transcript
+                    format_export_transcript_item(item) for item in chapter_transcript
                 )
-                if export_flags["include_transcripts"] or export_flags["include_word"] or export_flags["include_pdf"]:
+                if timestamp_mode != "original":
+                    transcript_lines = transcript_text.splitlines()
+                    if timestamp_mode == "part":
+                        transcript_lines = [
+                            re.sub(r"^\[[^\]]+\]\s*", "", line)
+                            for line in transcript_lines
+                        ]
+                    else:
+                        transcript_lines = [
+                            line if index == 0 else re.sub(r"^\[[^\]]+\]\s*", "", line)
+                            for index, line in enumerate(transcript_lines)
+                        ]
+                    transcript_text = "\n".join(transcript_lines)
+                if export_flags["include_transcripts"] or export_flags["include_word"] or export_flags["include_pdf"] or export_flags["include_webpage"] or export_flags["include_scorm"] or export_flags["include_outline"]:
                     transcript_path.write_text(transcript_text + "\n", encoding="utf-8")
-                chapter_files.append({"image": image_path, "transcript": transcript_path})
+                chapter_files.append({
+                    "image": image_path,
+                    "clip": clip_path,
+                    "transcript": transcript_path,
+                    "outline_points": build_outline_points(chapter_transcript),
+                    "slide_subparts": [
+                        scene for scene in scene_chapters
+                        if chapter["start"] <= parse_chapter_timestamp(scene["timestamp"])
+                        and (chapter["end"] is None or parse_chapter_timestamp(scene["timestamp"]) < chapter["end"])
+                    ],
+                })
                 chaptered_lines.extend([
                     f"## Part {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
@@ -881,22 +987,162 @@ async def export_chapters(video_id: str, request: Request):
                 document_title=document_title,
                 document_subtitle=document_subtitle,
             )
+            if export_flags["include_webpage"] or export_flags["include_scorm"]:
+                webpage_parts = [
+                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+                    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+                    f"<title>{html.escape(document_title)}</title>",
+                    "<style>body{font-family:Arial,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}"
+                    "section{border-top:1px solid #ccc;padding:2rem 0}img,video{max-width:100%;display:block;margin:1rem 0}"
+                    "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}</style></head><body>",
+                    f"<h1>{html.escape(document_title)}</h1>",
+                ]
+                if export_flags["include_scorm"]:
+                    webpage_parts.insert(1, "<script src=\"scorm_api.js\"></script>")
+                if document_subtitle:
+                    webpage_parts.append(f"<p class=\"subtitle\">{html.escape(document_subtitle)}</p>")
+                for chapter, files in zip(chapter_data, chapter_files):
+                    image_name = files["image"].name
+                    clip_name = files["clip"].name
+                    transcript_html = html.escape(files["transcript"].read_text(encoding="utf-8"))
+                    point_details = "".join(
+                        f"<details><summary>{html.escape(line.split('] ', 1)[0] if '] ' in line else 'Key point')}</summary>"
+                        f"<p>{html.escape(line.split('] ', 1)[1] if '] ' in line else line)}</p></details>"
+                        for line in files["transcript"].read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    )
+                    webpage_parts.extend([
+                        f"<section><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
+                        f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
+                            f"<details open><summary><strong>Part {chapter['index']}: {html.escape(chapter['title'])}</strong> "
+                            f"({format_chapter_timestamp(chapter['start'])})</summary>",
+                            f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
+                            f"<video controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
+                            f"<details open><summary>Transcript and key points</summary>{point_details}"
+                            f"<pre>{transcript_html}</pre></details>",
+                            "</details></section>",
+                        ])
+                webpage_parts.append("</body></html>")
+                (temp_dir / "index.html").write_text("\n".join(webpage_parts), encoding="utf-8")
+            if export_flags["include_outline"]:
+                outline_document = Document()
+                outline_document.add_heading(document_title, level=0)
+                if document_subtitle:
+                        outline_document.add_paragraph(document_subtitle, style="Subtitle")
+                outline_document.add_heading("Video outline", level=1)
+                for chapter, files in zip(chapter_data, chapter_files):
+                        outline_document.add_heading(
+                            f"Part {chapter['index']}: {chapter['title']}", level=2
+                        )
+                        outline_document.add_paragraph(
+                            f"Timestamp: {format_chapter_timestamp(chapter['start'])}"
+                        )
+                        outline_document.add_paragraph(
+                            "Summary of the most important points:",
+                            style="Intense Quote",
+                        )
+                        outline_items = []
+                        if subpart_mode in {"points", "both"}:
+                            outline_items.extend(
+                                ("Important point", point["start"], point["text"])
+                                for point in files["outline_points"]
+                            )
+                        if subpart_mode in {"slides", "both"}:
+                            outline_items.extend(
+                                ("Slide change", parse_chapter_timestamp(scene["timestamp"]), scene["title"])
+                                for scene in files["slide_subparts"]
+                            )
+                        outline_items.sort(key=lambda item: item[1])
+                        if outline_items:
+                            for label, start, text in outline_items:
+                                outline_document.add_heading(
+                                    f"Subpart — {label} — {format_chapter_timestamp(start)}",
+                                    level=3,
+                                )
+                                outline_document.add_paragraph(
+                                    text,
+                                    style="List Bullet 2",
+                                )
+                        else:
+                            outline_document.add_paragraph(
+                                "No spoken content was available for this part.",
+                                style="List Bullet 2",
+                            )
+                outline_document.save(str(temp_dir / "video_outline.docx"))
+            if export_flags["include_scorm"]:
+                (temp_dir / "scorm_api.js").write_text(
+                        "window.addEventListener('load',()=>{"
+                        "try{if(window.parent&&window.parent.API){window.parent.API.LMSInitialize('');"
+                        "window.parent.API.LMSSetValue('cmi.core.lesson_status','completed');"
+                        "window.parent.API.LMSCommit('');}}catch(e){console.warn('SCORM API unavailable',e);}});",
+                        encoding="utf-8",
+                )
+                (temp_dir / "imsmanifest.xml").write_text(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                        "<manifest identifier=\"slidedec-video\" version=\"1.2\" "
+                        "xmlns=\"http://www.imsproject.org/xsd/imscp_rootv1p1p2\" "
+                        "xmlns:adlcp=\"http://www.adlnet.org/xsd/adlcp_rootv1p2\" "
+                        "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                        "xsi:schemaLocation=\"http://www.imsproject.org/xsd/imscp_rootv1p1p2 "
+                        "http://www.imsglobal.org/xsd/imscp_rootv1p1p2.xsd "
+                        "http://www.adlnet.org/xsd/adlcp_rootv1p2 "
+                        "http://www.imsglobal.org/xsd/adlcp_rootv1p2.xsd\">"
+                        "<organizations default=\"org1\"><organization identifier=\"org1\">"
+                        f"<title>{html.escape(document_title)}</title><item identifier=\"item1\" "
+                        "identifierref=\"resource1\"><title>Video lecture</title></item>"
+                        "</organization></organizations><resources><resource identifier=\"resource1\" "
+                        "type=\"webcontent\" adlcp:scormtype=\"sco\" href=\"index.html\">"
+                        "<file href=\"index.html\"/><file href=\"scorm_api.js\"/>"
+                        + "".join(
+                            f"<file href=\"{html.escape(path.name)}\"/>"
+                            for path in temp_dir.iterdir()
+                            if path.name not in {"imsmanifest.xml", "index.html", "scorm_api.js"}
+                        )
+                        + "</resource></resources></manifest>",
+                        encoding="utf-8",
+                )
             only_word = export_flags["include_word"] and not export_flags["include_pdf"]
             only_pdf = export_flags["include_pdf"] and not export_flags["include_word"]
+            only_outline = export_flags["include_outline"] and not any(
+                export_flags[name] for name in (
+                    "include_word", "include_pdf", "include_webpage", "include_scorm",
+                    "include_images", "include_transcripts", "include_clips",
+                )
+            )
             no_extra_files = not any(
-                export_flags[name] for name in ("include_images", "include_transcripts", "include_clips")
+                export_flags[name] for name in (
+                    "include_images", "include_transcripts", "include_clips",
+                    "include_webpage", "include_outline", "include_scorm",
+                )
             )
             if no_extra_files and (only_word or only_pdf):
                 document_name = "chapter_document.docx" if only_word else "chapter_document.pdf"
-                direct_export_path = EXPORTS_DIR / f"{video_id}_{document_name}"
+                requested_filename = str(options.get("export_filename", "")).strip()
+                requested_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", requested_filename).strip("._-")
+                if requested_filename:
+                    suffix = ".docx" if only_word else ".pdf"
+                    direct_export_path = EXPORTS_DIR / (
+                        requested_filename if requested_filename.lower().endswith(suffix)
+                        else requested_filename + suffix
+                    )
+                else:
+                    direct_export_path = EXPORTS_DIR / f"{export_title}_{'word' if only_word else 'pdf'}.{'docx' if only_word else 'pdf'}"
                 shutil.copy2(temp_dir / document_name, direct_export_path)
+            elif only_outline:
+                requested_filename = str(options.get("export_filename", "")).strip()
+                requested_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", requested_filename).strip("._-")
+                direct_export_path = EXPORTS_DIR / (
+                    (requested_filename if requested_filename.lower().endswith(".docx") else requested_filename + ".docx")
+                    if requested_filename else f"{export_title}_outline.docx"
+                )
+                shutil.copy2(temp_dir / "video_outline.docx", direct_export_path)
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():
-                    if file_path.suffix == ".mp4" and not export_flags["include_clips"]:
+                    if file_path.suffix == ".mp4" and not (export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
                         continue
-                    if file_path.suffix.lower() in {".jpg", ".jpeg", ".png"} and not export_flags["include_images"]:
+                    if file_path.suffix.lower() in {".jpg", ".jpeg", ".png"} and not (export_flags["include_images"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
                         continue
-                    if file_path.suffix == ".txt" and not export_flags["include_transcripts"]:
+                    if file_path.suffix == ".txt" and not (export_flags["include_transcripts"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
                         continue
                     archive.write(file_path, file_path.name)
 
@@ -912,7 +1158,7 @@ async def export_chapters(video_id: str, request: Request):
         return FileResponse(
             zip_path,
             media_type="application/zip",
-            filename=f"{video_id}_chapters.zip"
+            filename=zip_path.name
         )
     except HTTPException:
         raise

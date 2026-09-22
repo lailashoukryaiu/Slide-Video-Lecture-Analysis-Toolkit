@@ -46,6 +46,16 @@ class TranscriptProcessor:
             # Ensure consistent format
             if source == "youtube":
                 transcript = self.format_youtube_transcript(transcript)
+            else:
+                names = self._read_speaker_names(video_id)
+                transcript = [
+                    {
+                        **item,
+                        "speaker_name": names.get(item.get("speaker"), item.get("speaker"))
+                        if item.get("speaker") else None,
+                    }
+                    for item in transcript
+                ]
             
             return JSONResponse({
                 "success": True,
@@ -84,7 +94,7 @@ class TranscriptProcessor:
         except Exception as e:
             return None, str(e)
 
-    async def generate_whisper_transcript(self, video_id: str, background_tasks, model="turbo", prompt=None):
+    async def generate_whisper_transcript(self, video_id: str, background_tasks, model="turbo", prompt=None, diarization=False):
         """Generate a transcript using Whisper."""
         try:
             # Check if video exists
@@ -127,7 +137,7 @@ class TranscriptProcessor:
             if os.path.exists(output_path):
                 os.remove(output_path)
             background_tasks.add_task(
-                self.process_whisper_transcript, video_id, video_path, output_path, model, prompt
+                self.process_whisper_transcript, video_id, video_path, output_path, model, prompt, diarization
             )
             
             return JSONResponse({
@@ -162,7 +172,7 @@ class TranscriptProcessor:
         # Start background task
         background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
 
-    async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None):
+    async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None, diarization=False):
         """Process video with Whisper and save transcript."""
         try:
             transcript = []
@@ -204,10 +214,18 @@ class TranscriptProcessor:
                     "Whisper completed without any transcript segments. "
                     "The video may not contain recognizable speech."
                 )
+            speaker_names = {}
+            if diarization:
+                transcript, speaker_names = self.apply_diarization(video_path, transcript)
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
             with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"), "w") as f:
-                json.dump({"model": model, "prompt": prompt or ""}, f)
+                json.dump({
+                    "model": model,
+                    "prompt": prompt or "",
+                    "diarization": bool(diarization),
+                    "speaker_names": speaker_names,
+                }, f)
 
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_file):
@@ -246,6 +264,7 @@ class TranscriptProcessor:
                     "status": "complete",
                     "transcript": transcript,
                     "model": self._read_whisper_model(video_id)
+                    ,"speaker_names": self._read_speaker_names(video_id)
                 })
 
             error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
@@ -303,6 +322,88 @@ class TranscriptProcessor:
             except (OSError, json.JSONDecodeError):
                 pass
         return "turbo"
+
+    def _read_speaker_names(self, video_id: str):
+        metadata_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
+        if metadata_path.exists():
+            try:
+                return json.loads(metadata_path.read_text(encoding="utf-8")).get("speaker_names", {})
+            except (OSError, json.JSONDecodeError):
+                return {}
+        return {}
+
+    def apply_diarization(self, video_path, transcript):
+        """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""
+        token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+        if not token:
+            raise RuntimeError(
+                "Speaker identification requires HUGGINGFACE_TOKEN (or HF_TOKEN) "
+                "with access to pyannote/speaker-diarization-3.1."
+            )
+        try:
+            from pyannote.audio import Pipeline
+        except ImportError as error:
+            raise RuntimeError(
+                "Speaker identification requires pyannote.audio. Install the project "
+                "requirements and retry."
+            ) from error
+        try:
+            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=token)
+            diarization = pipeline(video_path)
+        except Exception as error:
+            raise RuntimeError(
+                f"Speaker identification could not start. Confirm the Hugging Face token "
+                f"has accepted the pyannote model terms: {error}"
+            ) from error
+
+        speaker_segments = [
+            (turn.start, turn.end, speaker)
+            for turn, _, speaker in diarization.itertracks(yield_label=True)
+        ]
+        speakers = sorted({speaker for _, _, speaker in speaker_segments})
+        speaker_names = {speaker: speaker.replace("_", " ").title() for speaker in speakers}
+        for item in transcript:
+            start = float(item.get("start", 0))
+            end = start + float(item.get("duration", 0))
+            overlaps = {}
+            for segment_start, segment_end, speaker in speaker_segments:
+                overlap = max(0.0, min(end, segment_end) - max(start, segment_start))
+                overlaps[speaker] = overlaps.get(speaker, 0.0) + overlap
+            if overlaps:
+                item["speaker"] = max(overlaps, key=overlaps.get)
+        return transcript, speaker_names
+
+    async def save_speaker_names(self, video_id, names):
+        metadata_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
+        metadata = {}
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                metadata = {}
+        known_speakers = {
+            item.get("speaker")
+            for item in self._read_transcript(video_id)
+            if item.get("speaker")
+        }
+        cleaned = {
+            str(key): str(value).strip()
+            for key, value in names.items()
+            if str(key) in known_speakers and str(value).strip()
+        }
+        metadata["speaker_names"] = cleaned
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+        return {"success": True, "speaker_names": cleaned}
+
+    def _read_transcript(self, video_id):
+        path = TRANSCRIPTS_DIR / f"{video_id}_whisper.json"
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
 
     async def set_preference(self, preference: str):
         """Set the transcript preference."""

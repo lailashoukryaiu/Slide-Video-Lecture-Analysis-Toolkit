@@ -20,3 +20,4 @@ numpy
 faiss-cpu
 faster-whisper
 dill
+pyannote.audio

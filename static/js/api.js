@@ -15,8 +15,10 @@ export async function regenerateTranscript() {
         showError('Load a video before regenerating its transcript.');
         return;
     }
+
     const model = elements.transcriptModel?.value || 'turbo';
     const prompt = elements.transcriptPrompt?.value.trim() || '';
+    const diarization = elements.transcriptDiarization?.checked || false;
     const button = elements.regenerateTranscriptBtn;
     if (button) {
         button.disabled = true;
@@ -27,7 +29,7 @@ export async function regenerateTranscript() {
         const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(state.currentVideoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt })
+            body: JSON.stringify({ model, prompt, diarization })
         });
         const data = await readJsonResponse(response, 'Transcript regeneration');
         if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
@@ -36,7 +38,8 @@ export async function regenerateTranscript() {
             const status = await readJsonResponse(statusResponse, 'Transcript status');
             if (status.status === 'complete') {
                 state.currentTranscriptSource = 'whisper';
-                loadTranscript(status.transcript);
+                loadTranscript(applySpeakerNames(status.transcript, status.speaker_names || {}));
+                renderSpeakerNames(status.speaker_names || {});
                 showNotification(`Transcript generated with ${status.model || model}.`, 'success');
                 return;
             }
@@ -55,40 +58,91 @@ export async function regenerateTranscript() {
 }
 
 export async function uploadTranscriptFile() {
-    const file = elements.transcriptFile?.files?.[0];
-    if (!state.currentVideoId || !file) {
-        showError('Select a transcript file after loading a video.');
-        return;
+        const file = elements.transcriptFile?.files?.[0];
+        if (!state.currentVideoId || !file) {
+            showError('Select a transcript file after loading a video.');
+            return;
+        }
+        const form = new FormData();
+        form.append('transcript', file);
+        const response = await fetch(`/upload_transcript/${encodeURIComponent(state.currentVideoId)}`, { method: 'POST', body: form });
+        const data = await readJsonResponse(response, 'Transcript upload');
+        loadTranscript(data.transcript);
+        state.currentTranscriptSource = 'uploaded';
+        updateTranslationOptions(data.source_language);
+        showNotification(`Uploaded transcript loaded (${data.source_language}).`, 'success');
     }
-    const form = new FormData();
-    form.append('transcript', file);
-    const response = await fetch(`/upload_transcript/${encodeURIComponent(state.currentVideoId)}`, { method: 'POST', body: form });
-    const data = await readJsonResponse(response, 'Transcript upload');
-    loadTranscript(data.transcript);
-    state.currentTranscriptSource = 'uploaded';
-    [...elements.translationTarget.options].forEach((option) => {
-        option.disabled = option.value === data.source_language;
-    });
-    if (elements.translationTarget.value === data.source_language) {
-        elements.translationTarget.value = [...elements.translationTarget.options].find((option) => !option.disabled)?.value || 'en';
-    }
-    showNotification(`Uploaded transcript loaded (${data.source_language}).`, 'success');
 }
 
 export async function translateTranscript() {
-    if (!state.currentVideoId || !state.currentTranscript.length) {
-        showError('Load a transcript before translating it.');
-        return;
+        if (!state.currentVideoId || !state.currentTranscript.length) {
+            showError('Load a transcript before translating it.');
+            return;
+        }
+        const target = elements.translationTarget.value;
+        const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
+        });
+        const data = await readJsonResponse(response, 'Transcript translation');
+        loadTranscript(data.transcript);
+        state.currentTranscriptSource = `translation:${target}`;
+        showNotification(`Transcript translated to ${data.language}.`, 'success');
     }
-    const target = elements.translationTarget.value;
-    const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
-    });
-    const data = await readJsonResponse(response, 'Transcript translation');
-    loadTranscript(data.transcript);
-    state.currentTranscriptSource = `translation:${target}`;
-    showNotification(`Transcript translated to ${data.language}.`, 'success');
+
+function updateTranslationOptions(sourceLanguage) {
+        [...elements.translationTarget.options].forEach((option) => {
+            option.disabled = option.value === sourceLanguage;
+        });
+        if (elements.translationTarget.value === sourceLanguage) {
+            elements.translationTarget.value = [...elements.translationTarget.options].find((option) => !option.disabled)?.value || 'en';
+        }
+    }
+
+export function renderSpeakerNames(names = {}) {
+        const panel = elements.speakerNamesPanel;
+        if (!panel) return;
+        panel.innerHTML = '';
+        const speakers = new Set(state.currentTranscript.map((item) => item.speaker).filter(Boolean));
+        if (!speakers.size) {
+            panel.hidden = true;
+            return;
+        }
+
+        panel.hidden = false;
+        const title = document.createElement('strong');
+        title.textContent = 'Speaker names';
+        panel.appendChild(title);
+        const updatedNames = { ...names };
+        speakers.forEach((speaker) => {
+            const row = document.createElement('label');
+            row.className = 'speaker-name-row';
+            row.innerHTML = `<span>${speaker}</span>`;
+            const input = document.createElement('input');
+            input.value = names[speaker] || speaker.replace(/_/g, ' ');
+            input.setAttribute('aria-label', `Name for ${speaker}`);
+            input.addEventListener('change', async () => {
+                updatedNames[speaker] = input.value.trim() || speaker;
+                const response = await fetch(`/speaker_names/${encodeURIComponent(state.currentVideoId)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ names: updatedNames })
+                });
+                const data = await readJsonResponse(response, 'Saving speaker names');
+                showNotification('Speaker name saved.', 'success');
+                loadTranscript(state.currentTranscript.map((item) => ({ ...item, speaker_name: data.speaker_names[item.speaker] || item.speaker })));
+            });
+            row.appendChild(input);
+            panel.appendChild(row);
+        });
+    }
+}
+
+function applySpeakerNames(transcript, names) {
+    return transcript.map((item) => ({
+        ...item,
+        speaker_name: item.speaker ? (names[item.speaker] || item.speaker) : undefined
+    }));
 }
 
 async function readJsonResponse(response, operation) {

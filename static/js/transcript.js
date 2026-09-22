@@ -47,13 +47,16 @@ export function updateTranscriptDisplay() {
         const timestamp = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
         
         // Create HTML with or without visible timestamp
+        const speaker = item.speaker_name || item.speaker;
+        const speakerMarkup = speaker ? `<span class="transcript-speaker">${speaker}</span>` : '';
         if (state.showTimestamps) {
             div.innerHTML = `
                 <span class="transcript-timestamp">${timestamp}</span>
+                ${speakerMarkup}
                 <span class="transcript-text">${item.text}</span>
             `;
         } else {
-            div.innerHTML = `<span class="transcript-text">${item.text}</span>`;
+            div.innerHTML = `${speakerMarkup}<span class="transcript-text">${item.text}</span>`;
             // Still store the timestamp as a data attribute for seeking
             div.dataset.timestamp = timestamp;
             div.dataset.time = item.start;

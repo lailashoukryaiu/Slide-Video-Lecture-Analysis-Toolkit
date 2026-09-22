@@ -22,15 +22,20 @@ export function formatTime(seconds) {
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 } 
 
+/**
+ * Saves a generated file using the browser's location picker when available.
+ * Browsers without the File System Access API fall back to their normal download flow.
+ */
 export async function saveBlobToUserLocation(blob, filename) {
-    if (typeof window.showSaveFilePicker === 'function') {
+    const picker = window.showSaveFilePicker;
+    if (typeof picker === 'function') {
         const extension = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
         const mimeTypes = {
             zip: 'application/zip',
             docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             pdf: 'application/pdf',
         };
-        const handle = await window.showSaveFilePicker({
+        const handle = await picker({
             suggestedName: filename,
             types: extension && mimeTypes[extension]
                 ? [{ description: extension.toUpperCase(), accept: { [mimeTypes[extension]]: [`.${extension}`] } }]
@@ -41,6 +46,7 @@ export async function saveBlobToUserLocation(blob, filename) {
         await writable.close();
         return;
     }
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

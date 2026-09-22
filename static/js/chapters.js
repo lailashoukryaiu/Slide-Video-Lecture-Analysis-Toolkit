@@ -32,7 +32,14 @@ export async function exportChapters() {
             include_clips: elements.exportClips?.checked ?? true,
             include_word: elements.exportWord?.checked ?? true,
             include_pdf: elements.exportPdf?.checked ?? true,
+            include_webpage: elements.exportWebpage?.checked ?? false,
+            include_outline: elements.exportOutline?.checked ?? false,
+            include_scorm: elements.exportScorm?.checked ?? false,
             chapter_grouping: elements.chapterGrouping?.value || 'topic',
+            timestamp_mode: elements.timestampMode?.value || 'original',
+            subpart_mode: elements.subpartMode?.value || 'points',
+            document_title: elements.exportTitle?.value.trim() || '',
+            export_filename: elements.exportFilename?.value.trim() || '',
         };
         const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
             method: 'POST',
@@ -55,14 +62,19 @@ export async function exportChapters() {
         }
         const blob = await response.blob();
         const directWord = options.include_word && !options.include_pdf
+            && !options.include_webpage && !options.include_outline && !options.include_scorm
             && !options.include_images && !options.include_transcripts && !options.include_clips;
         const directPdf = options.include_pdf && !options.include_word
+            && !options.include_webpage && !options.include_outline && !options.include_scorm
             && !options.include_images && !options.include_transcripts && !options.include_clips;
-        const filename = directWord
+        const fallbackFilename = directWord
             ? `${state.currentVideoId}_chapter_document.docx`
             : directPdf
                 ? `${state.currentVideoId}_chapter_document.pdf`
                 : `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : fallbackFilename;
         await saveBlobToUserLocation(blob, filename);
     } catch (error) {
         showError(`Error exporting chapters: ${error.message}`);

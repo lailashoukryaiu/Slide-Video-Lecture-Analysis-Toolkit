@@ -64,9 +64,26 @@
             <!-- Left column: Video player and timeline -->
             <div class="video-container">
                 <div class="video-wrapper">
-                    <video id="videoPlayer" preload="auto" crossorigin="anonymous" style="cursor: pointer;">
+                    <video id="videoPlayer" preload="auto" controls crossorigin="anonymous" style="cursor: pointer;">
                         Your browser does not support the video tag.
                     </video>
+                </div>
+                <div class="video-controls" aria-label="Video controls">
+                    <button id="previousChapterBtn" class="btn btn-secondary" type="button" title="Previous chapter">
+                        <i class="fas fa-step-backward"></i> Previous
+                    </button>
+                    <button id="nextChapterBtn" class="btn btn-secondary" type="button" title="Next chapter">
+                        Next <i class="fas fa-step-forward"></i>
+                    </button>
+                    <label for="playbackSpeed">Speed</label>
+                    <select id="playbackSpeed" aria-label="Playback speed">
+                        <option value="0.5">0.5x</option>
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
                 </div>
                 
                 <div id="videoProgress" class="video-progress-container">
@@ -157,7 +174,10 @@
                                 </select>
                                 <label for="transcriptPrompt">Conversation type or correction prompt</label>
                                 <textarea id="transcriptPrompt" rows="2" placeholder="Example: technical lecture about machine learning; preserve acronyms and product names."></textarea>
+                                <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers</label>
+                                <small>Speaker identification requires a Hugging Face token and the optional pyannote.audio model.</small>
                                 <button id="regenerateTranscriptAction" class="btn btn-secondary" type="button">Regenerate transcript</button>
+                                <div id="speakerNamesPanel" class="speaker-names-panel" hidden></div>
                                 <label for="transcriptFile">Upload transcript file</label>
                                 <input id="transcriptFile" type="file" accept=".txt,.srt,.vtt,.json">
                                 <button id="uploadTranscriptBtn" class="btn btn-secondary" type="button">Use uploaded transcript</button>
@@ -201,17 +221,38 @@
                                     Minutes:
                                     <input type="number" id="intervalDuration" min="0.5" step="0.5" value="3" disabled>
                                 </label>
-                                <label for="chapterGrouping">Divide chapters by:</label>
+                                <label for="chapterGrouping">Divide parts by:</label>
                                 <select id="chapterGrouping">
                                     <option value="topic" selected>Topic</option>
                                     <option value="slides">Slide changes</option>
                                     <option value="combined">Topics and slide changes</option>
                                 </select>
+                                <label for="timestampMode">Word timestamps:</label>
+                                <select id="timestampMode">
+                                    <option value="original" selected>Original transcript timestamps</option>
+                                    <option value="part">Only at the beginning of each part</option>
+                                    <option value="subpart">At the beginning of each part and subpart</option>
+                                </select>
+                                <label for="subpartMode">Outline subparts:</label>
+                                <select id="subpartMode">
+                                    <option value="points" selected>Important points/topics</option>
+                                    <option value="slides">Slide changes inside each part</option>
+                                    <option value="both">Important points and slide changes</option>
+                                </select>
+                                <label for="exportTitle">Title inside the Word/PDF files:</label>
+                                <input type="text" id="exportTitle" placeholder="Suggested title will be used if left blank">
+                                <small id="exportTitleSuggestion">Suggestion: determined from the video and chapter topics</small>
+                                <label for="exportFilename">Export filename:</label>
+                                <input type="text" id="exportFilename" placeholder="Suggested filename will be used if left blank">
+                                <small id="exportFilenameSuggestion">Suggestion: based on the title and export type</small>
                                 <label><input type="checkbox" id="exportImages"> Images</label>
                                 <label><input type="checkbox" id="exportTranscripts"> Transcript files</label>
                                 <label><input type="checkbox" id="exportClips"> Video clips</label>
                                 <label><input type="checkbox" id="exportWord" checked> Combined Word: title, image, and transcript</label>
                                 <label><input type="checkbox" id="exportPdf"> Combined PDF: title, image, and transcript</label>
+                                <label><input type="checkbox" id="exportWebpage"> Complete webpage: interleaved slides, clips, and transcript</label>
+                                <label><input type="checkbox" id="exportOutline"> Hierarchical outline Word document</label>
+                                <label><input type="checkbox" id="exportScorm"> SCORM 1.2 LMS package</label>
                             </fieldset>
                         </div>
                         <div class="tab-body" id="chaptersContainer">
@@ -390,7 +431,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=api-syntax-fix-20260922"></script>
+    <script type="module" src="/static/js/index.js?v=speaker-diarization-scorm-fix-20260922"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
