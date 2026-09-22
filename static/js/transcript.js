@@ -8,7 +8,9 @@ import { state } from './main.js';
  * @param {Array} transcript - The transcript data
  */
 export function loadTranscript(transcript) {
-    state.currentTranscript = transcript;
+    state.currentTranscript = Array.isArray(transcript)
+        ? transcript
+        : (Array.isArray(transcript?.segments) ? transcript.segments : []);
     updateTranscriptDisplay();
     
     // Dispatch event that transcript is loaded
