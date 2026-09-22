@@ -730,6 +730,16 @@ async def export_chapters(video_id: str, request: Request):
         export_dir = EXPORTS_DIR / video_id
         export_dir.mkdir(parents=True, exist_ok=True)
         zip_path = EXPORTS_DIR / f"{video_id}_chapters.zip"
+        document_title = Path(video_path).stem
+        metadata_path = VIDEO_DIR / "metadata.json"
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                document_title = Path(
+                    metadata.get(video_id, {}).get("filename", document_title)
+                ).stem or document_title
+            except (OSError, json.JSONDecodeError):
+                pass
 
         with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
@@ -789,7 +799,7 @@ async def export_chapters(video_id: str, request: Request):
                 temp_dir / "chapter_document.docx" if export_flags["include_word"] else None,
                 pdf_text=export_flags["include_pdf"], pdf_images=export_flags["include_pdf"],
                 word_text=export_flags["include_word"], word_images=export_flags["include_word"],
-                document_title=Path(video_path).stem,
+                document_title=document_title,
             )
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in temp_dir.iterdir():
