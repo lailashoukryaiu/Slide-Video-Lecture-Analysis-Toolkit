@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters, updateExportAvailabil
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=no-translation-option-20260923';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=transcript-progress-fix-20260923';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -18,6 +18,7 @@ export const state = {
     sceneDetectionInterval: null,
     sceneDetectionStartedAt: null,
     transcriptOcrStatusInterval: null,
+    whisperTranscriptPollGeneration: 0,
     currentVideoId: null,
     youtubeTranscriptInterval: null,
     youtubeRetryTimer: null,

@@ -26,16 +26,29 @@ export async function regenerateTranscript() {
         button.disabled = true;
         button.textContent = 'Regenerating...';
     }
-    elements.transcriptContainer.innerHTML = '<p>Regenerating transcript...</p>';
+    const pollGeneration = ++state.whisperTranscriptPollGeneration;
+    const startedAt = Date.now();
+    renderWhisperProgress({ status: 'queued', progress: 0 }, startedAt);
     try {
         const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(videoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt, diarization })
+            body: JSON.stringify({ model, prompt, diarization, force: true })
         });
         const data = await readJsonResponse(response, 'Transcript regeneration');
         if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
-        const poll = async () => {
+        elements.transcriptOptionsDialog?.close();
+        showNotification(
+            data.status === 'in_progress'
+                ? 'Transcript generation is already running. Showing its progress.'
+                : 'Transcript regeneration started.',
+            'info'
+        );
+
+        while (
+            state.currentVideoId === videoId
+            && state.whisperTranscriptPollGeneration === pollGeneration
+        ) {
             const statusResponse = await fetch(`/whisper_transcript_status/${encodeURIComponent(videoId)}`);
             const status = await readJsonResponse(statusResponse, 'Transcript status');
             if (status.status === 'complete') {
@@ -46,17 +59,59 @@ export async function regenerateTranscript() {
                 return;
             }
             if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
-            setTimeout(() => poll().catch((error) => showError(error.message)), 3000);
-        };
-        await poll();
+            renderWhisperProgress(status, startedAt);
+            await delay(3000);
+        }
     } catch (error) {
         showError(`Error regenerating transcript: ${error.message}`);
+        elements.transcriptContainer.innerHTML = `
+            <div class="transcript-processing transcript-error">
+                <i class="fas fa-info-circle"></i>
+                <p>Transcript regeneration stopped. ${escapeHtml(error.message)}</p>
+            </div>
+        `;
     } finally {
-        if (button) {
+        if (button && state.whisperTranscriptPollGeneration === pollGeneration) {
             button.disabled = false;
             button.textContent = 'Regenerate transcript';
         }
     }
+}
+
+function renderWhisperProgress(status, startedAt) {
+    const progress = Number.isFinite(Number(status.progress))
+        ? Math.max(0, Math.min(100, Number(status.progress)))
+        : 0;
+    const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const phase = status.phase === 'transcribing' || progress > 0
+        ? 'Transcribing audio'
+        : 'Starting Whisper model';
+    const lastUpdate = Number.isFinite(Number(status.last_updated_seconds_ago))
+        ? ` Last progress update: ${Math.round(Number(status.last_updated_seconds_ago))}s ago.`
+        : '';
+    elements.transcriptContainer.innerHTML = `
+        <div class="transcript-processing">
+            <i class="fas fa-spinner fa-spin"></i>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${progress}%"></div>
+                </div>
+                <div class="progress-text">${Math.round(progress)}%</div>
+            </div>
+            <p>${phase} (${elapsedSeconds}s elapsed).${lastUpdate}</p>
+            <p>You can continue using slide detection and video controls while this runs.</p>
+        </div>
+    `;
+}
+
+function delay(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function escapeHtml(value) {
+    const element = document.createElement('div');
+    element.textContent = String(value);
+    return element.innerHTML;
 }
 
 export async function uploadTranscriptFile() {
@@ -316,11 +371,16 @@ function resetVideoStates() {
     const videoPlayer = elements.videoPlayer;
     state.currentVideoId = null;
     state.currentTranslationLanguage = null;
+    state.whisperTranscriptPollGeneration += 1;
     if (elements.translationTarget) {
         elements.translationTarget.value = '';
     }
     if (elements.translateTranscriptBtn) {
         elements.translateTranscriptBtn.disabled = true;
+    }
+    if (elements.regenerateTranscriptBtn) {
+        elements.regenerateTranscriptBtn.disabled = false;
+        elements.regenerateTranscriptBtn.textContent = 'Regenerate transcript';
     }
     clearChapterMarkers();
     videoPlayer.pause();
@@ -626,24 +686,25 @@ export async function processVideoUpload(file) {
         }
         // If transcript is being generated, show progress
         else if (data.transcript_in_progress) {
+            const transcriptStartedAt = Date.now();
             // Show a message in the transcript container
-            elements.transcriptContainer.innerHTML = `
-                <div class="transcript-processing">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Generating transcript with Whisper AI. This may take several minutes...</p>
-                </div>
-            `;
+            renderWhisperProgress({ status: 'queued', progress: 0 }, transcriptStartedAt);
             elements.loadingIndicator.querySelector('p').textContent =
                 'Video ready. Generating transcript in the background...';
             
             // Start polling for transcript completion
+            let whisperCheckInterval = null;
             const checkWhisperTranscript = async () => {
+                if (state.currentVideoId !== data.video_id) {
+                    if (whisperCheckInterval) clearInterval(whisperCheckInterval);
+                    return;
+                }
                 try {
                     const whisperResponse = await fetch(`/whisper_transcript_status/${data.video_id}`);
-                    const whisperData = await whisperResponse.json();
+                    const whisperData = await readJsonResponse(whisperResponse, 'Transcript status');
                     
                     if (whisperData.status === 'complete') {
-                        clearInterval(whisperCheckInterval);
+                        if (whisperCheckInterval) clearInterval(whisperCheckInterval);
                         
                         // Transcript is ready, update UI
                         showNotification('Whisper transcript generation complete!', 'success');
@@ -658,40 +719,35 @@ export async function processVideoUpload(file) {
                         // Enable generate summary button
                         elements.generateSummaryBtn.disabled = false;
                     } else if (whisperData.status === 'error') {
-                        clearInterval(whisperCheckInterval);
+                        if (whisperCheckInterval) clearInterval(whisperCheckInterval);
                         elements.transcriptContainer.innerHTML = `
                             <div class="transcript-processing transcript-error">
                                 <i class="fas fa-info-circle"></i>
-                                <p>Transcript generation stopped: ${whisperData.error || 'No recognizable speech was found in this video.'}</p>
+                                <p>Transcript generation stopped: ${escapeHtml(whisperData.error || 'No recognizable speech was found in this video.')}</p>
                                 <p>You can still detect slides, but transcript-based summaries are unavailable.</p>
                             </div>
                         `;
                         elements.generateSummaryBtn.disabled = true;
                         elements.exportChaptersBtn.disabled = false;
                         showError(`Error generating transcript: ${whisperData.error}`);
-                    } else if (whisperData.status === 'in_progress' && whisperData.progress) {
-                        // Update progress indicator
-                        elements.transcriptContainer.innerHTML = `
-                            <div class="transcript-processing">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <div class="progress-container">
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" style="width: ${whisperData.progress}%"></div>
-                                    </div>
-                                    <div class="progress-text">${Math.round(whisperData.progress)}%</div>
-                                </div>
-                                <p>Generating transcript with Whisper AI...</p>
-                            </div>
-                        `;
+                    } else {
+                        renderWhisperProgress(whisperData, transcriptStartedAt);
                     }
                 } catch (error) {
                     console.error('Error checking Whisper transcript status:', error);
+                    elements.transcriptContainer
+                        .querySelectorAll('.transcript-status-warning')
+                        .forEach((warning) => warning.remove());
+                    elements.transcriptContainer.insertAdjacentHTML(
+                        'beforeend',
+                        `<p class="transcript-status-warning">Could not refresh transcript status: ${escapeHtml(error.message)}</p>`
+                    );
                 }
             };
             
             // Check immediately and then every 5 seconds
-            checkWhisperTranscript();
-            const whisperCheckInterval = setInterval(checkWhisperTranscript, 5000);
+            whisperCheckInterval = setInterval(checkWhisperTranscript, 5000);
+            void checkWhisperTranscript();
         }
         // No transcript available and not being generated
         else {

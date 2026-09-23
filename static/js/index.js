@@ -1,9 +1,9 @@
 // index.js - Entry point for non-module environments
 // This file is used to import all modules and expose them to the global scope
 
-import { initApp } from './main.js?v=no-translation-option-20260923';
+import { initApp } from './main.js?v=transcript-progress-fix-20260923';
 import { elements } from './elements.js';
-import { loadUploadedVideo } from './api-module.js?v=no-translation-option-20260923';
+import { loadUploadedVideo } from './api-module.js?v=transcript-progress-fix-20260923';
 
 // Example videos that have been pre-processed
 const exampleVideos = [

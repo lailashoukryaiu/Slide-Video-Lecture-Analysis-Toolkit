@@ -97,7 +97,10 @@ class TranscriptProcessor:
         except Exception as e:
             return None, str(e)
 
-    async def generate_whisper_transcript(self, video_id: str, background_tasks, model="turbo", prompt=None, diarization=False):
+    async def generate_whisper_transcript(
+        self, video_id: str, background_tasks, model="turbo", prompt=None,
+        diarization=False, force=False
+    ):
         """Generate a transcript using Whisper."""
         try:
             # Check if video exists
@@ -120,7 +123,7 @@ class TranscriptProcessor:
             # Check if transcript already exists
             if model not in {"turbo", "small", "medium", "large-v3"}:
                 return JSONResponse({"success": False, "error": "Unsupported transcription model"})
-            if os.path.exists(output_path) and model == "turbo" and not prompt:
+            if os.path.exists(output_path) and model == "turbo" and not prompt and not force:
                 with open(output_path, 'r') as f:
                     transcript = json.load(f)
                 return JSONResponse({
@@ -130,15 +133,25 @@ class TranscriptProcessor:
                 })
 
             if progress_path.exists():
-                return JSONResponse({
-                    "success": True,
-                    "message": "Transcript generation is already in progress",
-                    "status": "in_progress"
-                })
+                progress_age = time.time() - progress_path.stat().st_mtime
+                if progress_age > self.progress_stale_seconds:
+                    progress_path.unlink()
+                else:
+                    return JSONResponse({
+                        "success": True,
+                        "message": "Transcript generation is already in progress",
+                        "status": "in_progress",
+                        "status_url": f"/whisper_transcript_status/{video_id}"
+                    })
+
+            error_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"
+            if error_path.exists():
+                error_path.unlink()
             
             # Start background task to generate transcript
             if os.path.exists(output_path):
                 os.remove(output_path)
+            progress_path.write_text("0", encoding="utf-8")
             background_tasks.add_task(
                 self.process_whisper_transcript, video_id, video_path, output_path, model, prompt, diarization
             )
@@ -316,6 +329,7 @@ class TranscriptProcessor:
                     "success": True,
                     "status": "in_progress",
                     "progress": progress,
+                    "phase": "starting" if progress <= 0 else "transcribing",
                     "last_updated_seconds_ago": round(progress_age, 1)
                 })
 
