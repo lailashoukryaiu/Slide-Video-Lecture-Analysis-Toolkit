@@ -40,48 +40,36 @@ def timestamps_to_srt(word_timestamps):
     return srt_format_corrected
 
 
-def transcribe_audio(
-    file_path, batch_size=16, model_name="turbo", prompt=None,
-    precise_timestamps=False
-):
+def transcribe_audio(file_path, batch_size=16):
     """Transcribe audio file and yield sentences as they are processed."""
     device, compute_type = get_whisper_device_config()
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    model = WhisperModel("turbo", device=device, compute_type=compute_type)
     batched_model = BatchedInferencePipeline(model=model)
-    options = {
-        "batch_size": batch_size,
-        "word_timestamps": precise_timestamps,
-        "log_progress": True,
-    }
-    if prompt:
-        options["initial_prompt"] = prompt
-    segments, info = batched_model.transcribe(file_path, **options)
+    segments, info = batched_model.transcribe(
+        file_path,
+        batch_size=batch_size,
+        word_timestamps=True,
+        log_progress=True,
+    )
     total_duration = info.duration
     print(total_duration)
 
     processed_duration = 0
     for segment in segments:
-        if precise_timestamps:
-            word_list = [
-                {
-                    "start": float(word.start),
-                    "end": float(word.end),
-                    "word": word.word,
-                    "probability": float(word.probability),
-                }
-                for word in (segment.words or [])
-            ]
-            sentence_data = timestamps_to_srt(word_list)
-        else:
-            sentence_data = (
-                "1\n"
-                f"{convert_to_srt_time(segment.start)} --> "
-                f"{convert_to_srt_time(segment.end)}\n"
-                f"{segment.text.strip()}\n\n"
-            )
+        word_list = []
+        for word in segment.words:
+            word_list.append({
+                "start": float(word.start),
+                "end": float(word.end),
+                "word": word.word,
+                "probability": float(word.probability)
+            })
 
-        processed_duration = max(processed_duration, float(segment.end))
+        if word_list:
+            processed_duration = max(processed_duration, word_list[-1]["end"])
+
         progress = min(100, (processed_duration / total_duration) * 100) if total_duration > 0 else 0
+        sentence_data = timestamps_to_srt(word_list)
         yield sentence_data, progress

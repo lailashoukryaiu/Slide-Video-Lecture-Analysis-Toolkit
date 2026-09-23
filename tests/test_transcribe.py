@@ -23,8 +23,10 @@ module_spec.loader.exec_module(transcribe)
 
 
 class FakeWhisperModel:
+    model_name = None
+
     def __init__(self, *args, **kwargs):
-        pass
+        self.__class__.model_name = args[0]
 
 
 class FakePipeline:
@@ -39,7 +41,14 @@ class FakePipeline:
             start=1.25,
             end=3.5,
             text=" Segment text ",
-            words=None,
+            words=[
+                SimpleNamespace(
+                    start=1.25,
+                    end=3.5,
+                    word=" Segment text",
+                    probability=0.95,
+                )
+            ],
         )
         return iter([segment]), SimpleNamespace(duration=5)
 
@@ -55,10 +64,12 @@ class TranscribeAudioTests(unittest.TestCase):
         transcribe.WhisperModel = self.original_model
         transcribe.BatchedInferencePipeline = self.original_pipeline
 
-    def test_fast_mode_uses_segment_timestamps_without_word_alignment(self):
+    def test_original_mode_uses_turbo_batched_word_timestamps(self):
         result = list(transcribe.transcribe_audio("video.mp4"))
 
-        self.assertFalse(FakePipeline.options["word_timestamps"])
+        self.assertTrue(FakePipeline.options["word_timestamps"])
+        self.assertEqual(FakePipeline.options["batch_size"], 16)
+        self.assertEqual(FakeWhisperModel.model_name, "turbo")
         self.assertIn("00:00:01,250 --> 00:00:03,500", result[0][0])
         self.assertIn("Segment text", result[0][0])
         self.assertEqual(result[0][1], 70)

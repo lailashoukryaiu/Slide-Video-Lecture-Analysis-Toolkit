@@ -572,9 +572,10 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
     except json.JSONDecodeError:
         options = {}
     return await transcript_processor.generate_whisper_transcript(
-        video_id, background_tasks, options.get("model", "turbo"), options.get("prompt"),
-        bool(options.get("diarization", False)), bool(options.get("force", False)),
-        bool(options.get("precise_timestamps", False))
+        video_id,
+        background_tasks,
+        bool(options.get("diarization", False)),
+        bool(options.get("force", False)),
     )
 
 @app.get("/whisper_transcript_status/{video_id}")
