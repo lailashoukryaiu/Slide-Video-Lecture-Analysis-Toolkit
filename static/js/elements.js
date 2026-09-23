@@ -34,6 +34,8 @@ export const elements = {
     get transcriptFile() { return document.getElementById('transcriptFile'); },
     get uploadTranscriptBtn() { return document.getElementById('uploadTranscriptBtn'); },
     get translationTarget() { return document.getElementById('translationTarget'); },
+    get translationModel() { return document.getElementById('translationModel'); },
+    get translationModelStatus() { return document.getElementById('translationModelStatus'); },
     get translateTranscriptBtn() { return document.getElementById('translateTranscriptBtn'); },
     get chapterGrouping() { return document.getElementById('chapterGrouping'); },
     get timestampMode() { return document.getElementById('timestampMode'); },

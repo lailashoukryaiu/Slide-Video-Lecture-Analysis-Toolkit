@@ -139,8 +139,20 @@ export async function translateTranscript() {
     }
     if (button) {
         button.disabled = true;
-        button.textContent = 'Translating...';
     }
+    const selectedModel = elements.translationModel?.value || '';
+    const selectedModelLabel = elements.translationModel?.selectedOptions[0]?.textContent || 'Auto';
+    const startedAt = Date.now();
+    const updateElapsed = () => {
+        const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+        if (button) button.textContent = `Translating with ${selectedModelLabel}… ${elapsed}s`;
+        if (elements.translationModelStatus) {
+            elements.translationModelStatus.textContent =
+                `Translation is running with ${selectedModelLabel} (${elapsed}s elapsed). Long transcripts are processed in parallel batches.`;
+        }
+    };
+    updateElapsed();
+    const elapsedTimer = setInterval(updateElapsed, 1000);
     try {
         const target = elements.translationTarget.value;
         if (!target) {
@@ -151,7 +163,11 @@ export async function translateTranscript() {
         const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transcript: state.currentTranscript, target_language: target })
+            body: JSON.stringify({
+                transcript: state.currentTranscript,
+                target_language: target,
+                model: selectedModel
+            })
         });
         const data = await readJsonResponse(response, 'Transcript translation');
         loadTranscript(data.transcript);
@@ -161,12 +177,58 @@ export async function translateTranscript() {
             state.videoChapters = data.chapters;
             updateChapters(data.chapters);
         }
-        showNotification(`Transcript translated to ${data.language}.`, 'success');
+        const translationSummary =
+            `${data.provider} ${data.model}; ${data.batch_count} batch${data.batch_count === 1 ? '' : 'es'} in ${data.elapsed_seconds}s`;
+        if (elements.translationModelStatus) {
+            elements.translationModelStatus.textContent = `Last translation: ${translationSummary}.`;
+        }
+        showNotification(`Transcript translated to ${data.language} using ${translationSummary}.`, 'success');
+    } catch (error) {
+        if (elements.translationModelStatus) {
+            elements.translationModelStatus.textContent = `Translation failed: ${error.message}`;
+        }
+        throw error;
     } finally {
+        clearInterval(elapsedTimer);
         if (button) {
-            button.disabled = false;
+            button.disabled =
+                !elements.translationTarget.value
+                || elements.translationModel?.dataset.available === 'false';
             button.textContent = originalText;
         }
+    }
+}
+
+export async function updateTranslationModelStatus() {
+    if (!elements.translationModelStatus) return;
+    try {
+        const response = await fetch('/runtime_status');
+        const data = await readJsonResponse(response, 'Runtime status');
+        const hasTranslationModel = Boolean(
+            data.translation_default_provider && data.translation_default_model
+        );
+        elements.translationModel.dataset.available = String(hasTranslationModel);
+        if (!hasTranslationModel) {
+            elements.translationModelStatus.textContent =
+                'No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY in Colab and restart the server.';
+            elements.translateTranscriptBtn.disabled = true;
+            return;
+        }
+        const defaultDescription = `${data.translation_default_provider} ${data.translation_default_model}`;
+        elements.translationModelStatus.textContent =
+            `Auto currently uses ${defaultDescription}. Long transcripts are translated in parallel batches.`;
+        [...elements.translationModel.options].forEach((option) => {
+            if (option.value.startsWith('gemini-')) option.disabled = !data.gemini_configured;
+            if (option.value.startsWith('gpt-')) option.disabled = !data.openai_configured;
+        });
+        if (elements.translationModel.selectedOptions[0]?.disabled) {
+            elements.translationModel.value = '';
+        }
+    } catch (error) {
+        elements.translationModel.dataset.available = 'false';
+        elements.translateTranscriptBtn.disabled = true;
+        elements.translationModelStatus.textContent =
+            `Could not check translation model configuration: ${error.message}`;
     }
 }
 

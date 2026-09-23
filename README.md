@@ -20,6 +20,7 @@
 - **Scene Detection**: Adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, content-cut mode, and optional transcript chapter boundaries
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
+- **Batched Translation**: Translate transcripts and chapter titles with an explicit Gemini/OpenAI model choice and visible provider/timing details
 - **Semantic Embeddings**: Sentence-BERT based semantic similarity for transcript-OCR alignment
 - **YOLO Object Detection**: Custom-trained YOLOv8 model for slide content detection (`slidevqa_best.pt`)
 - **AI-Powered Summarization**: Google Gemini integration for chapter generation
@@ -337,4 +338,3 @@ pip install --upgrade yt-dlp
 - **Sentence-BERT**: UKP Lab for semantic embeddings
 - **Surya OCR**: VikParuchuri for advanced OCR capabilities
 - **FastAPI**: Sebastian Ramirez for the excellent web framework
-

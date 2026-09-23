@@ -2,6 +2,7 @@ import os
 import json
 import re
 import asyncio
+import time
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
@@ -27,6 +28,7 @@ class SummaryProcessor:
 
         self.client = None
         self.model = None
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.openai_client = None
         self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self._refresh_openai_client()
@@ -36,11 +38,20 @@ class SummaryProcessor:
                 raise ValueError("GOOGLE_API_KEY is not configured")
 
             self.client = genai.Client(api_key=GOOGLE_API_KEY)
-            self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
             self.model = True
         except Exception as e:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
             self.model = None
+
+    def _refresh_gemini_client(self):
+        """Load a Gemini client if a key was configured after startup."""
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if api_key and self.client is None:
+            try:
+                self.client = genai.Client(api_key=api_key)
+                self.model = True
+            except Exception as error:
+                print(f"Warning: Gemini API initialization failed: {error}")
 
     def _refresh_openai_client(self):
         """Load an OpenAI client if a key was configured after startup."""
@@ -183,38 +194,140 @@ Format each chapter exactly like this example:
                 "error": str(e)
             })
 
-    async def translate_transcript(self, transcript, target_language):
+    async def translate_transcript(self, transcript, target_language, requested_model=None):
+        """Translate transcript segments in bounded concurrent batches."""
+        self._refresh_gemini_client()
         self._refresh_openai_client()
         if not self.model and not self.openai_client:
             raise RuntimeError(
                 "No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY "
                 "in the Colab runtime and restart the server."
             )
-        prompt = (
-            f"Translate each transcript segment into language code {target_language}. "
-            "Return only a JSON array with the same start, duration, and translated text fields.\n"
-            + json.dumps(transcript, ensure_ascii=False)
-        )
-        if self.model:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            result = response.text
+        if requested_model:
+            selected_model = requested_model
+            use_openai = selected_model.startswith("gpt-")
         else:
-            response = await asyncio.to_thread(
-                self.openai_client.chat.completions.create,
-                model=self.openai_model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+            use_openai = not self.model
+            selected_model = self.openai_model_name if use_openai else self.model_name
+        if use_openai and not self.openai_client:
+            raise RuntimeError(f"OpenAI model {selected_model} was selected, but OPENAI_API_KEY is not configured.")
+        if not use_openai and not self.model:
+            raise RuntimeError(f"Gemini model {selected_model} was selected, but GOOGLE_API_KEY is not configured.")
+
+        indexed = [
+            {"index": index, "text": str(item.get("text", ""))}
+            for index, item in enumerate(transcript)
+            if isinstance(item, dict)
+        ]
+        batches = self._translation_batches(indexed)
+        started_at = time.monotonic()
+        semaphore = asyncio.Semaphore(2)
+
+        async def translate_batch(batch, batch_number):
+            async with semaphore:
+                prompt = (
+                    f"Translate every item into language code {target_language}. "
+                    "Preserve meaning, terminology, and the index. Return only a JSON object "
+                    "with a translations array containing objects with exactly these fields: "
+                    "index and text.\n"
+                    + json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
+                )
+                for attempt in range(2):
+                    try:
+                        if use_openai:
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.openai_client.chat.completions.create,
+                                    model=selected_model,
+                                    messages=[{"role": "user", "content": prompt}],
+                                    temperature=0.2,
+                                    response_format={"type": "json_object"},
+                                    max_completion_tokens=8192,
+                                ),
+                                timeout=120,
+                            )
+                            raw_result = response.choices[0].message.content
+                        else:
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.client.models.generate_content,
+                                    model=selected_model,
+                                    contents=prompt,
+                                    config=types.GenerateContentConfig(
+                                        temperature=0.2,
+                                        response_mime_type="application/json",
+                                        max_output_tokens=8192,
+                                    ),
+                                ),
+                                timeout=120,
+                            )
+                            raw_result = response.text
+                        parsed = json.loads(raw_result)
+                        if isinstance(parsed, dict):
+                            parsed = parsed.get("translations")
+                        if not isinstance(parsed, list):
+                            raise ValueError("Translation model returned an invalid batch")
+                        by_index = {
+                            int(item["index"]): str(item["text"])
+                            for item in parsed
+                            if isinstance(item, dict) and "index" in item and "text" in item
+                        }
+                        expected = {item["index"] for item in batch}
+                        if set(by_index) != expected:
+                            raise ValueError(
+                                f"Translation model returned {len(by_index)} of "
+                                f"{len(expected)} requested segments"
+                            )
+                        return by_index
+                    except Exception as error:
+                        if attempt == 1:
+                            raise RuntimeError(
+                                f"Translation batch {batch_number} failed after retry: {error}"
+                            ) from error
+                        await asyncio.sleep(1)
+
+        translated_batches = await asyncio.gather(
+            *(
+                translate_batch(batch, batch_number)
+                for batch_number, batch in enumerate(batches, start=1)
             )
-            result = response.choices[0].message.content
-        translated = json.loads(result)
-        if not isinstance(translated, list):
-            raise ValueError("Translation model returned an invalid transcript")
-        return translated
+        )
+        translated_text = {
+            index: text
+            for batch in translated_batches
+            for index, text in batch.items()
+        }
+        translated = [
+            {**item, "text": translated_text[index]}
+            for index, item in enumerate(transcript)
+        ]
+        return {
+            "transcript": translated,
+            "provider": "OpenAI" if use_openai else "Gemini",
+            "model": selected_model,
+            "batch_count": len(batches),
+            "elapsed_seconds": round(time.monotonic() - started_at, 1),
+        }
+
+    @staticmethod
+    def _translation_batches(items, maximum_items=60, maximum_characters=6000):
+        batches = []
+        current = []
+        current_characters = 0
+        for item in items:
+            item_characters = len(item["text"])
+            if current and (
+                len(current) >= maximum_items
+                or current_characters + item_characters > maximum_characters
+            ):
+                batches.append(current)
+                current = []
+                current_characters = 0
+            current.append(item)
+            current_characters += item_characters
+        if current:
+            batches.append(current)
+        return batches
 
     @staticmethod
     def _is_quota_error(error: Exception) -> bool:

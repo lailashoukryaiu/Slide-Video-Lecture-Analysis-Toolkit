@@ -78,6 +78,23 @@ async def yolo_status():
 @app.get("/runtime_status")
 async def runtime_status():
     """Report the compute device used by Whisper and available CUDA GPU."""
+    summary_processor._refresh_gemini_client()
+    summary_processor._refresh_openai_client()
+    translation_status = {
+        "translation_default_provider": (
+            "Gemini" if summary_processor.model
+            else "OpenAI" if summary_processor.openai_client
+            else None
+        ),
+        "translation_default_model": (
+            summary_processor.model_name
+            if summary_processor.model
+            else summary_processor.openai_model_name if summary_processor.openai_client
+            else None
+        ),
+        "gemini_configured": bool(summary_processor.model),
+        "openai_configured": bool(summary_processor.openai_client),
+    }
     try:
         import torch
 
@@ -90,6 +107,7 @@ async def runtime_status():
             "whisper_device": "cuda" if cuda_available else "cpu",
             "whisper_compute_type": "float16" if cuda_available else "int8",
             "colab_gpu": os.getenv("COLAB_GPU") or None,
+            **translation_status,
         })
     except Exception as error:
         return JSONResponse({
@@ -100,6 +118,7 @@ async def runtime_status():
             "whisper_compute_type": "int8",
             "colab_gpu": os.getenv("COLAB_GPU") or None,
             "error": str(error),
+            **translation_status,
         })
 
 # Mount static directory
@@ -197,13 +216,19 @@ async def translate_transcript(video_id: str, request: Request):
     data = await request.json()
     transcript = data.get("transcript", [])
     target = data.get("target_language")
+    requested_model = data.get("model") or None
     if target not in {"de", "en", "ar", "pl"}:
         raise HTTPException(status_code=400, detail="Unsupported translation language")
-    translated = await summary_processor.translate_transcript(transcript, target)
-    (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
-        json.dumps(translated, ensure_ascii=False), encoding="utf-8"
-    )
-    translated_chapters = []
+    if requested_model not in {None, "gemini-3.6-flash", "gemini-2.5-flash", "gpt-4.1-mini"}:
+        raise HTTPException(status_code=400, detail="Unsupported translation model")
+    if (
+        not isinstance(transcript, list)
+        or not transcript
+        or any(not isinstance(item, dict) for item in transcript)
+    ):
+        raise HTTPException(status_code=400, detail="No transcript segments were provided")
+
+    chapters = []
     summary_path = SUMMARIES_DIR / f"{video_id}.json"
     if summary_path.is_file():
         try:
@@ -213,44 +238,61 @@ async def translate_transcript(video_id: str, request: Request):
                 status_code=500,
                 detail=f"Could not read chapter summary: {error}",
             )
-        try:
-            chapter_segments = [
-                {
-                    "start": index,
-                    "duration": 0,
-                    "text": str(chapter.get("title", "")),
-                }
-                for index, chapter in enumerate(chapters)
-                if isinstance(chapter, dict) and str(chapter.get("title", "")).strip()
+        if not isinstance(chapters, list):
+            chapters = []
+        if chapters and isinstance(chapters[0], list):
+            chapters = [
+                chapter
+                for chapter_group in chapters
+                if isinstance(chapter_group, list)
+                for chapter in chapter_group
             ]
-            translated_titles = await summary_processor.translate_transcript(
-                chapter_segments, target
-            )
-            title_by_index = {
-                index: str(item.get("text", "")).strip()
-                for index, item in enumerate(translated_titles)
-                if isinstance(item, dict) and str(item.get("text", "")).strip()
-            }
-            for index, chapter in enumerate(chapters):
-                if not isinstance(chapter, dict):
-                    continue
-                translated_chapter = dict(chapter)
-                if index in title_by_index:
-                    translated_chapter["title"] = title_by_index[index]
-                translated_chapters.append(translated_chapter)
-            (SUMMARIES_DIR / f"{video_id}_summary_{target}.json").write_text(
-                json.dumps(translated_chapters, ensure_ascii=False), encoding="utf-8"
-            )
-        except (OSError, ValueError, TypeError) as error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Could not translate chapter titles: {error}",
-            )
+    chapter_segments = [
+        {
+            "start": index,
+            "duration": 0,
+            "text": str(chapter.get("title", "")),
+        }
+        for index, chapter in enumerate(chapters)
+        if isinstance(chapter, dict) and str(chapter.get("title", "")).strip()
+    ]
+    try:
+        translation = await summary_processor.translate_transcript(
+            [*transcript, *chapter_segments], target, requested_model
+        )
+    except (RuntimeError, ValueError, asyncio.TimeoutError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    translated = translation["transcript"][:len(transcript)]
+    translated_title_segments = translation["transcript"][len(transcript):]
+    (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
+        json.dumps(translated, ensure_ascii=False), encoding="utf-8"
+    )
+    translated_chapters = []
+    title_by_index = {
+        int(item.get("start", index)): str(item.get("text", "")).strip()
+        for index, item in enumerate(translated_title_segments)
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    }
+    for index, chapter in enumerate(chapters):
+        if not isinstance(chapter, dict):
+            continue
+        translated_chapter = dict(chapter)
+        if index in title_by_index:
+            translated_chapter["title"] = title_by_index[index]
+        translated_chapters.append(translated_chapter)
+    if translated_chapters:
+        (SUMMARIES_DIR / f"{video_id}_summary_{target}.json").write_text(
+            json.dumps(translated_chapters, ensure_ascii=False), encoding="utf-8"
+        )
     return {
         "success": True,
         "transcript": translated,
         "chapters": translated_chapters,
         "language": target,
+        "provider": translation["provider"],
+        "model": translation["model"],
+        "batch_count": translation["batch_count"],
+        "elapsed_seconds": translation["elapsed_seconds"],
     }
 
 # Create thread pool for background tasks

@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters, updateExportAvailabil
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript, updateTranslationModelStatus } from './api-module.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -319,7 +319,8 @@ function initApp() {
     bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
     bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));
     bind(elements.translationTarget, 'change', (event) => {
-        elements.translateTranscriptBtn.disabled = !event.target.value;
+        elements.translateTranscriptBtn.disabled =
+            !event.target.value || elements.translationModel?.dataset.available === 'false';
         if (!event.target.value) {
             state.currentTranslationLanguage = null;
         }
@@ -332,6 +333,7 @@ function initApp() {
     bind(elements.transcriptOptionsBtn, 'click', () => {
         if (!elements.transcriptOptionsDialog.open) {
             elements.transcriptOptionsDialog.showModal();
+            void updateTranslationModelStatus();
         }
     });
     bind(elements.intervalExportToggle, 'change', (event) => {
