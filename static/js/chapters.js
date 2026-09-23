@@ -14,6 +14,79 @@ export function clearChapterMarkers() {
     progressContainer.querySelectorAll('.chapter-marker, .chapter-segment').forEach((marker) => marker.remove());
 }
 
+export function updateExportAvailability() {
+    const hasVideo = Boolean(state.currentVideoId);
+    const hasTranscript = Array.isArray(state.currentTranscript) && state.currentTranscript.length > 0;
+    const hasTopics = Array.isArray(state.videoChapters) && state.videoChapters.length > 0;
+    const hasSlides = Array.isArray(state.videoScenes) && state.videoScenes.length > 0;
+    const hasParts = hasTopics || hasSlides;
+    const intervalToggle = elements.intervalExportToggle;
+
+    if (hasVideo && !hasParts && intervalToggle) {
+        intervalToggle.checked = true;
+        intervalToggle.disabled = true;
+    } else if (intervalToggle) {
+        intervalToggle.disabled = false;
+    }
+
+    const useIntervals = Boolean(intervalToggle?.checked);
+    const canBuildParts = hasParts || useIntervals;
+    const chapterGrouping = elements.chapterGrouping;
+    if (chapterGrouping) {
+        [...chapterGrouping.options].forEach((option) => {
+            const requiresTopics = option.value === 'topic' || option.value === 'combined';
+            const requiresSlides = option.value === 'slides' || option.value === 'combined';
+            option.disabled = !useIntervals && (
+                (requiresTopics && !hasTopics) || (requiresSlides && !hasSlides)
+            );
+        });
+        if (chapterGrouping.selectedOptions[0]?.disabled) {
+            const availableOption = [...chapterGrouping.options].find((option) => !option.disabled);
+            if (availableOption) chapterGrouping.value = availableOption.value;
+        }
+        chapterGrouping.disabled = !canBuildParts;
+    }
+
+    [
+        elements.timestampMode,
+        elements.subpartMode,
+    ].forEach((control) => {
+        if (control) control.disabled = !canBuildParts;
+    });
+
+    [elements.exportImages, elements.exportClips].forEach((control) => {
+        if (control) control.disabled = !hasVideo || !canBuildParts;
+    });
+    if (elements.exportTranscripts) {
+        elements.exportTranscripts.disabled = !hasTranscript || !canBuildParts;
+    }
+    [
+        elements.exportWord,
+        elements.exportPdf,
+        elements.exportWebpage,
+        elements.exportScorm,
+    ].forEach((control) => {
+        if (control) control.disabled = !canBuildParts || !hasTranscript;
+    });
+    if (elements.exportOutline) {
+        elements.exportOutline.disabled = !canBuildParts || !hasTranscript;
+    }
+
+    if (elements.exportAvailabilityNote) {
+        if (!hasVideo) {
+            elements.exportAvailabilityNote.textContent = 'Load a video before exporting.';
+        } else if (!hasParts && useIntervals) {
+            elements.exportAvailabilityNote.textContent =
+                'No chapters or slides are available. Fixed-interval parts are enabled so video assets can still be exported.';
+        } else if (!hasTranscript) {
+            elements.exportAvailabilityNote.textContent =
+                'Transcript-dependent exports are disabled until a transcript is available.';
+        } else {
+            elements.exportAvailabilityNote.textContent = '';
+        }
+    }
+}
+
 export async function exportChapters() {
     const button = elements.exportChaptersBtn;
     button.disabled = true;
@@ -27,14 +100,14 @@ export async function exportChapters() {
         }
         const options = {
             ...(useIntervals ? { interval_minutes: intervalMinutes } : {}),
-            include_images: elements.exportImages?.checked ?? true,
-            include_transcripts: elements.exportTranscripts?.checked ?? true,
-            include_clips: elements.exportClips?.checked ?? true,
-            include_word: elements.exportWord?.checked ?? true,
-            include_pdf: elements.exportPdf?.checked ?? true,
-            include_webpage: elements.exportWebpage?.checked ?? false,
-            include_outline: elements.exportOutline?.checked ?? false,
-            include_scorm: elements.exportScorm?.checked ?? false,
+            include_images: !elements.exportImages?.disabled && (elements.exportImages?.checked ?? true),
+            include_transcripts: !elements.exportTranscripts?.disabled && (elements.exportTranscripts?.checked ?? true),
+            include_clips: !elements.exportClips?.disabled && (elements.exportClips?.checked ?? true),
+            include_word: !elements.exportWord?.disabled && (elements.exportWord?.checked ?? true),
+            include_pdf: !elements.exportPdf?.disabled && (elements.exportPdf?.checked ?? true),
+            include_webpage: !elements.exportWebpage?.disabled && (elements.exportWebpage?.checked ?? false),
+            include_outline: !elements.exportOutline?.disabled && (elements.exportOutline?.checked ?? false),
+            include_scorm: !elements.exportScorm?.disabled && (elements.exportScorm?.checked ?? false),
             chapter_grouping: elements.chapterGrouping?.value || 'topic',
             timestamp_mode: elements.timestampMode?.value || 'original',
             subpart_mode: elements.subpartMode?.value || 'points',
@@ -111,7 +184,7 @@ export async function generateChapters() {
             })
         });
 
-        const data = await response.json();
+        const data = await readJsonResponse(response, 'Summary generation');
 
         if (!data.success) {
             throw new Error(data.error);
@@ -134,7 +207,7 @@ export async function generateChapters() {
         showError(`Error generating summary: ${error.message}`);
         const isModelError = /gemini|model|429|404|quota|overload|unavailable|high demand/i.test(error.message);
         const statusMessage = isModelError
-            ? '<i class="fas fa-exclamation-circle"></i> Gemini is currently unavailable or busy. Your existing chapters were kept. Please retry later.'
+            ? '<i class="fas fa-exclamation-circle"></i> The selected AI provider is unavailable or out of quota. Your existing chapters were kept. Configure OPENAI_API_KEY in Colab to use the OpenAI fallback, or stop automatic retry.'
             : '<i class="fas fa-exclamation-circle"></i> Summary generation failed. Your existing chapters were kept. You can retry without reloading the video.';
         const status = setSummaryStatus(
             'error',
@@ -192,10 +265,28 @@ function setSummaryStatus(state, message) {
         status.setAttribute('aria-live', 'polite');
         elements.chaptersContainer.prepend(status);
     }
+
     status.className = `summary-status summary-status-${state.split(' ')[0]}`;
     status.innerHTML = message;
     status.hidden = false;
     return status;
+}
+
+async function readJsonResponse(response, operation) {
+    const responseText = await response.text();
+    let data;
+    try {
+        data = JSON.parse(responseText);
+    } catch (error) {
+        const detail = responseText.replace(/\s+/g, ' ').trim().slice(0, 240);
+        throw new Error(
+            `${operation} failed (HTTP ${response.status}). The server returned invalid JSON${detail ? `: ${detail}` : '.'}`
+        );
+    }
+    if (!response.ok) {
+        throw new Error(data.error || data.detail || `${operation} failed (HTTP ${response.status}).`);
+    }
+    return data;
 }
 
 /**
@@ -228,7 +319,11 @@ export function updateChapters(chapters) {
             const [minutes, seconds] = chapter.timestamp.split(':').map(Number);
             const time = minutes * 60 + seconds;
             elements.videoPlayer.currentTime = time;
-            elements.videoPlayer.play();
+            elements.videoPlayer.play().catch((error) => {
+                if (error.name !== 'AbortError') {
+                    console.warn('Unable to play chapter:', error);
+                }
+            });
         };
         chaptersContainer.appendChild(div);
     });
@@ -349,7 +444,11 @@ function addChapterMarkersWithDuration(chapters, videoPlayer, progressContainer)
                 const chapterDuration = endTimeInSeconds - currTimeInSeconds;
                 const seekTime = currTimeInSeconds + (chapterDuration > 10 ? 1 : chapterDuration / 10);
                 videoPlayer.currentTime = seekTime;
-                videoPlayer.play();
+                videoPlayer.play().catch((error) => {
+                    if (error.name !== 'AbortError') {
+                        console.warn('Unable to play chapter segment:', error);
+                    }
+                });
             }
         });
         
@@ -377,7 +476,11 @@ function addChapterMarkersWithDuration(chapters, videoPlayer, progressContainer)
         // Add click behavior
         marker.addEventListener('click', (e) => {
             videoPlayer.currentTime = timeInSeconds;
-            videoPlayer.play();
+            videoPlayer.play().catch((error) => {
+                if (error.name !== 'AbortError') {
+                    console.warn('Unable to play chapter marker:', error);
+                }
+            });
             e.stopPropagation(); // Prevent the progress bar click from firing too
         });
         

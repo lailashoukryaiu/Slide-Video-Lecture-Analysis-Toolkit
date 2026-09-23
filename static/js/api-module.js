@@ -7,14 +7,16 @@ import { showError, showErrorWithActions, showLoading, showNotification } from '
 import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
-import { checkSceneDetection, updateScenes } from './scenes.js';
+import { checkSceneDetection, updateScenes, stopDetectionPolling } from './scenes.js';
 import { fetchOcrResults } from './ocr.js';
 
 export async function regenerateTranscript() {
-    if (!state.currentVideoId) {
+    const videoId = getActiveVideoId();
+    if (!videoId) {
         showError('Load a video before regenerating its transcript.');
         return;
     }
+    state.currentVideoId = videoId;
 
     const model = elements.transcriptModel?.value || 'turbo';
     const prompt = elements.transcriptPrompt?.value.trim() || '';
@@ -26,7 +28,7 @@ export async function regenerateTranscript() {
     }
     elements.transcriptContainer.innerHTML = '<p>Regenerating transcript...</p>';
     try {
-        const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(state.currentVideoId)}`, {
+        const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(videoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model, prompt, diarization })
@@ -34,7 +36,7 @@ export async function regenerateTranscript() {
         const data = await readJsonResponse(response, 'Transcript regeneration');
         if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
         const poll = async () => {
-            const statusResponse = await fetch(`/whisper_transcript_status/${encodeURIComponent(state.currentVideoId)}`);
+            const statusResponse = await fetch(`/whisper_transcript_status/${encodeURIComponent(videoId)}`);
             const status = await readJsonResponse(statusResponse, 'Transcript status');
             if (status.status === 'complete') {
                 state.currentTranscriptSource = 'whisper';
@@ -86,6 +88,11 @@ export async function translateTranscript() {
     }
     try {
         const target = elements.translationTarget.value;
+        if (!target) {
+            state.currentTranslationLanguage = null;
+            showNotification('No translation selected. The transcript remains in its original language.', 'info');
+            return;
+        }
         const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -110,11 +117,12 @@ export async function translateTranscript() {
 
 function updateTranslationOptions(sourceLanguage) {
         [...elements.translationTarget.options].forEach((option) => {
-            option.disabled = option.value === sourceLanguage;
+            option.disabled = Boolean(option.value) && option.value === sourceLanguage;
         });
         if (elements.translationTarget.value === sourceLanguage) {
-            elements.translationTarget.value = [...elements.translationTarget.options].find((option) => !option.disabled)?.value || 'en';
+            elements.translationTarget.value = '';
         }
+        elements.translateTranscriptBtn.disabled = !elements.translationTarget.value;
     }
 
 export function renderSpeakerNames(names = {}) {
@@ -218,7 +226,7 @@ async function startYoutubeWhisperPolling(videoId) {
                 </div>
             `;
             elements.generateSummaryBtn.disabled = true;
-            elements.exportChaptersBtn.disabled = true;
+            elements.exportChaptersBtn.disabled = false;
             throw new Error(data.error || 'Whisper transcript generation failed.');
         }
         return false;
@@ -254,6 +262,20 @@ async function startYoutubeWhisperPolling(videoId) {
     }
 }
 
+function getActiveVideoId() {
+    if (state.currentVideoId) {
+        return state.currentVideoId;
+    }
+
+    const source = elements.videoPlayer?.currentSrc || elements.videoPlayer?.src || '';
+    const sourceMatch = source.match(/\/video\/([^/?#]+)/);
+    if (sourceMatch) {
+        return decodeURIComponent(sourceMatch[1]);
+    }
+
+    return extractVideoId(elements.youtubeUrl?.value || '');
+}
+
 /**
  * Resets all video-related states when loading a new video
  */
@@ -262,12 +284,22 @@ function resetVideoStates() {
         clearInterval(state.youtubeTranscriptInterval);
         state.youtubeTranscriptInterval = null;
     }
+    if (state.summaryRetryTimer) {
+        clearInterval(state.summaryRetryTimer);
+        state.summaryRetryTimer = null;
+    }
+    state.summaryGenerationInProgress = false;
 
     // Reset SSE connection if it exists
     if (window.sseConnection) {
         console.log('Closing existing SSE connection');
         window.sseConnection.close();
         window.sseConnection = null;
+    }
+    stopDetectionPolling();
+    if (state.transcriptOcrStatusInterval) {
+        clearInterval(state.transcriptOcrStatusInterval);
+        state.transcriptOcrStatusInterval = null;
     }
     
     // Reset OCR state
@@ -284,10 +316,17 @@ function resetVideoStates() {
     const videoPlayer = elements.videoPlayer;
     state.currentVideoId = null;
     state.currentTranslationLanguage = null;
+    if (elements.translationTarget) {
+        elements.translationTarget.value = '';
+    }
+    if (elements.translateTranscriptBtn) {
+        elements.translateTranscriptBtn.disabled = true;
+    }
     clearChapterMarkers();
     videoPlayer.pause();
     videoPlayer.removeAttribute('src');
     videoPlayer.load();
+    elements.exportChaptersBtn.disabled = true;
 
     // Clear existing transcript and chapters
     elements.transcriptContainer.innerHTML = '';
@@ -302,6 +341,8 @@ function resetVideoStates() {
         state.sceneDetectionInterval = null;
     }
     state.videoScenes = [];
+    state.sceneDetectionStartedAt = null;
+    state.currentDebugScene = null;
     elements.detectScenesBtn.disabled = true;
     if (elements.downloadScreenshotsBtn) {
         elements.downloadScreenshotsBtn.disabled = true;
@@ -370,6 +411,8 @@ export async function processVideo() {
         if (!data.success) {
             throw new Error(data.error || 'The server could not download this YouTube video.');
         }
+        state.currentVideoId = data.video_id || videoId;
+        elements.exportChaptersBtn.disabled = false;
 
         // Set new source and wait for metadata to load
         await new Promise((resolve, reject) => {
@@ -392,7 +435,6 @@ export async function processVideo() {
 
         // Store the ID returned by the server so downloaded files and
         // subsequent scene requests always refer to the same video.
-        state.currentVideoId = data.video_id || videoId;
         if (state.youtubeRetryTimer) {
             clearInterval(state.youtubeRetryTimer);
             state.youtubeRetryTimer = null;
@@ -526,10 +568,7 @@ export async function processVideoUpload(file) {
         const formData = new FormData();
         formData.append('video', file);
 
-        const response = await fetch('/upload_video', {
-            method: 'POST',
-            body: formData
-        });
+        const response = await uploadVideoWithProgress(formData);
 
         elements.loadingIndicator.querySelector('p').textContent =
             'Upload complete. Preparing video preview...';
@@ -538,6 +577,8 @@ export async function processVideoUpload(file) {
         if (!data.success) {
             throw new Error(data.error);
         }
+        state.currentVideoId = data.video_id;
+        elements.exportChaptersBtn.disabled = false;
 
         // Set new source and wait for metadata to load
         await new Promise((resolve, reject) => {
@@ -553,9 +594,8 @@ export async function processVideoUpload(file) {
             };
         });
 
-        // Store video ID
-        state.currentVideoId = data.video_id;
         elements.detectScenesBtn.disabled = false;
+        elements.exportChaptersBtn.disabled = false;
         elements.loadingIndicator.querySelector('p').textContent =
             'Video ready. Scene detection is separate and must be started manually.';
         
@@ -627,7 +667,7 @@ export async function processVideoUpload(file) {
                             </div>
                         `;
                         elements.generateSummaryBtn.disabled = true;
-                        elements.exportChaptersBtn.disabled = true;
+                        elements.exportChaptersBtn.disabled = false;
                         showError(`Error generating transcript: ${whisperData.error}`);
                     } else if (whisperData.status === 'in_progress' && whisperData.progress) {
                         // Update progress indicator
@@ -671,6 +711,39 @@ export async function processVideoUpload(file) {
 
 }
 
+function uploadVideoWithProgress(formData) {
+    return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open('POST', '/upload_video');
+        request.upload.addEventListener('progress', (event) => {
+            if (!event.lengthComputable) return;
+            const percent = Math.round((event.loaded / event.total) * 100);
+            elements.loadingIndicator.querySelector('p').textContent =
+                percent >= 100
+                    ? 'Upload sent. Finalizing video...'
+                    : `Uploading video... ${percent}%`;
+        });
+        request.addEventListener('load', () => {
+            const responseText = request.responseText || '';
+            try {
+                JSON.parse(responseText);
+            } catch (error) {
+                reject(new Error(
+                    `Video upload failed (HTTP ${request.status}). The server returned invalid JSON.`
+                ));
+                return;
+            }
+            resolve(new Response(responseText, {
+                status: request.status,
+                headers: { 'Content-Type': 'application/json' }
+            }));
+        });
+        request.addEventListener('error', () => reject(new Error('Network error while uploading the video.')));
+        request.addEventListener('abort', () => reject(new Error('Video upload was cancelled.')));
+        request.send(formData);
+    });
+}
+
 export async function loadUploadedVideo(videoId) {
     showError('');
     showLoading(true);
@@ -702,6 +775,7 @@ export async function loadUploadedVideo(videoId) {
 
         state.currentVideoId = data.video_id;
         elements.detectScenesBtn.disabled = false;
+        elements.exportChaptersBtn.disabled = false;
         if (Array.isArray(data.scenes) && data.scenes.length > 0) {
             updateScenes(data.scenes, elements.videoPlayer);
             elements.scenesContainer.insertAdjacentHTML(
@@ -745,11 +819,11 @@ export async function detectScenes() {
     const button = elements.detectScenesBtn;
     const selectedThreshold = Number(elements.sceneDetectionThreshold.value);
     if (!Number.isFinite(selectedThreshold)) {
-        showError('Please select a valid slide-change sensitivity.');
+        showError('Please select a valid slide-change threshold.');
         return;
     }
     state.sceneDetectionThreshold = selectedThreshold;
-    localStorage.setItem('sceneDetectionThreshold', String(selectedThreshold));
+    localStorage.setItem('sceneDetectionThresholdV3', String(selectedThreshold));
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting Slides...';
     state.sceneDetectionStartedAt = Date.now();
@@ -806,7 +880,7 @@ export async function loadTranscriptOcrRelationships(videoId) {
     try {
         console.log('Loading transcript-OCR relationships...');
         const response = await fetch(`/get_transcript_ocr_relationships/${videoId}`);
-        const data = await response.json();
+        const data = await readJsonResponse(response, 'Transcript-OCR relationships');
         
         if (data.success) {
             // Store relationships in state for later use
@@ -842,34 +916,59 @@ export async function loadTranscriptOcrRelationships(videoId) {
                 // Set up polling to check for completion
                 const checkEmbeddings = async () => {
                     const statusResponse = await fetch(`/embeddings_status/${videoId}`);
-                    const statusData = await statusResponse.json();
+                    const statusData = await readJsonResponse(statusResponse, 'Embedding status');
                     
                     if (statusData.success) {
                         if (statusData.status === 'completed') {
-                            clearInterval(checkInterval);
+                            clearInterval(state.transcriptOcrStatusInterval);
+                            state.transcriptOcrStatusInterval = null;
                             // Load the completed relationships
                             return loadTranscriptOcrRelationships(videoId);
                         } else if (statusData.status === 'failed') {
-                            clearInterval(checkInterval);
+                            clearInterval(state.transcriptOcrStatusInterval);
+                            state.transcriptOcrStatusInterval = null;
                             console.error('Failed to compute transcript-OCR relationships:', statusData.error);
                             return false;
                         }
                         // Still in progress, continue polling
                     } else {
-                        clearInterval(checkInterval);
+                        clearInterval(state.transcriptOcrStatusInterval);
+                        state.transcriptOcrStatusInterval = null;
                         console.error('Failed to check embedding status:', statusData.error);
                         return false;
                     }
                 };
                 
                 // Check every 3 seconds
-                const checkInterval = setInterval(checkEmbeddings, 3000);
+                if (state.transcriptOcrStatusInterval) {
+                    clearInterval(state.transcriptOcrStatusInterval);
+                }
+                state.transcriptOcrStatusInterval = setInterval(
+                    () => checkEmbeddings().catch((error) => {
+                        if (state.transcriptOcrStatusInterval) {
+                            clearInterval(state.transcriptOcrStatusInterval);
+                            state.transcriptOcrStatusInterval = null;
+                        }
+                        console.error('Error checking embedding status:', error);
+                    }),
+                    3000
+                );
                 
                 // Also check immediately
-                await checkEmbeddings();
+                await checkEmbeddings().catch((error) => {
+                    if (state.transcriptOcrStatusInterval) {
+                        clearInterval(state.transcriptOcrStatusInterval);
+                        state.transcriptOcrStatusInterval = null;
+                    }
+                    console.error('Error checking embedding status:', error);
+                });
                 return true;
             } else {
-                console.error('Failed to trigger transcript-OCR relationship computation');
+                const errorData = await computeResponse.text();
+                console.error(
+                    'Failed to trigger transcript-OCR relationship computation:',
+                    errorData.slice(0, 240)
+                );
                 return false;
             }
         } else {

@@ -16,6 +16,16 @@ const sceneCache = {
     lastScene: null,
     timeRanges: [] // Array of [startTime, endTime, sceneIndex] for binary search
 };
+let detectionPollingInterval = null;
+let detectionPollingVideoId = null;
+
+export function stopDetectionPolling() {
+    if (detectionPollingInterval) {
+        clearInterval(detectionPollingInterval);
+        detectionPollingInterval = null;
+    }
+    detectionPollingVideoId = null;
+}
 
 /**
  * Checks the status of scene detection for a video
@@ -24,7 +34,7 @@ const sceneCache = {
 export async function checkSceneDetection(videoId) {
     try {
         const response = await fetch(`/scenes/${videoId}`);
-        const data = await response.json();
+        const data = await readJsonResponse(response, 'Scene detection status');
         
         if (data.success) {
             const videoPlayer = elements.videoPlayer;
@@ -51,7 +61,7 @@ export async function checkSceneDetection(videoId) {
                     elements.scenesContainer.innerHTML = `
                         <p>No scene changes detected.</p>
                         <p class="scene-help">
-                            Try Frame difference with a lower sensitivity such as 0.2, or switch to Content cuts
+                            Try Frame difference with a lower threshold such as 1, or switch to Content cuts
                             if the video uses clear hard cuts. If this repeats, check that the video contains visible
                             slide changes rather than only a talking-head view.
                         </p>
@@ -215,7 +225,8 @@ export function updateScenes(scenes, videoPlayer) {
                     console.log(`Adding badge for scene ${index} with ${detections.length} detections`);
                     const badge = document.createElement('div');
                     badge.className = 'detection-badge';
-                    badge.textContent = detections.length;
+                    badge.textContent = `Objects: ${detections.length}`;
+                    badge.setAttribute('aria-label', `${detections.length} detected objects`);
                     
                     // Add tooltip with detection summary
                     const detectionCounts = {};
@@ -228,7 +239,9 @@ export function updateScenes(scenes, videoPlayer) {
                         .map(([cls, count]) => `${cls}: ${count}`)
                         .join(', ');
                     
-                    badge.title = tooltip;
+                    badge.title = tooltip
+                        ? `Detected objects: ${tooltip}`
+                        : `${detections.length} detected objects`;
                     timelineItem.appendChild(badge);
                 }
             }
@@ -268,11 +281,17 @@ export function updateScenes(scenes, videoPlayer) {
  */
 function startDetectionPolling(videoId) {
     console.log("Starting detection polling");
+    stopDetectionPolling();
+    detectionPollingVideoId = videoId;
     // Check for updates every 3 seconds
-    const detectionInterval = setInterval(async () => {
+    detectionPollingInterval = setInterval(async () => {
+        if (detectionPollingVideoId !== videoId || state.currentVideoId !== videoId) {
+            stopDetectionPolling();
+            return;
+        }
         try {
             const response = await fetch(`/scenes/${videoId}`);
-            const data = await response.json();
+            const data = await readJsonResponse(response, 'Scene detection status');
             
             if (data.success && data.complete) {
                 // Check if any scenes have YOLO detections
@@ -298,16 +317,33 @@ function startDetectionPolling(videoId) {
                 if (allProcessed) {
                     // All scenes have been processed, stop polling
                     console.log("All scenes processed with YOLO, stopping detection polling");
-                    clearInterval(detectionInterval);
+                    stopDetectionPolling();
                     fetchOcrResults(videoId);
                     
                 }
             }
         } catch (error) {
             console.error('Error polling for detections:', error);
-            clearInterval(detectionInterval);
+            stopDetectionPolling();
         }
     }, 3000);
+}
+
+async function readJsonResponse(response, operation) {
+    const responseText = await response.text();
+    let data;
+    try {
+        data = JSON.parse(responseText);
+    } catch (error) {
+        const detail = responseText.replace(/\s+/g, ' ').trim().slice(0, 240);
+        throw new Error(
+            `${operation} failed (HTTP ${response.status}). The server returned invalid JSON${detail ? `: ${detail}` : '.'}`
+        );
+    }
+    if (!response.ok) {
+        throw new Error(data.error || data.detail || `${operation} failed (HTTP ${response.status}).`);
+    }
+    return data;
 }
 
 /**

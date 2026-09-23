@@ -75,6 +75,33 @@ async def yolo_status():
             "error": str(e)
         })
 
+@app.get("/runtime_status")
+async def runtime_status():
+    """Report the compute device used by Whisper and available CUDA GPU."""
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        gpu_name = torch.cuda.get_device_name(0) if cuda_available else None
+        return JSONResponse({
+            "cuda_available": cuda_available,
+            "gpu_name": gpu_name,
+            "cuda_version": torch.version.cuda,
+            "whisper_device": "cuda" if cuda_available else "cpu",
+            "whisper_compute_type": "float16" if cuda_available else "int8",
+            "colab_gpu": os.getenv("COLAB_GPU") or None,
+        })
+    except Exception as error:
+        return JSONResponse({
+            "cuda_available": False,
+            "gpu_name": None,
+            "cuda_version": None,
+            "whisper_device": "cpu",
+            "whisper_compute_type": "int8",
+            "colab_gpu": os.getenv("COLAB_GPU") or None,
+            "error": str(error),
+        })
+
 # Mount static directory
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -259,10 +286,26 @@ async def root(request: Request):
 
 @app.post("/upload_video")
 async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = File(...)):
+    temporary_path = None
     try:
-        # Calculate video hash
-        content = await video.read()
-        video_hash = hashlib.sha256(content).hexdigest()
+        # Hash and persist the upload in chunks to avoid holding large videos in RAM.
+        hasher = hashlib.sha256()
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=str(VIDEO_DIR),
+            prefix=".upload-",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            while True:
+                chunk = await video.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                temporary_file.write(chunk)
+
+        video_hash = hasher.hexdigest()
         video_path = str(VIDEO_DIR / f"{video_hash}.mp4")
         metadata_path = VIDEO_DIR / "metadata.json"
         metadata = {}
@@ -275,19 +318,21 @@ async def upload_video(background_tasks: BackgroundTasks, video: UploadFile = Fi
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
         # Check if video exists
-        
         if os.path.exists(video_path):
             print("Video exists: ", os.path.exists(video_path))
             return await video_processor.handle_existing_video(video_hash, video_path, background_tasks)
 
-        # Save new video and start processing
-        with open(video_path, "wb") as buffer:
-            buffer.write(content)
+        # Move the completed upload into its content-addressed location.
+        os.replace(str(temporary_path), video_path)
+        temporary_path = None
 
         return await video_processor.process_new_video(video_hash, video_path, background_tasks)
 
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)})
+    finally:
+        if temporary_path and temporary_path.exists():
+            temporary_path.unlink()
 
 @app.get("/uploaded_videos")
 async def uploaded_videos():
@@ -341,8 +386,8 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
         threshold = float(threshold)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid scene detection threshold")
-    if not 0.1 <= threshold <= 3:
-        raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 3")
+    if not 0.1 <= threshold <= 10:
+        raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 10")
     if mode not in {"content", "frame_difference"}:
         raise HTTPException(status_code=400, detail="Invalid scene detection mode")
     print(f"Starting scene detection for {video_id}: mode={mode}, threshold={threshold}")
@@ -532,37 +577,84 @@ def extract_video_id(url):
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
+def _move_moov_atom_to_front(video_path: Path) -> None:
+    """Remux an mp4 in place so its moov atom is at the front (faststart).
+
+    yt-dlp's ffmpeg merge does not add ``+faststart`` by default. Without it, a
+    merged mp4 can store its moov atom at the end of the file, so a browser's
+    <video> element must fetch close to the end of the file before it can read
+    metadata. On a slow connection that routinely exceeded the frontend's
+    video-preview timeout even though the download itself had succeeded.
+    """
+    if shutil.which("ffmpeg") is None:
+        return
+    temp_path = video_path.with_name(f"{video_path.stem}.faststart{video_path.suffix}")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", str(video_path),
+                "-c", "copy", "-movflags", "+faststart",
+                str(temp_path),
+            ],
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode == 0 and temp_path.is_file() and temp_path.stat().st_size > 0:
+            temp_path.replace(video_path)
+        else:
+            print(f"faststart remux skipped for {video_path.name}: {result.stderr.decode('utf-8', 'ignore')[:500]}")
+    except Exception as error:
+        print(f"faststart remux failed for {video_path.name}: {error}")
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _download_youtube_video_sync(video_id: str) -> None:
+    """Blocking yt-dlp download and faststart remux, run off the event loop."""
+    ydl_opts = {
+        'format': 'bestvideo[height<=720][vcodec^=vp9]+bestaudio/bestvideo[height<=720]+bestaudio/best',
+        'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
+        'merge_output_format': 'mp4',
+    }
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        cookies_path = Path(cookies_file).expanduser().resolve()
+        if not cookies_path.is_file():
+            raise RuntimeError(
+                f"YTDLP_COOKIES_FILE does not exist: {cookies_path}"
+            )
+        ydl_opts["cookiefile"] = str(cookies_path)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
+        except yt_dlp.utils.DownloadError as error:
+            error_text = str(error)
+            if "Sign in to confirm you're not a bot" in error_text:
+                raise RuntimeError(
+                    "YouTube requires authentication for this download. "
+                    "Export YouTube cookies in Netscape format, upload the "
+                    "cookie file to Colab, and set YTDLP_COOKIES_FILE to its path."
+                ) from error
+            raise
+
+    merged_path = VIDEO_DIR / f"{video_id}.mp4"
+    if merged_path.is_file():
+        _move_moov_atom_to_front(merged_path)
+
+
 @app.get("/download/{video_id}")
 @app.post("/download/{video_id}")
 async def download_video(video_id: str, background_tasks: BackgroundTasks):
     try:
         video_path = str(VIDEO_DIR / f"{video_id}.mp4")
         if not glob.glob(str(VIDEO_DIR / f"{video_id}.*")):
-            ydl_opts = {
-                'format': 'bestvideo[height<=720][vcodec^=vp9]+bestaudio/bestvideo[height<=720]+bestaudio/best',
-                'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
-                'merge_output_format': 'mp4',
-            }
-            cookies_file = os.getenv("YTDLP_COOKIES_FILE")
-            if cookies_file:
-                cookies_path = Path(cookies_file).expanduser().resolve()
-                if not cookies_path.is_file():
-                    raise RuntimeError(
-                        f"YTDLP_COOKIES_FILE does not exist: {cookies_path}"
-                    )
-                ydl_opts["cookiefile"] = str(cookies_path)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
-                except yt_dlp.utils.DownloadError as error:
-                    error_text = str(error)
-                    if "Sign in to confirm you're not a bot" in error_text:
-                        raise RuntimeError(
-                            "YouTube requires authentication for this download. "
-                            "Export YouTube cookies in Netscape format, upload the "
-                            "cookie file to Colab, and set YTDLP_COOKIES_FILE to its path."
-                        ) from error
-                    raise
+            # Downloading (network I/O) and remuxing (CPU) are blocking calls.
+            # Run them in a worker thread so the event loop stays free to serve
+            # other requests -- including the browser's request for this
+            # video's own preview once this response is sent.
+            await asyncio.to_thread(_download_youtube_video_sync, video_id)
 
         downloaded_files = os.listdir(VIDEO_DIR)
         for file in downloaded_files:
@@ -608,7 +700,9 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks):
         has_youtube_transcript = False
         if not transcript_to_use and not transcript_in_progress:
             try:
-                youtube_transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+                youtube_transcript = await asyncio.to_thread(
+                    YouTubeTranscriptApi.get_transcript, video_id, languages=['en']
+                )
                 if youtube_transcript:
                     transcript_to_use = youtube_transcript
                     has_youtube_transcript = True
@@ -871,18 +965,12 @@ async def export_chapters(video_id: str, request: Request):
         if transcript_language else None
     )
     summary_path = translated_summary_path if translated_summary_path and translated_summary_path.is_file() else SUMMARIES_DIR / f"{video_id}.json"
-    if transcript_language and interval_minutes is None and chapter_grouping in {"topic", "combined"} and not summary_path.is_file():
-        raise HTTPException(
-            status_code=400,
-            detail="Translate the transcript and chapters before exporting in the selected language",
-        )
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
     scene_path = SCENES_DIR / f"{video_id}.json"
-    if interval_minutes is None and chapter_grouping in {"topic", "combined"} and not summary_path.is_file():
-        raise HTTPException(status_code=400, detail="Generate a chapter summary first")
     if interval_minutes is None and chapter_grouping in {"slides", "combined"} and not scene_path.is_file():
-        raise HTTPException(status_code=400, detail="Detect slides before exporting by slide changes")
+        if chapter_grouping == "slides":
+            raise HTTPException(status_code=400, detail="Detect slides before exporting by slide changes")
 
     try:
         scene_chapters = []
@@ -923,7 +1011,11 @@ async def export_chapters(video_id: str, request: Request):
                 # represented as subparts in the outline.
                 chapters = topic_chapters
         if not isinstance(chapters, list) or not chapters:
-            raise HTTPException(status_code=400, detail="No chapters available")
+            if chapter_grouping == "slides":
+                raise HTTPException(status_code=400, detail="Detect slides before exporting by slide changes")
+            # Keep asset and transcript exports usable when AI chapter
+            # generation failed. The full video becomes one export part.
+            chapters = [{"timestamp": "00:00", "title": "Full video"}]
 
         transcript = []
         transcript_candidates = (
@@ -939,7 +1031,15 @@ async def export_chapters(video_id: str, request: Request):
                 with transcript_path.open("r", encoding="utf-8") as file:
                     transcript = json.load(file)
                 break
-        if not transcript:
+        transcript_required = any((
+            export_flags["include_transcripts"],
+            export_flags["include_word"],
+            export_flags["include_pdf"],
+            export_flags["include_webpage"],
+            export_flags["include_outline"],
+            export_flags["include_scorm"],
+        ))
+        if not transcript and transcript_required:
             raise HTTPException(status_code=400, detail="No transcript available")
         speaker_names = {}
         speaker_meta_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"

@@ -189,12 +189,13 @@
                                 <button id="uploadTranscriptBtn" class="btn btn-secondary" type="button">Use uploaded transcript</button>
                                 <label for="translationTarget">Translate transcript</label>
                                 <select id="translationTarget">
+                                    <option value="" selected>No translation</option>
                                     <option value="de">German</option>
                                     <option value="en">English</option>
                                     <option value="ar">Arabic</option>
                                     <option value="pl">Polish</option>
                                 </select>
-                                <button id="translateTranscriptBtn" class="btn btn-secondary" type="button">Translate transcript</button>
+                                <button id="translateTranscriptBtn" class="btn btn-secondary" type="button" disabled>Translate transcript</button>
                             </div>
                             <div class="dialog-actions">
                                 <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
@@ -220,6 +221,7 @@
                                     <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                                     <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini</option>
                                 </select>
+                                <small>OpenAI models and Gemini quota fallback require <code>OPENAI_API_KEY</code> in the Colab runtime environment. Do not paste API keys into the browser.</small>
                             </div>
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
@@ -269,6 +271,7 @@
                                 <label><input type="checkbox" id="exportWebpage"> Complete webpage: interleaved slides, clips, and transcript</label>
                                 <label><input type="checkbox" id="exportOutline"> Hierarchical outline Word document</label>
                                 <label><input type="checkbox" id="exportScorm"> SCORM 1.2 LMS package</label>
+                                <small id="exportAvailabilityNote" role="status"></small>
                             </fieldset>
                             <div class="dialog-actions">
                                 <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
@@ -299,10 +302,10 @@
                                 </select>
                                 <label class="range-label" for="sceneDetectionThreshold">
                                     <span>Slide-change sensitivity</span>
-                                    <output id="sceneDetectionThresholdValue" for="sceneDetectionThreshold">0.5</output>
+                                    <output id="sceneDetectionThresholdValue" for="sceneDetectionThreshold">5</output>
                                 </label>
-                                <input id="sceneDetectionThreshold" type="range" min="0.1" max="3" step="0.1" value="0.5">
-                                <small>Lower values detect smaller visual changes.</small>
+                                    <input id="sceneDetectionThreshold" type="range" min="0.1" max="10" step="0.1" value="5">
+                                    <small>Threshold: approximate percentage of sampled pixels that must change. Higher values detect fewer changes.</small>
                             </div>
                         </div>
                         <div class="tab-body" id="scenesContainer">
@@ -375,6 +378,12 @@
             <span id="closeSettingsBtn" class="modal-close">&times;</span>
             <h2><i class="fas fa-cog"></i> Settings</h2>
             
+            <div class="settings-section">
+                <h3>Compute device</h3>
+                <p id="runtimeStatus" class="settings-description">Checking GPU availability...</p>
+                <p class="settings-description">Whisper uses the GPU only when CUDA is available in this Colab runtime. Slide-change detection itself runs on the CPU.</p>
+            </div>
+
             <div class="settings-section">
                 <h3>OCR Preferences</h3>
                 <p class="settings-description">Choose which OCR engine to use for text detection:</p>
@@ -453,11 +462,15 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=export-modal-suggestions-fix-20260922"></script>
+    <script type="module" src="/static/js/index.js?v=no-translation-option-20260923"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
-            this.play();
+            this.play().catch((error) => {
+                if (error.name !== 'AbortError') {
+                    console.warn('Unable to play video:', error);
+                }
+            });
         } else {
             this.pause();
         }

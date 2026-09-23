@@ -29,8 +29,7 @@ class SummaryProcessor:
         self.model = None
         self.openai_client = None
         self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        if OpenAI and os.getenv("OPENAI_API_KEY"):
-            self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self._refresh_openai_client()
 
         try:
             if not GOOGLE_API_KEY:
@@ -43,13 +42,24 @@ class SummaryProcessor:
             print(f"Warning: Gemini API initialization failed: {str(e)}")
             self.model = None
 
+    def _refresh_openai_client(self):
+        """Load an OpenAI client if a key was configured after startup."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if OpenAI and api_key and self.openai_client is None:
+            try:
+                self.openai_client = OpenAI(api_key=api_key)
+            except Exception as error:
+                print(f"Warning: OpenAI API initialization failed: {error}")
+
     async def generate_summary(self, transcript: list, video_id: str = None, requested_model: str = None):
         """Generate chapter summary using Gemini."""
         try:
+            self._refresh_openai_client()
             if not transcript or (not self.model and not self.openai_client):
                 return JSONResponse({
                     "success": False,
-                    "error": "No transcript available or no summary model is configured"
+                    "error": "No transcript available or no summary model is configured. "
+                             "Set GOOGLE_API_KEY or OPENAI_API_KEY in the Colab runtime and restart the server."
                 })
 
             # Combine transcript text with timestamps
@@ -174,8 +184,12 @@ Format each chapter exactly like this example:
             })
 
     async def translate_transcript(self, transcript, target_language):
+        self._refresh_openai_client()
         if not self.model and not self.openai_client:
-            raise RuntimeError("No translation model is configured")
+            raise RuntimeError(
+                "No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY "
+                "in the Colab runtime and restart the server."
+            )
         prompt = (
             f"Translate each transcript segment into language code {target_language}. "
             "Return only a JSON array with the same start, duration, and translated text fields.\n"

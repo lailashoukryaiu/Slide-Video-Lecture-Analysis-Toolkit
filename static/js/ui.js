@@ -99,6 +99,30 @@ export function showNotification(message, type = 'info') {
 export function openSettingsModal() {
     elements.settingsModal.style.display = 'flex';
 
+    if (elements.runtimeStatus) {
+        elements.runtimeStatus.textContent = 'Checking GPU availability...';
+        fetch('/runtime_status')
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || `Runtime status failed (HTTP ${response.status})`);
+                }
+                return data;
+            })
+            .then((data) => {
+                if (data.cuda_available) {
+                    elements.runtimeStatus.textContent =
+                        `GPU enabled: ${data.gpu_name || 'CUDA device'} (Whisper uses ${data.whisper_compute_type}).`;
+                } else {
+                    elements.runtimeStatus.textContent =
+                        'GPU not available: Whisper is using the CPU. Enable a GPU runtime in Colab and restart the server.';
+                }
+            })
+            .catch((error) => {
+                elements.runtimeStatus.textContent = `Could not check compute device: ${error.message}`;
+            });
+    }
+
     elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
     elements.sceneDetectionThresholdValue.textContent = state.sceneDetectionThreshold;
     
@@ -161,12 +185,12 @@ export function saveSettings() {
     // Get fuzzy search preference
     const fuzzySearchEnabled = document.getElementById('settingsFuzzyToggle')?.checked || state.fuzzySearchEnabled;
     const sceneDetectionThreshold = Number(elements.sceneDetectionThreshold.value);
-    if (!Number.isFinite(sceneDetectionThreshold) || sceneDetectionThreshold < 0.1 || sceneDetectionThreshold > 3) {
-        showNotification('Scene detection threshold must be between 0.1 and 3.', 'error');
+    if (!Number.isFinite(sceneDetectionThreshold) || sceneDetectionThreshold < 0.1 || sceneDetectionThreshold > 10) {
+        showNotification('Scene detection threshold must be between 0.1 and 10.', 'error');
         return;
     }
     state.sceneDetectionThreshold = sceneDetectionThreshold;
-    localStorage.setItem('sceneDetectionThreshold', String(sceneDetectionThreshold));
+    localStorage.setItem('sceneDetectionThresholdV3', String(sceneDetectionThreshold));
     
     // Update fuzzy search state
     state.fuzzySearchEnabled = fuzzySearchEnabled;

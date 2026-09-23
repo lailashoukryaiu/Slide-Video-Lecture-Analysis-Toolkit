@@ -20,7 +20,7 @@ export function formatTime(seconds) {
     const minutes = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-} 
+}
 
 /**
  * Saves a generated file using the browser's location picker when available.
@@ -35,22 +35,39 @@ export async function saveBlobToUserLocation(blob, filename) {
             docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             pdf: 'application/pdf',
         };
-        const handle = await picker({
-            suggestedName: filename,
-            types: extension && mimeTypes[extension]
-                ? [{ description: extension.toUpperCase(), accept: { [mimeTypes[extension]]: [`.${extension}`] } }]
-                : undefined,
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return;
+        try {
+            const handle = await picker({
+                suggestedName: filename,
+                types: extension && mimeTypes[extension]
+                    ? [{ description: extension.toUpperCase(), accept: { [mimeTypes[extension]]: [`.${extension}`] } }]
+                    : undefined,
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return;
+        } catch (error) {
+            const isGestureError = (
+                error instanceof DOMException
+                && (error.name === 'NotAllowedError' || error.name === 'SecurityError')
+            ) || (
+                error instanceof Error
+                && /showSaveFilePicker|user gesture/i.test(error.message)
+            );
+            if (!isGestureError) {
+                throw error;
+            }
+            console.warn('Save picker was unavailable outside a user gesture; using browser download.', error);
+        }
     }
 
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
     link.click();
+    link.remove();
     URL.revokeObjectURL(url);
 }

@@ -159,6 +159,11 @@ body {
     line-height: 1.35;
 }
 
+.export-options label:has(input:disabled),
+.export-options label:has(select:disabled) {
+    opacity: 0.5;
+}
+
 .export-options select {
     width: 100%;
     padding: 6px;

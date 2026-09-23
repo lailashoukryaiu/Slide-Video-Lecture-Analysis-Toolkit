@@ -3,11 +3,11 @@
 import { setupVideoPlayer, updateTimeMarker } from './video.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
 import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots } from './scenes.js';
-import { generateChapters, updateChapters, exportChapters } from './chapters.js';
+import { generateChapters, updateChapters, exportChapters, updateExportAvailability } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=export-modal-suggestions-fix-20260922';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=no-translation-option-20260923';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -17,6 +17,7 @@ export const state = {
     videoScenes: [],
     sceneDetectionInterval: null,
     sceneDetectionStartedAt: null,
+    transcriptOcrStatusInterval: null,
     currentVideoId: null,
     youtubeTranscriptInterval: null,
     youtubeRetryTimer: null,
@@ -40,7 +41,7 @@ export const state = {
     transcriptOcrRelationships: null,
     ocr_to_transcript: {}, // Map for quick lookup: scene_index_ocrText -> transcript matches
     transcript_to_ocr: {}, // Map for quick lookup: transcript_index -> OCR matches
-    sceneDetectionThreshold: Number(localStorage.getItem('sceneDetectionThreshold')) || 0.5
+    sceneDetectionThreshold: Number(localStorage.getItem('sceneDetectionThresholdV3')) || 5
 };
 
 window.addEventListener('video-file-selected', (event) => {
@@ -305,6 +306,7 @@ function initApp() {
     bind(elements.exportChaptersBtn, async () => {
         if (!elements.exportOptionsDialog.open) {
             await loadExportSuggestions();
+            updateExportAvailability();
             elements.exportOptionsDialog.showModal();
         }
     });
@@ -315,6 +317,12 @@ function initApp() {
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
     bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
     bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));
+    bind(elements.translationTarget, 'change', (event) => {
+        elements.translateTranscriptBtn.disabled = !event.target.value;
+        if (!event.target.value) {
+            state.currentTranslationLanguage = null;
+        }
+    });
     bind(elements.previousChapterBtn, 'click', () => navigateChapter(-1));
     bind(elements.nextChapterBtn, 'click', () => navigateChapter(1));
     bind(elements.playbackSpeed, 'change', (event) => {
@@ -327,11 +335,12 @@ function initApp() {
     });
     bind(elements.intervalExportToggle, 'change', (event) => {
         elements.intervalDuration.disabled = !event.target.checked;
+        updateExportAvailability();
     });
     bind(elements.sceneDetectionThreshold, 'input', (event) => {
         elements.sceneDetectionThresholdValue.textContent = event.target.value;
         state.sceneDetectionThreshold = Number(event.target.value);
-        localStorage.setItem('sceneDetectionThreshold', event.target.value);
+        localStorage.setItem('sceneDetectionThresholdV3', event.target.value);
     });
     if (elements.sceneDetectionThreshold) {
         elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;

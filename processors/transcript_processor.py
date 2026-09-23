@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import asyncio
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
 from transcribe import transcribe_audio
@@ -81,7 +82,9 @@ class TranscriptProcessor:
     async def get_youtube_transcript(self, video_id: str):
         """Get transcript from YouTube."""
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'fr'])
+            transcript = await asyncio.to_thread(
+                YouTubeTranscriptApi.get_transcript, video_id, languages=['en', 'fr']
+            )
             
             # Format transcript
             formatted_transcript = self.format_youtube_transcript(transcript)
@@ -173,7 +176,21 @@ class TranscriptProcessor:
         background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
 
     async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None, diarization=False):
-        """Process video with Whisper and save transcript."""
+        """Process video with Whisper and save transcript.
+
+        The actual transcription is CPU/GPU-bound and blocking, so it runs in a
+        worker thread. Without this, this coroutine would run directly on the
+        event loop (FastAPI's BackgroundTasks await async callables in place),
+        freezing all other requests -- including video streaming -- until the
+        whole video finished transcribing.
+        """
+        await asyncio.to_thread(
+            self._process_whisper_transcript_sync,
+            video_id, video_path, output_path, model, prompt, diarization
+        )
+
+    def _process_whisper_transcript_sync(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None, diarization=False):
+        """Blocking Whisper transcription and diarization, run off the event loop."""
         try:
             transcript = []
             

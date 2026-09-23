@@ -1,5 +1,6 @@
 import os
 import cv2
+import asyncio
 from scenedetect import open_video, ContentDetector, SceneManager
 from fastapi.responses import JSONResponse
 import json
@@ -90,12 +91,23 @@ class SceneProcessor:
             diagnostics_path.unlink()
         if error_path.exists():
             error_path.unlink()
+        for image_dir in (
+            THUMBNAILS_DIR / video_id,
+            FULLSIZE_IMAGES_DIR / video_id,
+        ):
+            if image_dir.exists():
+                for image_path in image_dir.glob("*.jpg"):
+                    image_path.unlink()
         background_tasks.add_task(self.run_scene_detection, video_id, video_path, adaptive_threshold, mode)
 
     async def run_scene_detection(self, video_id: str, video_path: str, adaptive_threshold: float, mode: str):
         """Run scene detection and save results."""
         try:
-            scenes = await self.detect_scenes(video_path, adaptive_threshold, mode)
+            # Detection is CPU-bound (OpenCV/PySceneDetect) and blocking. Run it
+            # in a worker thread so the event loop stays free to serve other
+            # requests, such as streaming the video the browser needs for
+            # its preview, while this background task is running.
+            scenes = await asyncio.to_thread(self.detect_scenes, video_path, adaptive_threshold, mode)
 
             scene_path = str(SCENES_DIR / f"{video_id}.json")
             with open(scene_path, 'w') as f:
@@ -118,13 +130,17 @@ class SceneProcessor:
         except (OSError, json.JSONDecodeError):
             return None
 
-    async def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5, mode: str = "frame_difference") -> list:
-        """Detect slide changes using the selected configured detector."""
-        if mode == "content":
-            return await self.detect_content_scenes(video_path, adaptive_threshold)
-        return await self.detect_frame_difference_scenes(video_path, adaptive_threshold)
+    def detect_scenes(self, video_path: str, adaptive_threshold: float = 0.5, mode: str = "frame_difference") -> list:
+        """Detect slide changes using the selected configured detector.
 
-    async def detect_content_scenes(self, video_path: str, adaptive_threshold: float) -> list:
+        This runs synchronously (called via asyncio.to_thread) because it is
+        CPU-bound OpenCV/PySceneDetect work with no I/O to await.
+        """
+        if mode == "content":
+            return self.detect_content_scenes(video_path, adaptive_threshold)
+        return self.detect_frame_difference_scenes(video_path, adaptive_threshold)
+
+    def detect_content_scenes(self, video_path: str, adaptive_threshold: float) -> list:
         """Detect hard cuts using PySceneDetect's content detector."""
         video = open_video(video_path)
         scene_manager = SceneManager()
@@ -141,9 +157,9 @@ class SceneProcessor:
             "threshold": max(1.0, adaptive_threshold * 20),
             "detected_changes": len(timestamps)
         }), encoding="utf-8")
-        return await self.build_scene_changes(video_path, timestamps)
+        return self.build_scene_changes(video_path, timestamps)
 
-    async def detect_frame_difference_scenes(self, video_path: str, adaptive_threshold: float) -> list:
+    def detect_frame_difference_scenes(self, video_path: str, adaptive_threshold: float) -> list:
         """Detect slide changes using sampled frame differences."""
         cap = cv2.VideoCapture(video_path)
         try:
@@ -155,23 +171,33 @@ class SceneProcessor:
                 raise ValueError("Could not read video frame rate or frame count")
 
             # The UI value represents the percentage of pixels that must
-            # change between samples (0.1% to 3%). Higher values therefore
+            # change between samples (0.1% to 10%). Higher values therefore
             # filter out smaller visual changes and produce fewer scenes.
             change_threshold = adaptive_threshold / 100
-            sample_step = max(1, int(round(fps / 2)))
-            min_scene_gap = max(sample_step, int(round(fps * 1.0)))
+            sample_interval_seconds = max(0.5, min(2.0, duration_seconds / 7200))
+            sample_step = max(1, int(round(fps * sample_interval_seconds)))
+            # Long lectures often contain animated cursors, transitions, and
+            # speaker overlays. Requiring a longer gap on longer videos keeps
+            # those transient changes from becoming hundreds of slide records.
+            min_scene_gap_seconds = max(4.0, min(12.0, duration_seconds / 240))
+            min_scene_gap = max(sample_step, int(round(fps * min_scene_gap_seconds)))
             previous_frame = None
             stable_frame = None
+            pending_timestamp = None
             timestamps = []
             last_change_frame = -min_scene_gap
             frame_number = 0
             maximum_changed_ratio = 0.0
             sampled_frames = 0
             while True:
-                ret, frame = cap.read()
+                if frame_number % sample_step == 0:
+                    ret, frame = cap.read()
+                else:
+                    ret = cap.grab()
+                    frame = None
                 if not ret:
                     break
-                if frame_number % sample_step == 0:
+                if frame is not None:
                     sample = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 180))
                     sampled_frames += 1
                     if previous_frame is not None:
@@ -185,13 +211,25 @@ class SceneProcessor:
                         stable_ratio = cv2.countNonZero(stable_mask) / stable_difference.size
                         changed_ratio = max(previous_ratio, stable_ratio)
                         maximum_changed_ratio = max(maximum_changed_ratio, changed_ratio)
-                        if (
-                            changed_ratio >= change_threshold
+                        if stable_ratio < change_threshold:
+                            pending_timestamp = None
+                        elif (
+                            pending_timestamp is None
                             and frame_number - last_change_frame >= min_scene_gap
                         ):
-                            timestamps.append(frame_number / fps)
+                            pending_timestamp = frame_number / fps
+
+                        # Confirm a change only after the new image settles
+                        # for one sample. This filters out continuously moving
+                        # animations while retaining hard cuts and slide fades.
+                        if (
+                            pending_timestamp is not None
+                            and previous_ratio < change_threshold
+                        ):
+                            timestamps.append(pending_timestamp)
                             last_change_frame = frame_number
                             stable_frame = sample
+                            pending_timestamp = None
                     previous_frame = sample
                 frame_number += 1
 
@@ -207,15 +245,17 @@ class SceneProcessor:
                 "duration_seconds": duration_seconds,
                 "sampled_frames": sampled_frames,
                 "sample_interval_seconds": sample_step / fps,
+                "minimum_scene_gap_seconds": min_scene_gap / fps,
+                "requires_transition_settle": True,
                 "threshold_percent": change_threshold * 100,
                 "maximum_changed_percent": maximum_changed_ratio * 100,
                 "detected_changes": len(timestamps)
             }), encoding="utf-8")
-            return await self.build_scene_changes(video_path, timestamps)
+            return self.build_scene_changes(video_path, timestamps)
         finally:
             cap.release()
 
-    async def build_scene_changes(self, video_path: str, timestamps: list) -> list:
+    def build_scene_changes(self, video_path: str, timestamps: list) -> list:
         """Create scene records and preview images for detected timestamps."""
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)

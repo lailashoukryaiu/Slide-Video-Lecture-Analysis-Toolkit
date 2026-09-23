@@ -134,17 +134,15 @@ class VideoProcessor:
             'Cache-Control': 'public, max-age=3600',
         }
 
-        async def video_stream():
+        def video_stream():
             try:
                 with open(video_path, 'rb') as video:
                     video.seek(start)
                     remaining = chunk_size
-                    chunk = 32768  # 32KB chunks
+                    chunk = 1024 * 1024  # Reduce proxy overhead for large videos.
 
                     while remaining > 0:
-                        if remaining < chunk:
-                            chunk = remaining
-                        data = video.read(chunk)
+                        data = video.read(min(chunk, remaining))
                         if not data:
                             break
                         remaining -= len(data)
