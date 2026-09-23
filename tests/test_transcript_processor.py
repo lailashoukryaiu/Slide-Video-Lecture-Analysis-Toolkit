@@ -163,5 +163,74 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
         raise AssertionError("ASR should not run when reusing a transcript")
 
 
+class TranscriptProcessorIsolationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_worker_crash_becomes_status_error(self):
+        class FailedProcess:
+            exitcode = -9
+
+            def start(self):
+                pass
+
+            def join(self, timeout=None):
+                pass
+
+            def is_alive(self):
+                return False
+
+        class ProcessContext:
+            def Process(self, **kwargs):
+                return FailedProcess()
+
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir = transcript_module.TRANSCRIPTS_DIR
+            original_get_context = transcript_module.multiprocessing.get_context
+            transcript_module.TRANSCRIPTS_DIR = Path(directory)
+            transcript_module.multiprocessing.get_context = (
+                lambda method: ProcessContext()
+            )
+            try:
+                progress_path = Path(directory) / "video_whisper_progress.txt"
+                progress_path.write_text("0", encoding="utf-8")
+                processor = TranscriptProcessor()
+
+                await processor.process_whisper_transcript(
+                    "video", "video.mp4", "transcript.json"
+                )
+                response = await processor.get_whisper_status("video")
+
+                self.assertEqual(response.content["status"], "error")
+                self.assertIn("exit code -9", response.content["error"])
+                self.assertFalse(progress_path.exists())
+            finally:
+                transcript_module.TRANSCRIPTS_DIR = original_dir
+                transcript_module.multiprocessing.get_context = original_get_context
+
+    def test_forced_retry_can_terminate_active_worker(self):
+        class RunningProcess:
+            def __init__(self):
+                self.alive = True
+                self.terminated = False
+
+            def is_alive(self):
+                return self.alive
+
+            def terminate(self):
+                self.terminated = True
+                self.alive = False
+
+            def join(self, timeout=None):
+                pass
+
+        process = RunningProcess()
+        transcript_module._ACTIVE_WHISPER_PROCESSES["video"] = process
+
+        TranscriptProcessor._terminate_whisper_process("video")
+
+        self.assertTrue(process.terminated)
+        self.assertNotIn(
+            "video", transcript_module._ACTIVE_WHISPER_PROCESSES
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

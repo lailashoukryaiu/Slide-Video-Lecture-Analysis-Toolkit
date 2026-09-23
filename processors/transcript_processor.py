@@ -3,10 +3,24 @@ import json
 import time
 import asyncio
 import threading
+import multiprocessing
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
 from transcribe import transcribe_audio
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
+
+
+_ACTIVE_WHISPER_PROCESSES = {}
+_ACTIVE_WHISPER_PROCESSES_LOCK = threading.Lock()
+
+
+def _run_whisper_worker(
+    video_id, video_path, output_path, diarization, existing_transcript
+):
+    TranscriptProcessor()._process_whisper_transcript_sync(
+        video_id, video_path, output_path, diarization, existing_transcript
+    )
+
 
 class TranscriptProcessor:
     def __init__(self):
@@ -107,6 +121,9 @@ class TranscriptProcessor:
     ):
         """Generate a transcript using Whisper."""
         try:
+            if force:
+                self._terminate_whisper_process(video_id)
+
             # Check if video exists
             video_files = os.listdir(VIDEO_DIR)
             video_path = None
@@ -230,17 +247,61 @@ class TranscriptProcessor:
         self, video_id: str, video_path: str, output_path: str,
         diarization=False, existing_transcript=None
     ):
-        """Process video with Whisper and save transcript.
+        """Run native Whisper inference outside the FastAPI server process."""
+        process = multiprocessing.get_context("spawn").Process(
+            target=_run_whisper_worker,
+            args=(
+                video_id,
+                video_path,
+                output_path,
+                diarization,
+                existing_transcript,
+            ),
+            name=f"whisper-{video_id}",
+        )
+        with _ACTIVE_WHISPER_PROCESSES_LOCK:
+            _ACTIVE_WHISPER_PROCESSES[video_id] = process
+        try:
+            process.start()
+            await asyncio.to_thread(process.join)
+            if process.exitcode != 0:
+                self._record_whisper_process_failure(video_id, process.exitcode)
+        except Exception as error:
+            self._record_whisper_process_failure(video_id, None, error)
+        finally:
+            with _ACTIVE_WHISPER_PROCESSES_LOCK:
+                if _ACTIVE_WHISPER_PROCESSES.get(video_id) is process:
+                    _ACTIVE_WHISPER_PROCESSES.pop(video_id, None)
 
-        The actual transcription is CPU/GPU-bound and blocking, so it runs in a
-        worker thread. Without this, this coroutine would run directly on the
-        event loop (FastAPI's BackgroundTasks await async callables in place),
-        freezing all other requests -- including video streaming -- until the
-        whole video finished transcribing.
-        """
-        await asyncio.to_thread(
-            self._process_whisper_transcript_sync,
-            video_id, video_path, output_path, diarization, existing_transcript
+    @staticmethod
+    def _terminate_whisper_process(video_id):
+        with _ACTIVE_WHISPER_PROCESSES_LOCK:
+            process = _ACTIVE_WHISPER_PROCESSES.pop(video_id, None)
+        if process and process.is_alive():
+            process.terminate()
+            process.join(timeout=10)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
+    def _record_whisper_process_failure(self, video_id, exit_code, error=None):
+        output_path = TRANSCRIPTS_DIR / f"{video_id}_whisper.json"
+        error_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"
+        if output_path.exists() or error_path.exists():
+            return
+        progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+        if progress_path.exists():
+            progress_path.unlink()
+        self._remove_whisper_phase(video_id)
+        detail = (
+            f": {error}" if error is not None
+            else f" with exit code {exit_code}"
+        )
+        error_path.write_text(
+            "Whisper's isolated inference process stopped unexpectedly"
+            f"{detail}. The web server remained available; retry transcription "
+            "and check the server output for memory or CTranslate2 errors.",
+            encoding="utf-8",
         )
 
     def _process_whisper_transcript_sync(
