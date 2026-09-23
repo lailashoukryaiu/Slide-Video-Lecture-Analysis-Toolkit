@@ -353,7 +353,11 @@ class SceneProcessor:
     def _maximum_slide_count(duration_seconds, maximum_slides_per_hour):
         if not maximum_slides_per_hour:
             return 0
-        return max(1, math.ceil(duration_seconds / 3600 * maximum_slides_per_hour))
+        proportional_limit = math.ceil(
+            duration_seconds / 3600 * maximum_slides_per_hour
+        )
+        short_video_allowance = min(10, maximum_slides_per_hour)
+        return max(short_video_allowance, proportional_limit)
 
     def _apply_hourly_cap(
         self, timestamps, duration_seconds, maximum_slides_per_hour, preserved=None
