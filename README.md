@@ -338,3 +338,10 @@ pip install --upgrade yt-dlp
 - **Sentence-BERT**: UKP Lab for semantic embeddings
 - **Surya OCR**: VikParuchuri for advanced OCR capabilities
 - **FastAPI**: Sebastian Ramirez for the excellent web framework
+- **[Dubby fork](https://github.com/lailashoukryaiu/Dubby)** and its
+  **[upstream project](https://github.com/MohammedAly22/Dubby)**: Mohammed Aly
+  and contributors for the context-aware translation, isolated model-worker,
+  and timestamp-aware dubbing architecture that inspired parts of this toolkit's
+  translation roadmap.
+  The implementation in this repository is original and does not vendor Dubby
+  source code.

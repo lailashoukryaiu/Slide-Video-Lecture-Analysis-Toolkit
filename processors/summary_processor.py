@@ -214,77 +214,161 @@ Format each chapter exactly like this example:
         if not use_openai and not self.model:
             raise RuntimeError(f"Gemini model {selected_model} was selected, but GOOGLE_API_KEY is not configured.")
 
-        indexed = [
-            {"index": index, "text": str(item.get("text", ""))}
+        translation_items = [
+            {
+                "id": f"segment-{index}",
+                "position": index,
+                "text": str(item.get("text", "")),
+                "seconds": round(float(item.get("duration", 0) or 0), 1),
+            }
             for index, item in enumerate(transcript)
             if isinstance(item, dict)
         ]
-        batches = self._translation_batches(indexed)
+        if len(translation_items) != len(transcript):
+            raise ValueError("Every transcript segment must be an object")
+
+        batches = self._translation_batches(translation_items)
         started_at = time.monotonic()
         semaphore = asyncio.Semaphore(2)
+        context_lines = 4
 
         async def translate_batch(batch, batch_number):
             async with semaphore:
-                prompt = (
-                    f"Translate every item into language code {target_language}. "
-                    "Preserve meaning, terminology, and the index. Return only a JSON object "
-                    "with a translations array containing objects with exactly these fields: "
-                    "index and text.\n"
-                    + json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
-                )
-                for attempt in range(2):
-                    try:
-                        if use_openai:
-                            response = await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    self.openai_client.chat.completions.create,
-                                    model=selected_model,
-                                    messages=[{"role": "user", "content": prompt}],
-                                    temperature=0.2,
-                                    response_format={"type": "json_object"},
-                                    max_completion_tokens=8192,
-                                ),
-                                timeout=120,
-                            )
-                            raw_result = response.choices[0].message.content
-                        else:
-                            response = await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    self.client.models.generate_content,
-                                    model=selected_model,
-                                    contents=prompt,
-                                    config=types.GenerateContentConfig(
+                start = batch[0]["position"]
+                end = batch[-1]["position"] + 1
+                context_before = [
+                    item["text"]
+                    for item in translation_items[max(0, start - context_lines):start]
+                ]
+                context_after = [
+                    item["text"]
+                    for item in translation_items[end:end + context_lines]
+                ]
+
+                async def request_translation(
+                    requested_items, request_label, retry_invalid_response=True
+                ):
+                    payload = {
+                        "context_before": context_before,
+                        "lines": [
+                            {
+                                "id": item["id"],
+                                "text": item["text"],
+                                "seconds": item["seconds"],
+                            }
+                            for item in requested_items
+                        ],
+                        "context_after": context_after,
+                    }
+                    prompt = (
+                        f"Translate every item in lines into language code {target_language}. "
+                        "Use context_before and context_after only to understand the surrounding "
+                        "meaning; do not translate or return those context lines. Preserve terminology "
+                        "and fit each translation naturally within its approximate speaking duration. "
+                        "Return every line ID exactly once. Never merge or split lines. Return only a "
+                        "JSON object with a translations array containing objects with exactly these "
+                        "fields: id and text.\n"
+                        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                    )
+                    raw_result = None
+                    last_error = None
+                    for attempt in range(2):
+                        try:
+                            if use_openai:
+                                response = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.openai_client.chat.completions.create,
+                                        model=selected_model,
+                                        messages=[{"role": "user", "content": prompt}],
                                         temperature=0.2,
-                                        response_mime_type="application/json",
-                                        max_output_tokens=8192,
+                                        response_format={"type": "json_object"},
+                                        max_completion_tokens=8192,
                                     ),
-                                ),
-                                timeout=120,
-                            )
-                            raw_result = response.text
+                                    timeout=120,
+                                )
+                                raw_result = response.choices[0].message.content
+                            else:
+                                response = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.client.models.generate_content,
+                                        model=selected_model,
+                                        contents=prompt,
+                                        config=types.GenerateContentConfig(
+                                            temperature=0.2,
+                                            response_mime_type="application/json",
+                                            max_output_tokens=8192,
+                                        ),
+                                    ),
+                                    timeout=120,
+                                )
+                                raw_result = response.text
+                            break
+                        except Exception as error:
+                            last_error = error
+                            if attempt == 0:
+                                await asyncio.sleep(1)
+                    if raw_result is None:
+                        raise RuntimeError(
+                            f"Translation batch {batch_number} {request_label} request failed "
+                            f"after retry: {last_error}"
+                        ) from last_error
+
+                    try:
                         parsed = json.loads(raw_result)
-                        if isinstance(parsed, dict):
-                            parsed = parsed.get("translations")
-                        if not isinstance(parsed, list):
-                            raise ValueError("Translation model returned an invalid batch")
-                        by_index = {
-                            int(item["index"]): str(item["text"])
-                            for item in parsed
-                            if isinstance(item, dict) and "index" in item and "text" in item
-                        }
-                        expected = {item["index"] for item in batch}
-                        if set(by_index) != expected:
-                            raise ValueError(
-                                f"Translation model returned {len(by_index)} of "
-                                f"{len(expected)} requested segments"
+                    except (TypeError, json.JSONDecodeError) as error:
+                        if retry_invalid_response:
+                            await asyncio.sleep(1)
+                            return await request_translation(
+                                requested_items,
+                                f"{request_label}-response-retry",
+                                False,
                             )
-                        return by_index
-                    except Exception as error:
-                        if attempt == 1:
-                            raise RuntimeError(
-                                f"Translation batch {batch_number} failed after retry: {error}"
-                            ) from error
-                        await asyncio.sleep(1)
+                        raise ValueError(
+                            f"Translation batch {batch_number} returned invalid JSON"
+                        ) from error
+                    if isinstance(parsed, dict):
+                        parsed = parsed.get("translations")
+                    if not isinstance(parsed, list):
+                        if retry_invalid_response:
+                            await asyncio.sleep(1)
+                            return await request_translation(
+                                requested_items,
+                                f"{request_label}-response-retry",
+                                False,
+                            )
+                        raise ValueError(
+                            f"Translation batch {batch_number} returned an invalid response"
+                        )
+                    expected = {item["id"] for item in requested_items}
+                    return {
+                        str(item["id"]): str(item["text"]).strip()
+                        for item in parsed
+                        if (
+                            isinstance(item, dict)
+                            and str(item.get("id", "")) in expected
+                            and str(item.get("text", "")).strip()
+                        )
+                    }
+
+                translated_by_id = await request_translation(batch, "initial")
+                missing = [
+                    item for item in batch
+                    if item["id"] not in translated_by_id
+                ]
+                if missing:
+                    translated_by_id.update(
+                        await request_translation(missing, "missing-segment")
+                    )
+                still_missing = [
+                    item["id"] for item in batch
+                    if item["id"] not in translated_by_id
+                ]
+                if still_missing:
+                    raise RuntimeError(
+                        f"Translation batch {batch_number} omitted "
+                        f"{len(still_missing)} segment(s) after a targeted retry"
+                    )
+                return translated_by_id
 
         translated_batches = await asyncio.gather(
             *(
@@ -293,12 +377,12 @@ Format each chapter exactly like this example:
             )
         )
         translated_text = {
-            index: text
+            segment_id: text
             for batch in translated_batches
-            for index, text in batch.items()
+            for segment_id, text in batch.items()
         }
         translated = [
-            {**item, "text": translated_text[index]}
+            {**item, "text": translated_text[f"segment-{index}"]}
             for index, item in enumerate(transcript)
         ]
         source_text = "\n".join(str(item.get("text", "")).strip() for item in transcript)
@@ -315,6 +399,7 @@ Format each chapter exactly like this example:
             "provider": "OpenAI" if use_openai else "Gemini",
             "model": selected_model,
             "batch_count": len(batches),
+            "context_lines": context_lines,
             "elapsed_seconds": round(time.monotonic() - started_at, 1),
         }
 
