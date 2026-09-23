@@ -24,9 +24,14 @@ module_spec.loader.exec_module(transcribe)
 
 class FakeWhisperModel:
     model_name = None
+    options = None
 
     def __init__(self, *args, **kwargs):
         self.__class__.model_name = args[0]
+
+    def transcribe(self, file_path, **options):
+        self.__class__.options = options
+        return transcript_result()
 
 
 class FakePipeline:
@@ -37,26 +42,32 @@ class FakePipeline:
 
     def transcribe(self, file_path, **options):
         self.__class__.options = options
-        segment = SimpleNamespace(
-            start=1.25,
-            end=3.5,
-            text=" Segment text ",
-            words=[
-                SimpleNamespace(
-                    start=1.25,
-                    end=3.5,
-                    word=" Segment text",
-                    probability=0.95,
-                )
-            ],
-        )
-        return iter([segment]), SimpleNamespace(duration=5)
+        return transcript_result()
+
+
+def transcript_result():
+    segment = SimpleNamespace(
+        start=1.25,
+        end=3.5,
+        text=" Segment text ",
+        words=[
+            SimpleNamespace(
+                start=1.25,
+                end=3.5,
+                word=" Segment text",
+                probability=0.95,
+            )
+        ],
+    )
+    return iter([segment]), SimpleNamespace(duration=5)
 
 
 class TranscribeAudioTests(unittest.TestCase):
     def setUp(self):
         self.original_model = transcribe.WhisperModel
         self.original_pipeline = transcribe.BatchedInferencePipeline
+        FakeWhisperModel.options = None
+        FakePipeline.options = None
         transcribe.WhisperModel = FakeWhisperModel
         transcribe.BatchedInferencePipeline = FakePipeline
 
@@ -64,15 +75,27 @@ class TranscribeAudioTests(unittest.TestCase):
         transcribe.WhisperModel = self.original_model
         transcribe.BatchedInferencePipeline = self.original_pipeline
 
-    def test_original_mode_uses_turbo_batched_word_timestamps(self):
+    def test_cpu_uses_streaming_model_with_vad(self):
         result = list(transcribe.transcribe_audio("video.mp4"))
 
-        self.assertTrue(FakePipeline.options["word_timestamps"])
-        self.assertEqual(FakePipeline.options["batch_size"], 16)
+        self.assertIsNone(FakePipeline.options)
+        self.assertTrue(FakeWhisperModel.options["word_timestamps"])
+        self.assertTrue(FakeWhisperModel.options["vad_filter"])
         self.assertEqual(FakeWhisperModel.model_name, "turbo")
         self.assertIn("00:00:01,250 --> 00:00:03,500", result[0][0])
         self.assertIn("Segment text", result[0][0])
         self.assertEqual(result[0][1], 70)
+
+    def test_gpu_keeps_batch_size_sixteen(self):
+        original_device_config = transcribe.get_whisper_device_config
+        transcribe.get_whisper_device_config = lambda: ("cuda", "float16")
+        try:
+            list(transcribe.transcribe_audio("video.mp4"))
+        finally:
+            transcribe.get_whisper_device_config = original_device_config
+
+        self.assertTrue(FakePipeline.options["word_timestamps"])
+        self.assertEqual(FakePipeline.options["batch_size"], 16)
 
 
 if __name__ == "__main__":

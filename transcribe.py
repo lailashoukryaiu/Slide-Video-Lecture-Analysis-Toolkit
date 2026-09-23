@@ -46,13 +46,21 @@ def transcribe_audio(file_path, batch_size=16):
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
     model = WhisperModel("turbo", device=device, compute_type=compute_type)
-    batched_model = BatchedInferencePipeline(model=model)
-    segments, info = batched_model.transcribe(
-        file_path,
-        batch_size=batch_size,
-        word_timestamps=True,
-        log_progress=True,
-    )
+    if device == "cuda":
+        inference_model = BatchedInferencePipeline(model=model)
+        segments, info = inference_model.transcribe(
+            file_path,
+            batch_size=batch_size,
+            word_timestamps=True,
+            log_progress=True,
+        )
+    else:
+        segments, info = model.transcribe(
+            file_path,
+            word_timestamps=True,
+            log_progress=True,
+            vad_filter=True,
+        )
     total_duration = info.duration
     print(total_duration)
 
