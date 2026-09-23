@@ -93,6 +93,8 @@ function renderWhisperProgress(status, startedAt) {
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
     const phase = status.phase === 'identifying_speakers'
         ? 'Identifying speakers with pyannote'
+        : status.phase === 'waiting_for_cpu'
+            ? 'Waiting for another CPU-intensive task to finish'
         : status.phase === 'transcribing' || progress > 0
             ? 'Transcribing audio'
             : 'Starting Whisper model';

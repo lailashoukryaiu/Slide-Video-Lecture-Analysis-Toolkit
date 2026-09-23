@@ -28,10 +28,12 @@ sys.modules.setdefault("youtube_transcript_api", youtube_module)
 
 transcribe_module = ModuleType("transcribe")
 transcribe_module.transcribe_audio = lambda *args, **kwargs: ()
+transcribe_module.get_whisper_device_config = lambda: ("cpu", "int8")
 sys.modules.setdefault("transcribe", transcribe_module)
 
 from processors import transcript_processor as transcript_module
 from processors.transcript_processor import TranscriptProcessor
+from processing_resources import CPU_INTENSIVE_JOB_LOCK
 
 
 class TranscriptProcessorReuseTests(unittest.TestCase):
@@ -161,6 +163,45 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
     @staticmethod
     def _unexpected_transcription(*args, **kwargs):
         raise AssertionError("ASR should not run when reusing a transcript")
+
+
+class TranscriptProcessorSchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cpu_transcription_waits_for_shared_cpu_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir = transcript_module.TRANSCRIPTS_DIR
+            original_device_config = transcript_module.get_whisper_device_config
+            working_dir = Path(directory)
+            transcript_module.TRANSCRIPTS_DIR = working_dir
+            transcript_module.get_whisper_device_config = lambda: ("cpu", "int8")
+            (working_dir / "video_whisper_progress.txt").write_text(
+                "0", encoding="utf-8"
+            )
+            calls = []
+            processor = TranscriptProcessor()
+            processor._process_whisper_transcript_sync = (
+                lambda *args: calls.append(args)
+            )
+            await CPU_INTENSIVE_JOB_LOCK.acquire()
+            try:
+                task = asyncio.create_task(
+                    processor.process_whisper_transcript(
+                        "video", "video.mp4", "transcript.json"
+                    )
+                )
+                await asyncio.sleep(0.01)
+                self.assertEqual(calls, [])
+                self.assertEqual(
+                    processor._read_whisper_phase("video"),
+                    "waiting_for_cpu",
+                )
+                CPU_INTENSIVE_JOB_LOCK.release()
+                await task
+                self.assertEqual(len(calls), 1)
+            finally:
+                if CPU_INTENSIVE_JOB_LOCK.locked():
+                    CPU_INTENSIVE_JOB_LOCK.release()
+                transcript_module.TRANSCRIPTS_DIR = original_dir
+                transcript_module.get_whisper_device_config = original_device_config
 
 
 if __name__ == "__main__":

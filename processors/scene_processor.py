@@ -9,6 +9,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from project_paths import SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR
+from processing_resources import CPU_INTENSIVE_JOB_LOCK
 
 class SceneProcessor:
     def __init__(self):
@@ -109,16 +110,19 @@ class SceneProcessor:
             # in a worker thread so the event loop stays free to serve other
             # requests, such as streaming the video the browser needs for
             # its preview, while this background task is running.
-            scenes = await asyncio.to_thread(self.detect_scenes, video_path, mode, options)
+            async with CPU_INTENSIVE_JOB_LOCK:
+                scenes = await asyncio.to_thread(
+                    self.detect_scenes, video_path, mode, options
+                )
 
-            scene_path = str(SCENES_DIR / f"{video_id}.json")
-            with open(scene_path, 'w') as f:
-                json.dump(scenes, f)
-                
-            print(f"Saved {len(scenes)} scenes for video {video_id}")
-            
-            # Generate scene images and object detections, but leave OCR opt-in.
-            await self.process_scene_images(video_id)
+                scene_path = str(SCENES_DIR / f"{video_id}.json")
+                with open(scene_path, 'w') as f:
+                    json.dump(scenes, f)
+
+                print(f"Saved {len(scenes)} scenes for video {video_id}")
+
+                # Generate scene images and object detections, but leave OCR opt-in.
+                await self.process_scene_images(video_id)
                 
         except Exception as e:
             print(f"Error in background scene detection: {str(e)}")

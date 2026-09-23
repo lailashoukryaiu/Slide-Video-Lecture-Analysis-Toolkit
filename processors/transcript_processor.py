@@ -5,8 +5,9 @@ import asyncio
 import threading
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
-from transcribe import transcribe_audio
+from transcribe import get_whisper_device_config, transcribe_audio
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
+from processing_resources import CPU_INTENSIVE_JOB_LOCK
 
 class TranscriptProcessor:
     def __init__(self):
@@ -238,10 +239,37 @@ class TranscriptProcessor:
         freezing all other requests -- including video streaming -- until the
         whole video finished transcribing.
         """
-        await asyncio.to_thread(
-            self._process_whisper_transcript_sync,
+        arguments = (
             video_id, video_path, output_path, diarization, existing_transcript
         )
+        device, _ = get_whisper_device_config()
+        if device == "cpu":
+            self._write_whisper_phase(video_id, "waiting_for_cpu")
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        CPU_INTENSIVE_JOB_LOCK.acquire(),
+                        timeout=self.heartbeat_seconds,
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    progress_path = (
+                        TRANSCRIPTS_DIR
+                        / f"{video_id}_whisper_progress.txt"
+                    )
+                    progress_path.touch(exist_ok=True)
+            try:
+                progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+                progress_path.touch(exist_ok=True)
+                await asyncio.to_thread(
+                    self._process_whisper_transcript_sync, *arguments
+                )
+            finally:
+                CPU_INTENSIVE_JOB_LOCK.release()
+        else:
+            await asyncio.to_thread(
+                self._process_whisper_transcript_sync, *arguments
+            )
 
     def _process_whisper_transcript_sync(
         self, video_id: str, video_path: str, output_path: str,
