@@ -394,6 +394,7 @@ function resetVideoStates() {
     
     // Reset chapter state
     state.videoChapters = [];
+    document.dispatchEvent(new CustomEvent('chaptersUpdated', { detail: [] }));
     
     // Reset scene detection state
     if (state.sceneDetectionInterval) {
@@ -465,7 +466,8 @@ export async function processVideo() {
         // Reset all video-related states
         resetVideoStates();
 
-        const response = await fetch(`/download/${videoId}`);
+        const videoQuality = Number(elements.youtubeVideoQuality?.value || 480);
+        const response = await fetch(`/download/${videoId}?quality=${encodeURIComponent(videoQuality)}`);
         const data = await readJsonResponse(response, 'YouTube video download');
 
         if (!data.success) {
@@ -873,13 +875,27 @@ export async function detectScenes() {
     const videoId = state.currentVideoId;
     if (!videoId) return;
     const button = elements.detectScenesBtn;
-    const selectedThreshold = Number(elements.sceneDetectionThreshold.value);
-    if (!Number.isFinite(selectedThreshold)) {
-        showError('Please select a valid slide-change threshold.');
+    const mode = elements.sceneDetectionMode.value;
+    const hasChapters = Array.isArray(state.videoChapters) && state.videoChapters.length > 0;
+    if (mode === 'chapters' && !hasChapters) {
+        showError('Generate transcript chapters before using chapter-only slide detection.');
         return;
     }
-    state.sceneDetectionThreshold = selectedThreshold;
-    localStorage.setItem('sceneDetectionThresholdV3', String(selectedThreshold));
+    const contentThreshold = Number(elements.sceneDetectionThreshold.value);
+    const minimumDuration = Number(elements.minimumSlideDuration.value);
+    const maximumSlidesPerHour = Number(elements.maximumSlidesPerHour.value);
+    const screenshotHeight = Number(elements.slideImageQuality.value);
+    if (
+        !Number.isFinite(contentThreshold)
+        || !Number.isFinite(minimumDuration)
+        || !Number.isFinite(maximumSlidesPerHour)
+        || !Number.isFinite(screenshotHeight)
+    ) {
+        showError('Please select valid slide-detection options.');
+        return;
+    }
+    state.sceneDetectionThreshold = contentThreshold;
+    localStorage.setItem('contentCutThresholdV1', String(contentThreshold));
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting Slides...';
     state.sceneDetectionStartedAt = Date.now();
@@ -889,15 +905,21 @@ export async function detectScenes() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                adaptive_threshold: selectedThreshold,
-                mode: elements.sceneDetectionMode.value
+                mode,
+                adaptive_detail: elements.adaptiveDetail.value,
+                content_threshold: contentThreshold,
+                minimum_slide_duration: minimumDuration,
+                maximum_slides_per_hour: maximumSlidesPerHour,
+                merge_similar_slides: elements.mergeSimilarSlides.checked,
+                include_chapter_boundaries: hasChapters && elements.includeChapterBoundaries.checked,
+                screenshot_height: screenshotHeight
             })
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
         elements.scenesContainer.insertAdjacentHTML(
             'afterbegin',
-            `<p class="scene-progress-status">Sensitivity used: ${selectedThreshold.toFixed(1)}</p>`
+            `<p class="scene-progress-status">Method: ${mode === 'adaptive' ? `Adaptive (${elements.adaptiveDetail.value})` : mode === 'content' ? `Content cuts (${contentThreshold})` : 'Transcript chapters'}.</p>`
         );
         await checkSceneDetection(videoId);
         state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);

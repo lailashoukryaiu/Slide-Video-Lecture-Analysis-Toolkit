@@ -330,6 +330,7 @@ export function updateChapters(chapters) {
     
     // Store the chapters in state
     state.videoChapters = chapters;
+    document.dispatchEvent(new CustomEvent('chaptersUpdated', { detail: chapters }));
     elements.exportChaptersBtn.disabled = false;
     setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     

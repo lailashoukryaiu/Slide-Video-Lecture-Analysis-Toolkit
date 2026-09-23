@@ -343,7 +343,11 @@ async def uploaded_videos():
         metadata = {}
     videos = []
     for video_path in sorted(VIDEO_DIR.glob("*"), key=lambda path: path.stat().st_mtime, reverse=True):
-        if not video_path.is_file() or video_path.name == "metadata.json":
+        if (
+            not video_path.is_file()
+            or video_path.name == "metadata.json"
+            or video_path.name.endswith("_video_quality.json")
+        ):
             continue
         videos.append({
             "video_id": video_path.stem,
@@ -380,18 +384,33 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
     data = await request.json()
-    threshold = data.get("adaptive_threshold", 0.5)
-    mode = data.get("mode", "frame_difference")
+    mode = data.get("mode", "adaptive")
     try:
-        threshold = float(threshold)
+        options = {
+            "adaptive_detail": str(data.get("adaptive_detail", "balanced")),
+            "content_threshold": float(data.get("content_threshold", 27)),
+            "minimum_slide_duration": float(data.get("minimum_slide_duration", 10)),
+            "maximum_slides_per_hour": int(data.get("maximum_slides_per_hour", 60)),
+            "merge_similar_slides": bool(data.get("merge_similar_slides", True)),
+            "include_chapter_boundaries": bool(data.get("include_chapter_boundaries", True)),
+            "screenshot_height": int(data.get("screenshot_height", 720)),
+        }
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid scene detection threshold")
-    if not 0.1 <= threshold <= 10:
-        raise HTTPException(status_code=400, detail="Scene detection threshold must be between 0.1 and 10")
-    if mode not in {"content", "frame_difference"}:
+        raise HTTPException(status_code=400, detail="Invalid scene detection options")
+    if mode not in {"adaptive", "content", "chapters"}:
         raise HTTPException(status_code=400, detail="Invalid scene detection mode")
-    print(f"Starting scene detection for {video_id}: mode={mode}, threshold={threshold}")
-    await scene_processor.start_scene_detection(video_id, video_path, background_tasks, threshold, mode)
+    if options["adaptive_detail"] not in {"fewer", "balanced", "more"}:
+        raise HTTPException(status_code=400, detail="Invalid adaptive detail level")
+    if not 10 <= options["content_threshold"] <= 60:
+        raise HTTPException(status_code=400, detail="Content-cut threshold must be between 10 and 60")
+    if options["minimum_slide_duration"] not in {5, 10, 20, 30}:
+        raise HTTPException(status_code=400, detail="Invalid minimum slide duration")
+    if options["maximum_slides_per_hour"] not in {0, 40, 60, 90}:
+        raise HTTPException(status_code=400, detail="Invalid maximum slides per hour")
+    if options["screenshot_height"] not in {480, 720, 1080}:
+        raise HTTPException(status_code=400, detail="Invalid screenshot quality")
+    print(f"Starting scene detection for {video_id}: mode={mode}, options={options}")
+    await scene_processor.start_scene_detection(video_id, video_path, background_tasks, mode, options)
     return JSONResponse({"success": True, "message": "Scene detection started"})
 
 @app.get("/scene_detections/{video_id}/{scene_index}")
@@ -614,10 +633,13 @@ def _move_moov_atom_to_front(video_path: Path) -> None:
             temp_path.unlink()
 
 
-def _download_youtube_video_sync(video_id: str) -> None:
+def _download_youtube_video_sync(video_id: str, quality: int) -> None:
     """Blocking yt-dlp download and faststart remux, run off the event loop."""
     ydl_opts = {
-        'format': 'bestvideo[height<=720][vcodec^=vp9]+bestaudio/bestvideo[height<=720]+bestaudio/best',
+        'format': (
+            f'bestvideo[height<={quality}][vcodec^=vp9]+bestaudio/'
+            f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
+        ),
         'outtmpl': str(VIDEO_DIR / f'{video_id}.%(ext)s'),
         'merge_output_format': 'mp4',
     }
@@ -645,23 +667,43 @@ def _download_youtube_video_sync(video_id: str) -> None:
     merged_path = VIDEO_DIR / f"{video_id}.mp4"
     if merged_path.is_file():
         _move_moov_atom_to_front(merged_path)
+        (VIDEO_DIR / f"{video_id}_video_quality.json").write_text(
+            json.dumps({"height": quality}), encoding="utf-8"
+        )
 
 
 @app.get("/download/{video_id}")
 @app.post("/download/{video_id}")
-async def download_video(video_id: str, background_tasks: BackgroundTasks):
+async def download_video(video_id: str, background_tasks: BackgroundTasks, quality: int = 480):
     try:
+        if quality not in {480, 720}:
+            raise HTTPException(status_code=400, detail="Video quality must be 480 or 720")
         video_path = str(VIDEO_DIR / f"{video_id}.mp4")
-        if not glob.glob(str(VIDEO_DIR / f"{video_id}.*")):
+        quality_path = VIDEO_DIR / f"{video_id}_video_quality.json"
+        stored_quality = None
+        if quality_path.exists():
+            try:
+                stored_quality = int(json.loads(quality_path.read_text(encoding="utf-8")).get("height", 0))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                stored_quality = None
+        existing_video_files = [
+            Path(path) for path in glob.glob(str(VIDEO_DIR / f"{video_id}.*"))
+            if not path.endswith("_video_quality.json")
+        ]
+        if existing_video_files and stored_quality and stored_quality < quality:
+            for existing_path in existing_video_files:
+                existing_path.unlink()
+            existing_video_files = []
+        if not existing_video_files:
             # Downloading (network I/O) and remuxing (CPU) are blocking calls.
             # Run them in a worker thread so the event loop stays free to serve
             # other requests -- including the browser's request for this
             # video's own preview once this response is sent.
-            await asyncio.to_thread(_download_youtube_video_sync, video_id)
+            await asyncio.to_thread(_download_youtube_video_sync, video_id, quality)
 
         downloaded_files = os.listdir(VIDEO_DIR)
         for file in downloaded_files:
-            if file.startswith(video_id):
+            if file.startswith(video_id) and not file.endswith("_video_quality.json"):
                 video_path = str(VIDEO_DIR / file)
                 break
 

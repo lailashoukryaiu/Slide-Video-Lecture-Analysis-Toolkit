@@ -185,12 +185,12 @@ export function saveSettings() {
     // Get fuzzy search preference
     const fuzzySearchEnabled = document.getElementById('settingsFuzzyToggle')?.checked || state.fuzzySearchEnabled;
     const sceneDetectionThreshold = Number(elements.sceneDetectionThreshold.value);
-    if (!Number.isFinite(sceneDetectionThreshold) || sceneDetectionThreshold < 0.1 || sceneDetectionThreshold > 10) {
-        showNotification('Scene detection threshold must be between 0.1 and 10.', 'error');
+    if (!Number.isFinite(sceneDetectionThreshold) || sceneDetectionThreshold < 10 || sceneDetectionThreshold > 60) {
+        showNotification('Content-cut threshold must be between 10 and 60.', 'error');
         return;
     }
     state.sceneDetectionThreshold = sceneDetectionThreshold;
-    localStorage.setItem('sceneDetectionThresholdV3', String(sceneDetectionThreshold));
+    localStorage.setItem('contentCutThresholdV1', String(sceneDetectionThreshold));
     
     // Update fuzzy search state
     state.fuzzySearchEnabled = fuzzySearchEnabled;

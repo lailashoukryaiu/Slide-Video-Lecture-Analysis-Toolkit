@@ -46,6 +46,18 @@ export async function checkSceneDetection(videoId) {
                 clearSceneCache();
                 
                 updateScenes(data.scenes, videoPlayer);
+                if (data.scenes.length > 1 && data.diagnostics) {
+                    const diagnostics = data.diagnostics;
+                    const summary = diagnostics.mode === 'adaptive'
+                        ? `Detected ${data.scenes.length} slides from ${diagnostics.raw_candidates || 0} adaptive candidates; removed ${diagnostics.near_duplicates_removed || 0} near-duplicates.`
+                        : diagnostics.mode === 'content'
+                            ? `Detected ${data.scenes.length} slides from ${diagnostics.raw_boundaries || 0} content-cut boundaries.`
+                            : `Created ${data.scenes.length} slides from transcript chapter boundaries.`;
+                    elements.scenesContainer.insertAdjacentHTML(
+                        'afterbegin',
+                        `<p class="scene-help">${summary}</p>`
+                    );
+                }
                 // Clear the interval
                 if (state.sceneDetectionInterval) {
                     clearInterval(state.sceneDetectionInterval);
@@ -55,15 +67,14 @@ export async function checkSceneDetection(videoId) {
                 // Update the scenes container
                 if (data.scenes.length === 0) {
                     const diagnostics = data.diagnostics;
-                    const diagnosticText = diagnostics && diagnostics.mode === 'frame_difference'
-                        ? `<p class="scene-help">Scanned ${diagnostics.sampled_frames} frames over ${Number(diagnostics.duration_seconds || 0).toFixed(1)} seconds. Largest measured change: ${Number(diagnostics.maximum_changed_percent || 0).toFixed(2)}% (selected threshold: ${Number(diagnostics.threshold_percent || 0).toFixed(2)}%).</p>`
+                    const diagnosticText = diagnostics && diagnostics.mode === 'adaptive'
+                        ? `<p class="scene-help">Adaptive scan sampled ${diagnostics.sampled_frames} frames and found ${diagnostics.raw_candidates || 0} visual-change candidates. ${diagnostics.near_duplicates_removed || 0} near-duplicates were removed (learned threshold: ${Number(diagnostics.adaptive_threshold_percent || 0).toFixed(2)}%).</p>`
                         : '';
                     elements.scenesContainer.innerHTML = `
                         <p>No scene changes detected.</p>
                         <p class="scene-help">
-                            Try Frame difference with a lower threshold such as 1, or switch to Content cuts
-                            if the video uses clear hard cuts. If this repeats, check that the video contains visible
-                            slide changes rather than only a talking-head view.
+                            Try Adaptive mode with “More slides”, or switch to Content cuts with a lower cut threshold
+                            if the video uses clear hard cuts.
                         </p>
                         ${diagnosticText}
                     `;

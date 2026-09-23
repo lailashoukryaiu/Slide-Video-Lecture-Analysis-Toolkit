@@ -17,7 +17,7 @@
 
 ### Key Features
 
-- **Scene Detection**: Automated scene segmentation using adaptive and content-based detection algorithms
+- **Scene Detection**: Adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, content-cut mode, and optional transcript chapter boundaries
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
 - **Semantic Embeddings**: Sentence-BERT based semantic similarity for transcript-OCR alignment
@@ -139,9 +139,10 @@ The system requires pre-trained models (included in repository):
    Open your browser to: http://localhost:8000
 
 3. **Process content:**
-   - **YouTube Videos**: Paste URL and click "Load Video"
+   - **YouTube Videos**: Paste a URL, choose 480p (faster) or 720p, and click "Load Video"
    - **Local Files**: Upload video files directly
    - **Real-time Processing**: Monitor progress via live updates
+   - **Slide Detection**: Choose adaptive slides, content cuts, or existing transcript chapters; higher video and screenshot quality uses more time and storage
 
 ### Advanced Usage Examples
 
@@ -336,5 +337,4 @@ pip install --upgrade yt-dlp
 - **Sentence-BERT**: UKP Lab for semantic embeddings
 - **Surya OCR**: VikParuchuri for advanced OCR capabilities
 - **FastAPI**: Sebastian Ramirez for the excellent web framework
-
 

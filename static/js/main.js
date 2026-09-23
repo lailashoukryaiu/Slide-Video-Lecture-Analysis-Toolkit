@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters, updateExportAvailabil
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js?v=transcript-progress-fix-20260923';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript } from './api-module.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -42,7 +42,7 @@ export const state = {
     transcriptOcrRelationships: null,
     ocr_to_transcript: {}, // Map for quick lookup: scene_index_ocrText -> transcript matches
     transcript_to_ocr: {}, // Map for quick lookup: transcript_index -> OCR matches
-    sceneDetectionThreshold: Number(localStorage.getItem('sceneDetectionThresholdV3')) || 5
+    sceneDetectionThreshold: Number(localStorage.getItem('contentCutThresholdV1')) || 27
 };
 
 window.addEventListener('video-file-selected', (event) => {
@@ -341,8 +341,73 @@ function initApp() {
     bind(elements.sceneDetectionThreshold, 'input', (event) => {
         elements.sceneDetectionThresholdValue.textContent = event.target.value;
         state.sceneDetectionThreshold = Number(event.target.value);
-        localStorage.setItem('sceneDetectionThresholdV3', event.target.value);
+        localStorage.setItem('contentCutThresholdV1', event.target.value);
     });
+    const updateDetectionOptions = () => {
+        const mode = elements.sceneDetectionMode.value;
+        const hasChapters = Array.isArray(state.videoChapters) && state.videoChapters.length > 0;
+        const chaptersOption = [...elements.sceneDetectionMode.options]
+            .find((option) => option.value === 'chapters');
+        if (chaptersOption) chaptersOption.disabled = !hasChapters;
+        elements.includeChapterBoundaries.disabled = !hasChapters;
+        elements.includeChapterBoundariesLabel.title = hasChapters
+            ? 'Adds topic boundaries that are not already close to a detected slide.'
+            : 'Generate transcript chapters first to enable this option.';
+        if (mode === 'chapters' && !hasChapters) {
+            elements.sceneDetectionMode.value = 'adaptive';
+            return updateDetectionOptions();
+        }
+        elements.adaptiveDetectionOptions.hidden = mode !== 'adaptive';
+        elements.contentCutOptions.hidden = mode !== 'content';
+        elements.visualDetectionOptions.hidden = mode === 'chapters';
+        elements.includeChapterBoundariesLabel.hidden = mode === 'chapters';
+        elements.sceneDetectionHelp.textContent = mode === 'adaptive'
+            ? 'Adaptive mode learns a threshold from this video and filters duplicate slide builds before generating screenshots.'
+            : mode === 'content'
+                ? 'Content cuts detect abrupt visual transitions using the separate PySceneDetect threshold above.'
+                : 'Uses existing transcript chapter timestamps without scanning the complete video.';
+    };
+    elements.sceneDetectionMode.value = localStorage.getItem('sceneDetectionModeV1') || 'adaptive';
+    elements.adaptiveDetail.value = localStorage.getItem('adaptiveDetailV1') || 'balanced';
+    elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationV1') || '10';
+    elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || '60';
+    elements.slideImageQuality.value = localStorage.getItem('slideImageQualityV1') || '720';
+    elements.youtubeVideoQuality.value = localStorage.getItem('youtubeVideoQualityV1') || '480';
+    elements.mergeSimilarSlides.checked = localStorage.getItem('mergeSimilarSlidesV1') !== 'false';
+    elements.includeChapterBoundaries.checked = localStorage.getItem('includeChapterBoundariesV1') !== 'false';
+    bind(elements.sceneDetectionMode, 'change', (event) => {
+        localStorage.setItem('sceneDetectionModeV1', event.target.value);
+        updateDetectionOptions();
+    });
+    bind(elements.adaptiveDetail, 'change', (event) => {
+        localStorage.setItem('adaptiveDetailV1', event.target.value);
+    });
+    bind(elements.minimumSlideDuration, 'change', (event) => {
+        localStorage.setItem('minimumSlideDurationV1', event.target.value);
+    });
+    bind(elements.maximumSlidesPerHour, 'change', (event) => {
+        localStorage.setItem('maximumSlidesPerHourV1', event.target.value);
+    });
+    bind(elements.mergeSimilarSlides, 'change', (event) => {
+        localStorage.setItem('mergeSimilarSlidesV1', String(event.target.checked));
+    });
+    bind(elements.includeChapterBoundaries, 'change', (event) => {
+        localStorage.setItem('includeChapterBoundariesV1', String(event.target.checked));
+    });
+    bind(elements.slideImageQuality, 'change', (event) => {
+        localStorage.setItem('slideImageQualityV1', event.target.value);
+        if (event.target.value === '1080') {
+            showNotification('High-quality screenshots require more processing time and storage.', 'warning');
+        }
+    });
+    bind(elements.youtubeVideoQuality, 'change', (event) => {
+        localStorage.setItem('youtubeVideoQualityV1', event.target.value);
+        if (event.target.value === '720') {
+            showNotification('720p videos download and process more slowly than the 480p default.', 'warning');
+        }
+    });
+    document.addEventListener('chaptersUpdated', updateDetectionOptions);
+    updateDetectionOptions();
     if (elements.sceneDetectionThreshold) {
         elements.sceneDetectionThreshold.value = state.sceneDetectionThreshold;
     }
