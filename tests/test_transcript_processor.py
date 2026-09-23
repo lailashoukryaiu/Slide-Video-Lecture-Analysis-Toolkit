@@ -33,7 +33,11 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             try:
                 metadata_path = Path(directory) / "video_whisper_meta.json"
                 metadata_path.write_text(
-                    json.dumps({"model": "turbo", "prompt": "lecture"}),
+                    json.dumps({
+                        "model": "turbo",
+                        "prompt": "lecture",
+                        "precise_timestamps": False,
+                    }),
                     encoding="utf-8",
                 )
                 processor = TranscriptProcessor()
@@ -46,6 +50,11 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
                 self.assertFalse(
                     processor._can_reuse_whisper_transcript(
                         "video", "medium", "lecture"
+                    )
+                )
+                self.assertFalse(
+                    processor._can_reuse_whisper_transcript(
+                        "video", "turbo", "lecture", precise_timestamps=True
                     )
                 )
             finally:

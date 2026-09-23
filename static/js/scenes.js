@@ -229,17 +229,15 @@ export function updateScenes(scenes, videoPlayer) {
             img.alt = `Scene at ${scene.timestamp}`;
             img.dataset.time = scene.time_seconds;
             
-            // Add detection badge if available
+            const badge = document.createElement('div');
+            badge.className = 'detection-badge';
+            badge.textContent = `Slide ${index + 1}`;
+            badge.setAttribute('aria-label', `Slide ${index + 1}`);
+
+            // Keep object detections in the tooltip as optional diagnostics.
             if (scene.yolo_detections && scene.yolo_detections.success) {
                 const detections = scene.yolo_detections.detections;
                 if (detections && detections.length > 0) {
-                    console.log(`Adding badge for scene ${index} with ${detections.length} detections`);
-                    const badge = document.createElement('div');
-                    badge.className = 'detection-badge';
-                    badge.textContent = `Objects: ${detections.length}`;
-                    badge.setAttribute('aria-label', `${detections.length} detected objects`);
-                    
-                    // Add tooltip with detection summary
                     const detectionCounts = {};
                     detections.forEach(detection => {
                         const className = detection.class;
@@ -251,11 +249,11 @@ export function updateScenes(scenes, videoPlayer) {
                         .join(', ');
                     
                     badge.title = tooltip
-                        ? `Detected objects: ${tooltip}`
-                        : `${detections.length} detected objects`;
-                    timelineItem.appendChild(badge);
+                        ? `Slide ${index + 1}. Detected objects: ${tooltip}`
+                        : `Slide ${index + 1}. ${detections.length} detected objects`;
                 }
             }
+            timelineItem.appendChild(badge);
             
             const timestamp = document.createElement('div');
             timestamp.className = 'timeline-timestamp';

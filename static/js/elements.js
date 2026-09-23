@@ -26,6 +26,7 @@ export const elements = {
     get transcriptModel() { return document.getElementById('transcriptModel'); },
     get transcriptPrompt() { return document.getElementById('transcriptPrompt'); },
     get transcriptDiarization() { return document.getElementById('transcriptDiarization'); },
+    get transcriptPreciseTimestamps() { return document.getElementById('transcriptPreciseTimestamps'); },
     get speakerDiarizationTokenStatus() { return document.getElementById('speakerDiarizationTokenStatus'); },
     get speakerNamesPanel() { return document.getElementById('speakerNamesPanel'); },
     get transcriptOptionsBtn() { return document.getElementById('transcriptOptionsBtn'); },

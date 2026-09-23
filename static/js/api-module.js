@@ -22,6 +22,7 @@ export async function regenerateTranscript() {
     const model = elements.transcriptModel?.value || 'turbo';
     const prompt = elements.transcriptPrompt?.value.trim() || '';
     const diarization = elements.transcriptDiarization?.checked || false;
+    const preciseTimestamps = elements.transcriptPreciseTimestamps?.checked || false;
     const button = elements.regenerateTranscriptBtn;
     if (button) {
         button.disabled = true;
@@ -34,7 +35,13 @@ export async function regenerateTranscript() {
         const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(videoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt, diarization, force: true })
+            body: JSON.stringify({
+                model,
+                prompt,
+                diarization,
+                precise_timestamps: preciseTimestamps,
+                force: true
+            })
         });
         const data = await readJsonResponse(response, 'Transcript regeneration');
         if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
