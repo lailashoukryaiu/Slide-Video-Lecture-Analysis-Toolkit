@@ -119,6 +119,7 @@ class TranscriptProcessor:
             
             output_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
             progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+            existing_transcript = None
 
             # Check if transcript already exists
             if model not in {"turbo", "small", "medium", "large-v3"}:
@@ -147,18 +148,49 @@ class TranscriptProcessor:
             error_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"
             if error_path.exists():
                 error_path.unlink()
+
+            if (
+                diarization
+                and force
+                and os.path.exists(output_path)
+                and self._can_reuse_whisper_transcript(video_id, model, prompt)
+            ):
+                existing_transcript = self._read_transcript(video_id)
+                if not existing_transcript:
+                    existing_transcript = None
             
             # Start background task to generate transcript
             if os.path.exists(output_path):
                 os.remove(output_path)
-            progress_path.write_text("0", encoding="utf-8")
+            progress_path.write_text(
+                "100" if existing_transcript else "0",
+                encoding="utf-8",
+            )
+            self._write_whisper_phase(
+                video_id,
+                "identifying_speakers" if existing_transcript else "starting",
+            )
             background_tasks.add_task(
-                self.process_whisper_transcript, video_id, video_path, output_path, model, prompt, diarization
+                self.process_whisper_transcript,
+                video_id,
+                video_path,
+                output_path,
+                model,
+                prompt,
+                diarization,
+                existing_transcript,
             )
             
             return JSONResponse({
                 "success": True,
-                "message": "Transcript generation started",
+                "message": (
+                    "Speaker identification started using the existing transcript"
+                    if existing_transcript
+                    else "Transcript generation started"
+                ),
+                "phase": (
+                    "identifying_speakers" if existing_transcript else "starting"
+                ),
                 "status_url": f"/whisper_transcript_status/{video_id}"
             })
             
@@ -188,7 +220,10 @@ class TranscriptProcessor:
         # Start background task
         background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
 
-    async def process_whisper_transcript(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None, diarization=False):
+    async def process_whisper_transcript(
+        self, video_id: str, video_path: str, output_path: str, model="turbo",
+        prompt=None, diarization=False, existing_transcript=None
+    ):
         """Process video with Whisper and save transcript.
 
         The actual transcription is CPU/GPU-bound and blocking, so it runs in a
@@ -199,45 +234,55 @@ class TranscriptProcessor:
         """
         await asyncio.to_thread(
             self._process_whisper_transcript_sync,
-            video_id, video_path, output_path, model, prompt, diarization
+            video_id, video_path, output_path, model, prompt, diarization,
+            existing_transcript
         )
 
-    def _process_whisper_transcript_sync(self, video_id: str, video_path: str, output_path: str, model="turbo", prompt=None, diarization=False):
+    def _process_whisper_transcript_sync(
+        self, video_id: str, video_path: str, output_path: str, model="turbo",
+        prompt=None, diarization=False, existing_transcript=None
+    ):
         """Blocking Whisper transcription and diarization, run off the event loop."""
+        original_transcript = [
+            dict(item) for item in (existing_transcript or [])
+        ]
         try:
-            transcript = []
-            
-            for sentence_data, progress in transcribe_audio(video_path, model_name=model, prompt=prompt):
-                lines = sentence_data.strip().split('\n')
-                i = 0
-                while i < len(lines):
-                    if i + 2 < len(lines) and '-->' in lines[i+1]:
-                        timestamp_line = lines[i+1]
-                        start_time = timestamp_line.split(' --> ')[0].strip()
-                        end_time = timestamp_line.split(' --> ')[1].strip()
+            transcript = [dict(item) for item in original_transcript]
+            if not transcript:
+                self._write_whisper_phase(video_id, "transcribing")
+                for sentence_data, progress in transcribe_audio(
+                    video_path, model_name=model, prompt=prompt
+                ):
+                    lines = sentence_data.strip().split('\n')
+                    i = 0
+                    while i < len(lines):
+                        if i + 2 < len(lines) and '-->' in lines[i+1]:
+                            timestamp_line = lines[i+1]
+                            start_time = timestamp_line.split(' --> ')[0].strip()
+                            end_time = timestamp_line.split(' --> ')[1].strip()
 
-                        h, m, s = start_time.split(':')
-                        s, ms = s.split(',')
-                        start_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+                            h, m, s = start_time.split(':')
+                            s, ms = s.split(',')
+                            start_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
-                        h, m, s = end_time.split(':')
-                        s, ms = s.split(',')
-                        end_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+                            h, m, s = end_time.split(':')
+                            s, ms = s.split(',')
+                            end_seconds = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
-                        text = lines[i+2].strip()
-                        transcript.append({
-                            "text": text,
-                            "start": start_seconds,
-                            "duration": end_seconds - start_seconds
-                        })
+                            text = lines[i+2].strip()
+                            transcript.append({
+                                "text": text,
+                                "start": start_seconds,
+                                "duration": end_seconds - start_seconds
+                            })
 
-                        i += 4
-                    else:
-                        i += 1
+                            i += 4
+                        else:
+                            i += 1
 
-                progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
-                with open(progress_file, 'w') as f:
-                    f.write(str(progress))
+                    progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
+                    with open(progress_file, 'w') as f:
+                        f.write(str(progress))
 
             if not transcript:
                 raise RuntimeError(
@@ -246,6 +291,7 @@ class TranscriptProcessor:
                 )
             speaker_names = {}
             if diarization:
+                self._write_whisper_phase(video_id, "identifying_speakers")
                 transcript, speaker_names = self.apply_diarization(video_path, transcript)
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
@@ -260,18 +306,33 @@ class TranscriptProcessor:
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_file):
                 os.remove(progress_file)
+            self._remove_whisper_phase(video_id)
 
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
             progress_file = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
             if progress_file.exists():
                 progress_file.unlink()
+            self._remove_whisper_phase(video_id)
+            if original_transcript:
+                with open(output_path, "w", encoding="utf-8") as file:
+                    json.dump(original_transcript, file, ensure_ascii=False)
             with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                 f.write(str(e))
 
     async def get_whisper_status(self, video_id: str):
         """Check the status of Whisper transcript generation."""
         try:
+            error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
+            if os.path.exists(error_path):
+                with open(error_path, 'r') as f:
+                    error = f.read()
+                return JSONResponse({
+                    "success": False,
+                    "status": "error",
+                    "error": error
+                })
+
             transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
             if os.path.exists(transcript_path):
                 try:
@@ -297,25 +358,22 @@ class TranscriptProcessor:
                     ,"speaker_names": self._read_speaker_names(video_id)
                 })
 
-            error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
-            if os.path.exists(error_path):
-                with open(error_path, 'r') as f:
-                    error = f.read()
-                return JSONResponse({
-                    "success": False,
-                    "status": "error",
-                    "error": error
-                })
-
             progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_path):
                 progress_age = time.time() - os.path.getmtime(progress_path)
-                if progress_age > self.progress_stale_seconds:
+                phase = self._read_whisper_phase(video_id)
+                stale_seconds = (
+                    max(self.progress_stale_seconds, 3600)
+                    if phase == "identifying_speakers"
+                    else self.progress_stale_seconds
+                )
+                if progress_age > stale_seconds:
                     stale_message = (
-                        "Whisper transcription stopped responding. "
+                        "Transcript processing stopped responding. "
                         "The previous job was marked stale and can be retried."
                     )
                     os.remove(progress_path)
+                    self._remove_whisper_phase(video_id)
                     with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                         f.write(stale_message)
                     return JSONResponse({
@@ -329,7 +387,7 @@ class TranscriptProcessor:
                     "success": True,
                     "status": "in_progress",
                     "progress": progress,
-                    "phase": "starting" if progress <= 0 else "transcribing",
+                    "phase": phase or ("starting" if progress <= 0 else "transcribing"),
                     "last_updated_seconds_ago": round(progress_age, 1)
                 })
 
@@ -362,6 +420,39 @@ class TranscriptProcessor:
             except (OSError, json.JSONDecodeError):
                 return {}
         return {}
+
+    def _can_reuse_whisper_transcript(self, video_id, model, prompt):
+        metadata_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
+        if not metadata_path.exists():
+            return False
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return (
+            metadata.get("model", "turbo") == model
+            and str(metadata.get("prompt", "")).strip() == str(prompt or "").strip()
+        )
+
+    def _whisper_phase_path(self, video_id):
+        return TRANSCRIPTS_DIR / f"{video_id}_whisper_phase.txt"
+
+    def _write_whisper_phase(self, video_id, phase):
+        self._whisper_phase_path(video_id).write_text(phase, encoding="utf-8")
+
+    def _read_whisper_phase(self, video_id):
+        phase_path = self._whisper_phase_path(video_id)
+        if not phase_path.exists():
+            return None
+        try:
+            return phase_path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def _remove_whisper_phase(self, video_id):
+        phase_path = self._whisper_phase_path(video_id)
+        if phase_path.exists():
+            phase_path.unlink()
 
     def apply_diarization(self, video_path, transcript):
         """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""

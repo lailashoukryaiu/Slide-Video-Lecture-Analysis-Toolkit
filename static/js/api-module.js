@@ -17,6 +17,7 @@ export async function regenerateTranscript() {
         return;
     }
     state.currentVideoId = videoId;
+    const originalTranscript = state.currentTranscript.map((item) => ({ ...item }));
 
     const model = elements.transcriptModel?.value || 'turbo';
     const prompt = elements.transcriptPrompt?.value.trim() || '';
@@ -39,7 +40,9 @@ export async function regenerateTranscript() {
         if (!data.success) throw new Error(data.error || 'Transcript regeneration failed');
         elements.transcriptOptionsDialog?.close();
         showNotification(
-            data.status === 'in_progress'
+            data.phase === 'identifying_speakers'
+                ? 'Using the existing transcript. Speaker identification started.'
+                : data.status === 'in_progress'
                 ? 'Transcript generation is already running. Showing its progress.'
                 : 'Transcript regeneration started.',
             'info'
@@ -64,12 +67,16 @@ export async function regenerateTranscript() {
         }
     } catch (error) {
         showError(`Error regenerating transcript: ${error.message}`);
-        elements.transcriptContainer.innerHTML = `
-            <div class="transcript-processing transcript-error">
-                <i class="fas fa-info-circle"></i>
-                <p>Transcript regeneration stopped. ${escapeHtml(error.message)}</p>
-            </div>
-        `;
+        if (originalTranscript.length) {
+            loadTranscript(originalTranscript);
+        } else {
+            elements.transcriptContainer.innerHTML = `
+                <div class="transcript-processing transcript-error">
+                    <i class="fas fa-info-circle"></i>
+                    <p>Transcript regeneration stopped. ${escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
     } finally {
         if (button && state.whisperTranscriptPollGeneration === pollGeneration) {
             button.disabled = false;
@@ -83,9 +90,11 @@ function renderWhisperProgress(status, startedAt) {
         ? Math.max(0, Math.min(100, Number(status.progress)))
         : 0;
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    const phase = status.phase === 'transcribing' || progress > 0
-        ? 'Transcribing audio'
-        : 'Starting Whisper model';
+    const phase = status.phase === 'identifying_speakers'
+        ? 'Identifying speakers with pyannote'
+        : status.phase === 'transcribing' || progress > 0
+            ? 'Transcribing audio'
+            : 'Starting Whisper model';
     const lastUpdate = Number.isFinite(Number(status.last_updated_seconds_ago))
         ? ` Last progress update: ${Math.round(Number(status.last_updated_seconds_ago))}s ago.`
         : '';
