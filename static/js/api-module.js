@@ -103,7 +103,7 @@ function renderWhisperProgress(status, startedAt) {
             ? 'Transcribing audio'
             : 'Starting Whisper model';
     const lastUpdate = Number.isFinite(Number(status.last_updated_seconds_ago))
-        ? ` Last progress update: ${Math.round(Number(status.last_updated_seconds_ago))}s ago.`
+        ? ` Server heartbeat: ${Math.round(Number(status.last_updated_seconds_ago))}s ago.`
         : '';
     elements.transcriptContainer.innerHTML = `
         <div class="transcript-processing">

@@ -1,6 +1,9 @@
+import asyncio
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -10,7 +13,13 @@ fastapi_module = sys.modules.setdefault("fastapi", ModuleType("fastapi"))
 fastapi_responses_module = sys.modules.setdefault(
     "fastapi.responses", ModuleType("fastapi.responses")
 )
-fastapi_responses_module.JSONResponse = object
+
+class FakeJSONResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+fastapi_responses_module.JSONResponse = FakeJSONResponse
 fastapi_module.responses = fastapi_responses_module
 
 youtube_module = ModuleType("youtube_transcript_api")
@@ -26,6 +35,71 @@ from processors.transcript_processor import TranscriptProcessor
 
 
 class TranscriptProcessorReuseTests(unittest.TestCase):
+    def test_heartbeat_refreshes_progress_marker(self):
+        class StopAfterOneHeartbeat:
+            def __init__(self):
+                self.calls = 0
+
+            def wait(self, timeout):
+                self.calls += 1
+                return self.calls > 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir = transcript_module.TRANSCRIPTS_DIR
+            working_dir = Path(directory)
+            transcript_module.TRANSCRIPTS_DIR = working_dir
+            try:
+                progress_path = working_dir / "video_whisper_progress.txt"
+                progress_path.write_text("0", encoding="utf-8")
+                old_time = time.time() - 120
+                os.utime(progress_path, (old_time, old_time))
+                processor = TranscriptProcessor()
+
+                processor._heartbeat_whisper_job(
+                    "video", StopAfterOneHeartbeat()
+                )
+
+                self.assertLess(time.time() - progress_path.stat().st_mtime, 5)
+            finally:
+                transcript_module.TRANSCRIPTS_DIR = original_dir
+
+    def test_forced_retry_reclaims_an_old_progress_marker(self):
+        class BackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, function, *args):
+                self.tasks.append((function, args))
+
+        with tempfile.TemporaryDirectory() as directory:
+            original_video_dir = transcript_module.VIDEO_DIR
+            original_transcript_dir = transcript_module.TRANSCRIPTS_DIR
+            working_dir = Path(directory)
+            transcript_module.VIDEO_DIR = working_dir
+            transcript_module.TRANSCRIPTS_DIR = working_dir
+            try:
+                (working_dir / "video.mp4").write_bytes(b"video")
+                progress_path = working_dir / "video_whisper_progress.txt"
+                progress_path.write_text("0", encoding="utf-8")
+                old_time = time.time() - 120
+                os.utime(progress_path, (old_time, old_time))
+                background_tasks = BackgroundTasks()
+                processor = TranscriptProcessor()
+                processor.manual_retry_stale_seconds = 90
+
+                response = asyncio.run(
+                    processor.generate_whisper_transcript(
+                        "video", background_tasks, force=True
+                    )
+                )
+
+                self.assertEqual(response.content["phase"], "starting")
+                self.assertEqual(len(background_tasks.tasks), 1)
+                self.assertLess(time.time() - progress_path.stat().st_mtime, 5)
+            finally:
+                transcript_module.VIDEO_DIR = original_video_dir
+                transcript_module.TRANSCRIPTS_DIR = original_transcript_dir
+
     def test_matching_model_and_prompt_allow_reuse(self):
         with tempfile.TemporaryDirectory() as directory:
             original_dir = transcript_module.TRANSCRIPTS_DIR

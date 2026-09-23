@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import threading
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
 from transcribe import transcribe_audio
@@ -11,6 +12,10 @@ class TranscriptProcessor:
     def __init__(self):
         self.transcript_preference = "youtube"  # Can be "youtube" or "whisper"
         self.progress_stale_seconds = int(os.getenv("WHISPER_PROGRESS_STALE_SECONDS", "900"))
+        self.manual_retry_stale_seconds = int(
+            os.getenv("WHISPER_MANUAL_RETRY_STALE_SECONDS", "90")
+        )
+        self.heartbeat_seconds = int(os.getenv("WHISPER_HEARTBEAT_SECONDS", "15"))
 
     async def get_transcript(self, video_id: str, source: str):
         """Get a specific transcript by source."""
@@ -135,8 +140,14 @@ class TranscriptProcessor:
 
             if progress_path.exists():
                 progress_age = time.time() - progress_path.stat().st_mtime
-                if progress_age > self.progress_stale_seconds:
+                stale_seconds = (
+                    self.manual_retry_stale_seconds
+                    if force
+                    else self.progress_stale_seconds
+                )
+                if progress_age > stale_seconds:
                     progress_path.unlink()
+                    self._remove_whisper_phase(video_id)
                 else:
                     return JSONResponse({
                         "success": True,
@@ -251,6 +262,13 @@ class TranscriptProcessor:
         original_transcript = [
             dict(item) for item in (existing_transcript or [])
         ]
+        heartbeat_stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._heartbeat_whisper_job,
+            args=(video_id, heartbeat_stop),
+            daemon=True,
+        )
+        heartbeat.start()
         try:
             transcript = [dict(item) for item in original_transcript]
             if not transcript:
@@ -313,12 +331,16 @@ class TranscriptProcessor:
                 }, f)
 
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
+            heartbeat_stop.set()
+            heartbeat.join(timeout=self.heartbeat_seconds + 1)
             if os.path.exists(progress_file):
                 os.remove(progress_file)
             self._remove_whisper_phase(video_id)
 
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
+            heartbeat_stop.set()
+            heartbeat.join(timeout=self.heartbeat_seconds + 1)
             progress_file = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
             if progress_file.exists():
                 progress_file.unlink()
@@ -466,6 +488,14 @@ class TranscriptProcessor:
         phase_path = self._whisper_phase_path(video_id)
         if phase_path.exists():
             phase_path.unlink()
+
+    def _heartbeat_whisper_job(self, video_id, stop_event):
+        progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+        while not stop_event.wait(self.heartbeat_seconds):
+            try:
+                progress_path.touch(exist_ok=True)
+            except OSError:
+                return
 
     def apply_diarization(self, video_path, transcript):
         """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""
