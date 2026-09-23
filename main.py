@@ -550,6 +550,17 @@ async def set_ocr_preference(request: Request):
 def get_ocr_preference():
     return {"preference": ocr_processor.get_preference()}
 
+@app.post("/set_transcript_preference")
+async def set_transcript_preference(request: Request):
+    data = await request.json()
+    return await transcript_processor.set_preference(
+        data.get("preference", "youtube")
+    )
+
+@app.get("/get_transcript_preference")
+def get_transcript_preference():
+    return {"preference": transcript_processor.get_preference()}
+
 @app.get("/get_transcript/{video_id}/{source}")
 async def get_transcript(video_id: str, source: str):
     return await transcript_processor.get_transcript(video_id, source)
