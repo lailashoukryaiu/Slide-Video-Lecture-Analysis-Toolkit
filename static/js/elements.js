@@ -26,6 +26,7 @@ export const elements = {
     get transcriptModel() { return document.getElementById('transcriptModel'); },
     get transcriptPrompt() { return document.getElementById('transcriptPrompt'); },
     get transcriptDiarization() { return document.getElementById('transcriptDiarization'); },
+    get speakerDiarizationTokenStatus() { return document.getElementById('speakerDiarizationTokenStatus'); },
     get speakerNamesPanel() { return document.getElementById('speakerNamesPanel'); },
     get transcriptOptionsBtn() { return document.getElementById('transcriptOptionsBtn'); },
     get transcriptOptionsDialog() { return document.getElementById('transcriptOptionsDialog'); },
@@ -113,5 +114,7 @@ export const elements = {
     get includeChapterBoundariesLabel() { return document.getElementById('includeChapterBoundariesLabel'); },
     get sceneDetectionHelp() { return document.getElementById('sceneDetectionHelp'); },
     get uploadVideoBtn() { return document.getElementById('uploadVideoBtn'); },
-    get detectScenesBtn() { return document.getElementById('detectScenesBtn'); }
+    get detectScenesBtn() { return document.getElementById('detectScenesBtn'); },
+    get sceneDetectionOptionsDialog() { return document.getElementById('sceneDetectionOptionsDialog'); },
+    get startSceneDetectionBtn() { return document.getElementById('startSceneDetectionBtn'); }
 };

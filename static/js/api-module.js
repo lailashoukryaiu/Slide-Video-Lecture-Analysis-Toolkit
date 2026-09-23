@@ -140,6 +140,7 @@ export async function translateTranscript() {
     if (button) {
         button.disabled = true;
     }
+    const originalTranscript = state.currentTranscript.map((item) => ({ ...item }));
     const selectedModel = elements.translationModel?.value || '';
     const selectedModelLabel = elements.translationModel?.selectedOptions[0]?.textContent || 'Auto';
     const startedAt = Date.now();
@@ -153,6 +154,7 @@ export async function translateTranscript() {
     };
     updateElapsed();
     const elapsedTimer = setInterval(updateElapsed, 1000);
+    let translationProgressTimer = null;
     try {
         const target = elements.translationTarget.value;
         if (!target) {
@@ -160,6 +162,21 @@ export async function translateTranscript() {
             showNotification('No translation selected. The transcript remains in its original language.', 'info');
             return;
         }
+        elements.transcriptOptionsDialog?.close();
+        elements.transcriptContainer.innerHTML = `
+            <div class="transcript-processing">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p id="translationProgressText">Preparing translation with ${escapeHtml(selectedModelLabel)}...</p>
+                <p>The transcript and chapter titles are translated in parallel batches.</p>
+            </div>
+        `;
+        const progressText = document.getElementById('translationProgressText');
+        translationProgressTimer = setInterval(() => {
+            if (!progressText) return;
+            const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+            progressText.textContent =
+                `Translating with ${selectedModelLabel} (${elapsed}s elapsed)...`;
+        }, 1000);
         const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -170,6 +187,21 @@ export async function translateTranscript() {
             })
         });
         const data = await readJsonResponse(response, 'Transcript translation');
+        clearInterval(translationProgressTimer);
+        translationProgressTimer = null;
+        if (
+            !Array.isArray(data.transcript)
+            || data.transcript.length !== originalTranscript.length
+        ) {
+            throw new Error('The translation model returned an incomplete transcript.');
+        }
+        const sourceText = originalTranscript.map((item) => String(item.text || '').trim()).join('\n');
+        const translatedText = data.transcript.map((item) => String(item.text || '').trim()).join('\n');
+        if (sourceText && translatedText === sourceText) {
+            throw new Error(
+                'The translation model returned the original text unchanged. Try another translation model.'
+            );
+        }
         loadTranscript(data.transcript);
         state.currentTranscriptSource = `translation:${target}`;
         state.currentTranslationLanguage = target;
@@ -184,12 +216,14 @@ export async function translateTranscript() {
         }
         showNotification(`Transcript translated to ${data.language} using ${translationSummary}.`, 'success');
     } catch (error) {
+        loadTranscript(originalTranscript);
         if (elements.translationModelStatus) {
             elements.translationModelStatus.textContent = `Translation failed: ${error.message}`;
         }
         throw error;
     } finally {
         clearInterval(elapsedTimer);
+        if (translationProgressTimer) clearInterval(translationProgressTimer);
         if (button) {
             button.disabled =
                 !elements.translationTarget.value
@@ -204,6 +238,11 @@ export async function updateTranslationModelStatus() {
     try {
         const response = await fetch('/runtime_status');
         const data = await readJsonResponse(response, 'Runtime status');
+        if (elements.speakerDiarizationTokenStatus) {
+            elements.speakerDiarizationTokenStatus.textContent = data.huggingface_token_configured
+                ? 'Hugging Face token detected. '
+                : 'No Hugging Face token detected. ';
+        }
         const hasTranslationModel = Boolean(
             data.translation_default_provider && data.translation_default_model
         );

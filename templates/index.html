@@ -186,7 +186,15 @@
                                 <label for="transcriptPrompt">Conversation type or correction prompt</label>
                                 <textarea id="transcriptPrompt" rows="2" placeholder="Example: technical lecture about machine learning; preserve acronyms and product names."></textarea>
                                 <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers</label>
-                                <small>Speaker identification requires a Hugging Face token and the optional pyannote.audio model.</small>
+                                <small id="speakerDiarizationHelp">
+                                    <strong id="speakerDiarizationTokenStatus"></strong>
+                                    Speaker identification uses Whisper for transcription and pyannote for speaker timing.
+                                    Create a Hugging Face read token, accept the terms for
+                                    <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer">speaker-diarization-3.1</a>
+                                    and
+                                    <a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer">segmentation-3.0</a>,
+                                    then set <code>HUGGINGFACE_TOKEN</code> in the Colab runtime and restart the server.
+                                </small>
                                 <button id="regenerateTranscriptAction" class="btn btn-secondary" type="button">Regenerate transcript</button>
                                 <div id="speakerNamesPanel" class="speaker-names-panel" hidden></div>
                                 <label for="transcriptFile">Upload transcript file</label>
@@ -307,7 +315,13 @@
                             <button id="downloadScreenshotsBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-images"></i> Download Screenshots
                             </button>
-                            <div class="scene-threshold-control">
+                            <dialog id="sceneDetectionOptionsDialog" class="options-dialog">
+                                <form method="dialog">
+                                <div class="dialog-header">
+                                    <h2>Slide detection options</h2>
+                                    <button class="dialog-close" type="submit" value="cancel" aria-label="Close slide detection options">&times;</button>
+                                </div>
+                                <div class="scene-threshold-control">
                                 <label for="sceneDetectionMode">Detection method</label>
                                 <select id="sceneDetectionMode">
                                     <option value="adaptive" selected>Adaptive slides (recommended)</option>
@@ -358,7 +372,13 @@
                                     Include transcript chapter boundaries when available
                                 </label>
                                 <small id="sceneDetectionHelp">Adaptive mode learns a threshold from this video and filters duplicate slide builds before generating screenshots.</small>
-                            </div>
+                                </div>
+                                <div class="dialog-actions">
+                                    <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
+                                    <button id="startSceneDetectionBtn" class="btn btn-accent" type="button">Start detection</button>
+                                </div>
+                                </form>
+                            </dialog>
                         </div>
                         <div class="tab-body" id="scenesContainer">
                             <!-- Scene markers will be added here -->
@@ -514,7 +534,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=translation-batches-20260923"></script>
+    <script type="module" src="/static/js/index.js?v=dialog-workflow-fix-20260923"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

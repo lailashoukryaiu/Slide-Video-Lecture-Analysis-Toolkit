@@ -94,6 +94,9 @@ async def runtime_status():
         ),
         "gemini_configured": bool(summary_processor.model),
         "openai_configured": bool(summary_processor.openai_client),
+        "huggingface_token_configured": bool(
+            os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+        ),
     }
     try:
         import torch

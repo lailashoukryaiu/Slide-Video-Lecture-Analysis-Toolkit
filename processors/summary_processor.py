@@ -301,6 +301,15 @@ Format each chapter exactly like this example:
             {**item, "text": translated_text[index]}
             for index, item in enumerate(transcript)
         ]
+        source_text = "\n".join(str(item.get("text", "")).strip() for item in transcript)
+        translated_joined = "\n".join(
+            str(item.get("text", "")).strip() for item in translated
+        )
+        if source_text and translated_joined == source_text:
+            raise ValueError(
+                "Translation model returned the original text unchanged. "
+                "Choose another model or confirm that the selected target language differs from the source."
+            )
         return {
             "transcript": translated,
             "provider": "OpenAI" if use_openai else "Gemini",

@@ -263,7 +263,15 @@ function initApp() {
 
     // Wire the core video controls before optional analysis features initialize.
     bind(elements.loadVideoBtn, 'click', processVideo);
-    bind(elements.detectScenesBtn, 'click', detectScenes);
+    bind(elements.detectScenesBtn, 'click', () => {
+        if (!elements.sceneDetectionOptionsDialog.open) {
+            elements.sceneDetectionOptionsDialog.showModal();
+        }
+    });
+    bind(elements.startSceneDetectionBtn, 'click', () => {
+        elements.sceneDetectionOptionsDialog.close();
+        void detectScenes();
+    });
     if (elements.downloadScreenshotsBtn) {
         bind(elements.downloadScreenshotsBtn, 'click', downloadSceneScreenshots);
     }
