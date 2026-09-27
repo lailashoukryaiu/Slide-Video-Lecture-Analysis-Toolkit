@@ -10,6 +10,19 @@ from transcribe import transcribe_audio
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
 
 
+def get_huggingface_token():
+    """Return a Hugging Face token from the environment or a saved hub login."""
+    for name in ("HUGGINGFACE_TOKEN", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value
+    try:
+        from huggingface_hub import get_token
+        return (get_token() or "").strip() or None
+    except Exception:
+        return None
+
+
 _ACTIVE_WHISPER_PROCESSES = {}
 _ACTIVE_WHISPER_PROCESSES_LOCK = threading.Lock()
 
@@ -536,10 +549,11 @@ class TranscriptProcessor:
 
     def apply_diarization(self, video_path, transcript):
         """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""
-        token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+        token = get_huggingface_token()
         if not token:
             raise RuntimeError(
                 "Speaker identification requires HUGGINGFACE_TOKEN (or HF_TOKEN) "
+                "in the server environment, or a saved huggingface_hub login, "
                 "with access to pyannote/speaker-diarization-3.1."
             )
         try:

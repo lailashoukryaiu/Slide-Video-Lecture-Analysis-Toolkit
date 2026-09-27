@@ -232,5 +232,36 @@ class TranscriptProcessorIsolationTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class HuggingFaceTokenTests(unittest.TestCase):
+    def setUp(self):
+        self.saved = {
+            name: os.environ.pop(name, None)
+            for name in ("HUGGINGFACE_TOKEN", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+        }
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            os.environ.pop(name, None)
+            if value is not None:
+                os.environ[name] = value
+
+    def test_hf_token_environment_variable_is_detected(self):
+        os.environ["HF_TOKEN"] = " hf_example "
+        self.assertEqual(transcript_module.get_huggingface_token(), "hf_example")
+
+    def test_saved_hub_login_is_used_when_environment_is_empty(self):
+        hub_module = ModuleType("huggingface_hub")
+        hub_module.get_token = lambda: "hf_saved"
+        original = sys.modules.get("huggingface_hub")
+        sys.modules["huggingface_hub"] = hub_module
+        try:
+            self.assertEqual(transcript_module.get_huggingface_token(), "hf_saved")
+        finally:
+            if original is None:
+                sys.modules.pop("huggingface_hub", None)
+            else:
+                sys.modules["huggingface_hub"] = original
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,7 @@ from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, TH
 from processors.video_processor import VideoProcessor
 from processors.scene_processor import SceneProcessor
 from processors.ocr_processor import OCRProcessor
-from processors.transcript_processor import TranscriptProcessor
+from processors.transcript_processor import TranscriptProcessor, get_huggingface_token
 from processors.embedding_processor import EmbeddingProcessor
 from processors.summary_processor import SummaryProcessor
 
@@ -94,9 +94,7 @@ async def runtime_status():
         ),
         "gemini_configured": bool(summary_processor.model),
         "openai_configured": bool(summary_processor.openai_client),
-        "huggingface_token_configured": bool(
-            os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
-        ),
+        "huggingface_token_configured": bool(get_huggingface_token()),
     }
     try:
         import torch
