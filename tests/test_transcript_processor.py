@@ -351,5 +351,32 @@ class HuggingFaceTokenTests(unittest.TestCase):
                 sys.modules["huggingface_hub"] = original
 
 
+class PyannoteCompatibilityTests(unittest.TestCase):
+    def test_uses_token_argument_for_pyannote_4(self):
+        calls = []
+
+        class Pipeline4:
+            @staticmethod
+            def from_pretrained(name, token=None):
+                calls.append((name, token))
+                return "pipeline"
+
+        self.assertEqual(
+            TranscriptProcessor._load_pyannote_pipeline(Pipeline4, "hf"), "pipeline"
+        )
+        self.assertEqual(calls, [("pyannote/speaker-diarization-3.1", "hf")])
+
+    def test_falls_back_to_use_auth_token_for_pyannote_3(self):
+        class Pipeline3:
+            @staticmethod
+            def from_pretrained(name, use_auth_token=None):
+                return f"{name}:{use_auth_token}"
+
+        self.assertEqual(
+            TranscriptProcessor._load_pyannote_pipeline(Pipeline3, "hf"),
+            "pyannote/speaker-diarization-3.1:hf",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

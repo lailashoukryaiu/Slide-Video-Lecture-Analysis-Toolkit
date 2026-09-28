@@ -221,7 +221,7 @@ async def translate_transcript(video_id: str, request: Request):
     if target not in {"de", "en", "ar", "pl"}:
         raise HTTPException(status_code=400, detail="Unsupported translation language")
     if requested_model not in {
-        None, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+        None, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
         "groq:openai/gpt-oss-120b", "gpt-4.1-mini",
     }:
         raise HTTPException(status_code=400, detail="Unsupported translation model")

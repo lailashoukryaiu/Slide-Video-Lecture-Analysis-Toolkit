@@ -65,6 +65,11 @@ export async function regenerateTranscript() {
                 loadTranscript(applySpeakerNames(status.transcript, status.speaker_names || {}));
                 renderSpeakerNames(status.speaker_names || {});
                 showNotification(`Transcript generated with ${describeTranscriptionModel(status.model || model)}.`, 'success');
+                if (status.metadata?.diarization_error) {
+                    showError(
+                        `The transcript was kept, but speaker identification failed: ${status.metadata.diarization_error}`
+                    );
+                }
                 return;
             }
             if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
@@ -161,7 +166,13 @@ export function showTranscriptSourceInfo(source, metadata) {
             if (metadata.device === 'cuda') parts.push('GPU');
             else if (metadata.device === 'cpu') parts.push('CPU');
             if (metadata.transcription_method) parts.push(metadata.transcription_method);
-            parts.push(metadata.diarization ? 'speakers identified' : 'no speaker identification');
+            parts.push(
+                metadata.diarization
+                    ? 'speakers identified'
+                    : metadata.diarization_error
+                    ? `speaker identification failed: ${metadata.diarization_error}`
+                    : 'no speaker identification'
+            );
             if (metadata.prompt) parts.push(`prompt: “${metadata.prompt.length > 80 ? `${metadata.prompt.slice(0, 80)}…` : metadata.prompt}”`);
             if (metadata.generated_at) parts.push(`generated ${metadata.generated_at}`);
             text = `Transcript: ${parts.join(' · ')}`;
@@ -188,6 +199,7 @@ function escapeHtml(value) {
 const TRANSCRIPTION_MODEL_LABELS = {
     'groq:whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo (online)',
     'groq:whisper-large-v3': 'Groq Whisper Large v3 (online)',
+    'gemini:gemini-3.8-flash': 'Gemini 3.8 Flash (online)',
     'gemini:gemini-3.6-flash': 'Gemini 3.6 Flash (online)',
     'gemini:gemini-2.5-flash': 'Gemini 2.5 Flash (online)',
 };

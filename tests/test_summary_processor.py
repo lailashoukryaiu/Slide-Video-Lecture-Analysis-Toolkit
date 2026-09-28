@@ -226,10 +226,46 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         self.assertEqual(processor._provider_chain("gemini-2.5-flash"), [
             ("gemini", "gemini-2.5-flash"),
             ("gemini", "gemini-3.6-flash"),
+            ("gemini", "gemini-3.8-flash"),
             ("gemini", "gemini-2.5-flash-lite"),
             ("groq", "groq-test"),
             ("openai", "gpt-test"),
         ])
+
+    def test_retired_gemini_model_is_skipped_and_remembered(self):
+        class RetiredModel:
+            def __init__(self):
+                self.models = []
+
+            def generate_content(self, model, **kwargs):
+                self.models.append(model)
+                if model == "gemini-2.5-flash":
+                    raise RuntimeError(
+                        "404 NOT_FOUND. This model models/gemini-2.5-flash is no longer "
+                        "available to new users."
+                    )
+                return SimpleNamespace(text='[{"timestamp": "00:00", "title": "Intro"}]')
+
+        gemini = RetiredModel()
+        processor = self._processor(gemini, None, None)
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 5, "text": "Welcome"}], "video", "gemini-2.5-flash"
+        ))
+
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(gemini.models, ["gemini-2.5-flash", "gemini-3.6-flash"])
+        self.assertNotIn(("gemini", "gemini-2.5-flash"), processor._provider_chain())
+
+    def test_retry_delay_uses_the_wait_the_api_requests(self):
+        self.assertEqual(
+            SummaryProcessor._retry_delay(RuntimeError("Please try again in 7.5s.")), 8.5
+        )
+        self.assertEqual(
+            SummaryProcessor._retry_delay(RuntimeError("Please try again in 1m2.5s.")), 63.5
+        )
+        self.assertEqual(
+            SummaryProcessor._retry_delay(RuntimeError("try again in 500ms")), 1.5
+        )
 
     def test_summary_falls_back_to_second_gemini_model(self):
         class QuotaOnFirstModel:
@@ -249,9 +285,9 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         ))
 
         self.assertTrue(response.content["success"], response.content)
-        self.assertEqual(gemini.models, ["gemini-3.6-flash", "gemini-2.5-flash"])
+        self.assertEqual(gemini.models, ["gemini-3.6-flash", "gemini-3.8-flash"])
         self.assertEqual(response.content["provider"], "Gemini fallback")
-        self.assertEqual(response.content["model"], "gemini-2.5-flash")
+        self.assertEqual(response.content["model"], "gemini-3.8-flash")
 
     def test_summary_reports_every_exhausted_provider(self):
         class Exhausted:

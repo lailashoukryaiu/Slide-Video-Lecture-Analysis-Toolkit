@@ -9,6 +9,11 @@ import time
 from pathlib import Path
 
 CLOUD_TRANSCRIPTION_MODELS = {
+    "gemini:gemini-3.8-flash": {
+        "provider": "gemini",
+        "api_model": "gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash",
+    },
     "groq:whisper-large-v3-turbo": {
         "provider": "groq",
         "api_model": "whisper-large-v3-turbo",
@@ -69,7 +74,7 @@ def recommended_transcription_model(cuda_available):
     if provider_api_key("groq"):
         return "groq:whisper-large-v3-turbo"
     if provider_api_key("gemini"):
-        return "gemini:gemini-3.6-flash"
+        return "gemini:gemini-3.8-flash"
     return "turbo"
 
 

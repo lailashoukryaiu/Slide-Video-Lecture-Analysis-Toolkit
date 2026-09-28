@@ -1,5 +1,6 @@
 import os
 import json
+import subprocess
 import time
 import asyncio
 import threading
@@ -437,9 +438,17 @@ class TranscriptProcessor:
                     "The video may not contain recognizable speech."
                 )
             speaker_names = {}
+            diarization_error = None
             if diarization:
                 self._write_whisper_phase(video_id, "identifying_speakers")
-                transcript, speaker_names = self.apply_diarization(video_path, transcript)
+                try:
+                    transcript, speaker_names = self.apply_diarization(video_path, transcript)
+                except Exception as error:
+                    if original_transcript:
+                        raise
+                    # Keep the new transcript; only the speaker labels are missing.
+                    diarization_error = str(error)[:500]
+                    print(f"Speaker identification failed; keeping the transcript: {error}")
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
             previous_metadata = self._read_whisper_metadata(video_id)
@@ -462,7 +471,8 @@ class TranscriptProcessor:
                     "device": device,
                     "transcription_method": method,
                     "word_timestamps": not is_cloud_model(model),
-                    "diarization": bool(diarization),
+                    "diarization": bool(diarization) and not diarization_error,
+                    "diarization_error": diarization_error,
                     "speaker_names": speaker_names,
                     "generated_at": generated_at,
                 }, f)
@@ -606,7 +616,7 @@ class TranscriptProcessor:
             key: metadata.get(key)
             for key in (
                 "model", "prompt", "device", "transcription_method",
-                "diarization", "generated_at",
+                "diarization", "diarization_error", "generated_at",
             )
         }
 
@@ -647,6 +657,59 @@ class TranscriptProcessor:
             except OSError:
                 return
 
+    @staticmethod
+    def _load_pyannote_pipeline(Pipeline, token):
+        """Load the diarization pipeline with pyannote.audio 3.x or 4.x."""
+        errors = []
+        for name in ("pyannote/speaker-diarization-3.1", "pyannote/speaker-diarization-community-1"):
+            # pyannote.audio 4 renamed use_auth_token to token.
+            for auth in ({"token": token}, {"use_auth_token": token}):
+                try:
+                    pipeline = Pipeline.from_pretrained(name, **auth)
+                except TypeError as error:
+                    errors.append(f"{name}: {error}")
+                    continue
+                except Exception as error:
+                    errors.append(f"{name}: {error}")
+                    break
+                if pipeline is not None:
+                    return pipeline
+                errors.append(f"{name}: access denied or model terms not accepted")
+                break
+        raise RuntimeError(" | ".join(errors))
+
+    @staticmethod
+    def _load_audio_waveform(video_path):
+        """Decode mono 16 kHz audio with ffmpeg so pyannote does not need a video decoder."""
+        import numpy as np
+        import torch
+
+        result = subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
+                "-f", "f32le", "pipe:1",
+            ],
+            capture_output=True, check=True,
+        )
+        samples = np.frombuffer(result.stdout, dtype=np.float32).copy()
+        if not samples.size:
+            raise RuntimeError("The video has no audio track to identify speakers in.")
+        return {"waveform": torch.from_numpy(samples).unsqueeze(0), "sample_rate": 16000}
+
+    def _run_pyannote(self, Pipeline, token, video_path):
+        pipeline = self._load_pyannote_pipeline(Pipeline, token)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                pipeline.to(torch.device("cuda"))
+        except Exception as error:
+            print(f"Speaker identification will run on the CPU: {error}")
+        result = pipeline(self._load_audio_waveform(video_path))
+        # pyannote.audio 4 returns an object whose speaker_diarization is the annotation.
+        return getattr(result, "speaker_diarization", result)
+
     def apply_diarization(self, video_path, transcript):
         """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""
         token = get_huggingface_token()
@@ -664,8 +727,7 @@ class TranscriptProcessor:
                 "requirements and retry."
             ) from error
         try:
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=token)
-            diarization = pipeline(video_path)
+            annotation = self._run_pyannote(Pipeline, token, video_path)
         except Exception as error:
             raise RuntimeError(
                 f"Speaker identification could not start. Confirm the Hugging Face token "
@@ -674,7 +736,7 @@ class TranscriptProcessor:
 
         speaker_segments = [
             (turn.start, turn.end, speaker)
-            for turn, _, speaker in diarization.itertracks(yield_label=True)
+            for turn, _, speaker in annotation.itertracks(yield_label=True)
         ]
         speakers = sorted({speaker for _, _, speaker in speaker_segments})
         speaker_names = {speaker: speaker.replace("_", " ").title() for speaker in speakers}

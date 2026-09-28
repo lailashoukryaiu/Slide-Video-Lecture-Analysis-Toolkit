@@ -180,7 +180,7 @@ export async function generateChapters() {
             body: JSON.stringify({
                 transcript: state.currentTranscript,
                 video_id: state.currentVideoId,
-                model: elements.summaryModel?.value || 'gemini-3.6-flash'
+                model: elements.summaryModel?.value || 'gemini-3.8-flash'
             })
         });
 

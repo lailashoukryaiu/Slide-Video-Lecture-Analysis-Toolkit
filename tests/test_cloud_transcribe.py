@@ -19,7 +19,7 @@ class RecommendedModelTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GOOGLE_API_KEY": "k"}, clear=True):
             self.assertEqual(
                 cloud_transcribe.recommended_transcription_model(False),
-                "gemini:gemini-3.6-flash",
+                "gemini:gemini-3.8-flash",
             )
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(cloud_transcribe.recommended_transcription_model(False), "turbo")

@@ -6,7 +6,7 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=prompt-fallbacks-20260928">
+    <link rel="stylesheet" href="/static/styles.css?v=model-fixes-20260928b">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -188,8 +188,8 @@
                                     <optgroup label="Online (free tier, no GPU needed)">
                                         <option value="groq:whisper-large-v3-turbo">Groq Whisper Large v3 Turbo</option>
                                         <option value="groq:whisper-large-v3">Groq Whisper Large v3</option>
+                                        <option value="gemini:gemini-3.8-flash">Gemini 3.8 Flash</option>
                                         <option value="gemini:gemini-3.6-flash">Gemini 3.6 Flash</option>
-                                        <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash</option>
                                     </optgroup>
                                 </select>
                                 <small id="transcriptModelHelp">The default adapts to this session's GPU and API keys.</small>
@@ -203,7 +203,8 @@
                                     Create a Hugging Face read token, accept the terms for
                                     <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer">speaker-diarization-3.1</a>
                                     and
-                                    <a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer">segmentation-3.0</a>,
+                                    <a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer">segmentation-3.0</a>
+                                    (or <a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noopener noreferrer">speaker-diarization-community-1</a>),
                                     then set <code>HF_TOKEN</code> in the server environment and restart the server.
                                     </span>
                                 </small>
@@ -223,8 +224,8 @@
                                 <label for="translationModel">Translation model</label>
                                 <select id="translationModel">
                                     <option value="" selected>Auto (use configured default)</option>
+                                    <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
                                     <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                                     <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (largest free quota)</option>
                                     <option value="groq:openai/gpt-oss-120b">Groq GPT-OSS 120B (free)</option>
                                     <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini (paid)</option>
@@ -253,13 +254,13 @@
                             <div id="summaryOptionsPanel" class="summary-options" hidden>
                                 <label for="summaryModel">Chapter generation model</label>
                                 <select id="summaryModel">
-                                    <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash</option>
-                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                    <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash</option>
+                                    <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
                                     <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (largest free quota)</option>
                                     <option value="groq:openai/gpt-oss-120b">Groq GPT-OSS 120B (free)</option>
                                     <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini (paid)</option>
                                 </select>
-                                <small>If the chosen model is out of quota, the other Gemini models are tried next (each has its own free quota), then Groq (<code>GROQ_API_KEY</code>), then OpenAI (<code>OPENAI_API_KEY</code>). Do not paste API keys into the browser.</small>
+                                <small>If the chosen model is unavailable or out of quota, the other Gemini models are tried next (each has its own free quota), then Groq (<code>GROQ_API_KEY</code>), then OpenAI (<code>OPENAI_API_KEY</code>). Do not paste API keys into the browser.</small>
                             </div>
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
@@ -552,7 +553,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=prompt-fallbacks-20260928"></script>
+    <script type="module" src="/static/js/index.js?v=model-fixes-20260928b"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

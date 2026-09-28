@@ -16,7 +16,14 @@ from project_paths import SUMMARIES_DIR
 
 # Gemini's free-tier quotas are counted per model, so another model often
 # still has quota when the selected one is exhausted.
-GEMINI_FALLBACK_MODELS = ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+GEMINI_FALLBACK_MODELS = (
+    "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash",
+)
+# Gemini retires older models for new API keys with 404 NOT_FOUND; skip those.
+MODEL_UNAVAILABLE_MARKERS = (
+    "404", "not_found", "not found", "no longer available", "model_not_found",
+    "does not exist", "decommissioned", "deprecated",
+)
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}
 
@@ -34,7 +41,8 @@ class SummaryProcessor:
 
         self.client = None
         self.model = None
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        self.unavailable_models = set()
         self.openai_client = None
         self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self.groq_client = None
@@ -89,6 +97,16 @@ class SummaryProcessor:
             if refresh:
                 refresh()
 
+    @staticmethod
+    def _provider_chain_entry(requested_model):
+        if not requested_model:
+            return None
+        if requested_model.startswith("gpt-"):
+            return ("openai", requested_model)
+        if requested_model.startswith("groq:"):
+            return ("groq", requested_model[len("groq:"):])
+        return ("gemini", requested_model)
+
     def _provider_chain(self, requested_model=None):
         """Return (provider, model) pairs to try, in order, skipping unconfigured ones."""
         configured = {
@@ -97,18 +115,17 @@ class SummaryProcessor:
             "openai": bool(getattr(self, "openai_client", None)),
         }
         chain = []
+        unavailable = getattr(self, "unavailable_models", set())
 
         def add(provider, model):
-            if model and configured[provider] and (provider, model) not in chain:
+            if (
+                model and configured[provider] and (provider, model) not in chain
+                and (provider, model) not in unavailable
+            ):
                 chain.append((provider, model))
 
         if requested_model:
-            if requested_model.startswith("gpt-"):
-                add("openai", requested_model)
-            elif requested_model.startswith("groq:"):
-                add("groq", requested_model[len("groq:"):])
-            else:
-                add("gemini", requested_model)
+            add(*self._provider_chain_entry(requested_model))
         add("gemini", self.model_name)
         for model in GEMINI_FALLBACK_MODELS:
             add("gemini", model)
@@ -201,6 +218,7 @@ Format each chapter exactly like this example:
                         asyncio.to_thread(
                             self._complete, candidate, model, prompt, 0.5,
                             candidate == "gemini",
+                            2048 if candidate == "groq" else None,
                         ),
                         timeout=90,
                     )
@@ -209,6 +227,9 @@ Format each chapter exactly like this example:
                     break
                 except Exception as error:
                     failures.append(f"{PROVIDER_LABELS[candidate]} {model}: {error}")
+                    if self._is_model_unavailable(error):
+                        self._mark_unavailable(candidate, model)
+                        continue
                     if not self._is_quota_error(error):
                         return JSONResponse({
                             "success": False,
@@ -217,7 +238,7 @@ Format each chapter exactly like this example:
             if response_text is None:
                 return JSONResponse({
                     "success": False,
-                    "error": "Every configured AI model is out of quota or busy. "
+                    "error": "Every configured AI model is out of quota, busy or unavailable. "
                              "Wait a while, or add GROQ_API_KEY (free) as another fallback. "
                              "Details: " + " | ".join(failures),
                 })
@@ -246,7 +267,7 @@ Format each chapter exactly like this example:
                 "provider": provider,
                 "model": used_model,
                 "notice": (
-                    f"The first model was out of quota or busy; {provider.replace(' fallback', '')} "
+                    f"The first model was unavailable, out of quota or busy; {provider.replace(' fallback', '')} "
                     f"{used_model} generated these chapters."
                 ) if provider.endswith("fallback") else None
             })
@@ -264,7 +285,12 @@ Format each chapter exactly like this example:
         if _chain is None:
             self._refresh_clients()
             _chain = self._provider_chain(requested_model)
-            if requested_model and (not _chain or _chain[0][1] != requested_model.removeprefix("groq:")):
+            requested_pair = self._provider_chain_entry(requested_model)
+            if (
+                requested_model
+                and requested_pair not in getattr(self, "unavailable_models", set())
+                and (not _chain or _chain[0] != requested_pair)
+            ):
                 raise RuntimeError(
                     f"Model {requested_model} was selected, but its API key is not configured."
                 )
@@ -285,9 +311,17 @@ Format each chapter exactly like this example:
         if len(translation_items) != len(transcript):
             raise ValueError("Every transcript segment must be an object")
 
-        batches = self._translation_batches(translation_items)
+        batches = (
+            self._translation_batches(translation_items, 30, 2500)
+            if provider == "groq"
+            else self._translation_batches(translation_items)
+        )
         started_at = time.monotonic()
-        semaphore = asyncio.Semaphore(2)
+        # Groq's free tier counts the requested output tokens against a small
+        # per-minute budget, so send smaller batches one at a time.
+        semaphore = asyncio.Semaphore(1 if provider == "groq" else 2)
+        max_output_tokens = 3000 if provider == "groq" else 8192
+        attempts = 4 if provider == "groq" else 2
         context_lines = 4
 
         async def translate_batch(batch, batch_number):
@@ -330,20 +364,24 @@ Format each chapter exactly like this example:
                     )
                     raw_result = None
                     last_error = None
-                    for attempt in range(2):
+                    for attempt in range(attempts):
                         try:
                             raw_result = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     self._complete, provider, selected_model, prompt,
-                                    0.2, True, 8192,
+                                    0.2, True, max_output_tokens,
                                 ),
                                 timeout=120,
                             )
                             break
                         except Exception as error:
                             last_error = error
-                            if attempt == 0:
-                                await asyncio.sleep(1)
+                            if self._is_model_unavailable(error):
+                                break
+                            if attempt < attempts - 1:
+                                await asyncio.sleep(
+                                    self._retry_delay(error) if provider == "groq" else 1
+                                )
                     if raw_result is None:
                         raise RuntimeError(
                             f"Translation batch {batch_number} {request_label} request failed "
@@ -415,7 +453,10 @@ Format each chapter exactly like this example:
                 )
             )
         except Exception as error:
-            if len(_chain) < 2 or not self._is_quota_error(error):
+            unavailable = self._is_model_unavailable(error)
+            if unavailable:
+                self._mark_unavailable(provider, selected_model)
+            if len(_chain) < 2 or not (unavailable or self._is_quota_error(error)):
                 raise
             next_provider, next_model = _chain[1]
             print(
@@ -476,11 +517,33 @@ Format each chapter exactly like this example:
         return batches
 
     @staticmethod
+    def _retry_delay(error: Exception) -> float:
+        """Use the wait time a rate-limited API asks for (e.g. 'try again in 7.5s')."""
+        match = re.search(r"try again in\s+(?:(\d+)m)?([\d.]+)(ms|s)", str(error), re.IGNORECASE)
+        if match:
+            minutes = int(match.group(1) or 0)
+            seconds = float(match.group(2)) / (1000 if match.group(3).lower() == "ms" else 1)
+            return min(65.0, minutes * 60 + seconds + 1)
+        text = str(error).lower()
+        return 20.0 if ("429" in text or "rate" in text) else 2.0
+
+    @staticmethod
+    def _is_model_unavailable(error: Exception) -> bool:
+        text = str(error).lower()
+        return any(marker in text for marker in MODEL_UNAVAILABLE_MARKERS)
+
+    def _mark_unavailable(self, provider, model):
+        if not hasattr(self, "unavailable_models"):
+            self.unavailable_models = set()
+        self.unavailable_models.add((provider, model))
+        print(f"{PROVIDER_LABELS[provider]} {model} is not available for this API key; skipping it")
+
+    @staticmethod
     def _is_quota_error(error: Exception) -> bool:
         text = str(error).lower()
         return any(marker in text for marker in (
-            "429", "503", "resource_exhausted", "quota", "rate limit",
-            "too many requests", "unavailable", "high demand", "overloaded"
+            "429", "503", "resource_exhausted", "quota", "rate limit", "rate_limit",
+            "too many requests", "unavailable", "high demand", "overloaded", "request too large"
         ))
 
     @staticmethod
