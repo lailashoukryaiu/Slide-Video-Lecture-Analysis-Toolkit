@@ -179,6 +179,18 @@ class SceneProcessor:
             video_path, timestamps, options["screenshot_height"]
         )
 
+    @staticmethod
+    def _release_video_stream(video) -> None:
+        """Release a PySceneDetect stream; VideoStreamCv2 has no close() method."""
+        close = getattr(video, "close", None)
+        if callable(close):
+            close()
+            return
+        capture = getattr(video, "capture", None) or getattr(video, "_cap", None)
+        release = getattr(capture, "release", None)
+        if callable(release):
+            release()
+
     def detect_content_scenes(self, video_path: str, options: dict, chapter_timestamps: list) -> tuple:
         """Detect hard cuts using PySceneDetect's content detector."""
         video = open_video(video_path)
@@ -192,7 +204,7 @@ class SceneProcessor:
             scene_manager.detect_scenes(video=video, show_progress=True, frame_skip=2)
             detected_scenes = scene_manager.get_scene_list()
         finally:
-            video.close()
+            self._release_video_stream(video)
         timestamps = [0.0, *[scene[0].get_seconds() for scene in detected_scenes]]
         duration_seconds = self._video_duration(video_path)
         timestamps = self._merge_boundaries(

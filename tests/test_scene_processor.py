@@ -33,5 +33,33 @@ class SceneProcessorLimitTests(unittest.TestCase):
         self.assertEqual(SceneProcessor._maximum_slide_count(30, 0), 0)
 
 
+class VideoStreamReleaseTests(unittest.TestCase):
+    def test_opencv_stream_without_close_releases_capture(self):
+        class FakeCapture:
+            released = False
+
+            def release(self):
+                self.released = True
+
+        class FakeVideoStreamCv2:
+            def __init__(self):
+                self._cap = FakeCapture()
+
+        video = FakeVideoStreamCv2()
+        SceneProcessor._release_video_stream(video)
+        self.assertTrue(video._cap.released)
+
+    def test_stream_with_close_is_closed(self):
+        class FakeStream:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        video = FakeStream()
+        SceneProcessor._release_video_stream(video)
+        self.assertTrue(video.closed)
+
+
 if __name__ == "__main__":
     unittest.main()
