@@ -14,6 +14,12 @@ except ImportError:
 
 from project_paths import SUMMARIES_DIR
 
+# Gemini's free-tier quotas are counted per model, so another model often
+# still has quota when the selected one is exhausted.
+GEMINI_FALLBACK_MODELS = ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}
+
 class SummaryProcessor:
     def __init__(self):
         # Initialize Gemini API
@@ -31,7 +37,10 @@ class SummaryProcessor:
         self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.openai_client = None
         self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        self.groq_client = None
+        self.groq_model_name = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
         self._refresh_openai_client()
+        self._refresh_groq_client()
 
         try:
             if not GOOGLE_API_KEY:
@@ -62,15 +71,99 @@ class SummaryProcessor:
             except Exception as error:
                 print(f"Warning: OpenAI API initialization failed: {error}")
 
+    def _refresh_groq_client(self):
+        """Load a Groq client (OpenAI-compatible) if GROQ_API_KEY is configured."""
+        api_key = os.getenv("GROQ_API_KEY")
+        if OpenAI and api_key and getattr(self, "groq_client", None) is None:
+            try:
+                self.groq_client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
+            except Exception as error:
+                print(f"Warning: Groq API initialization failed: {error}")
+
+    def _refresh_clients(self):
+        for refresh in (
+            getattr(self, "_refresh_gemini_client", None),
+            getattr(self, "_refresh_openai_client", None),
+            getattr(self, "_refresh_groq_client", None),
+        ):
+            if refresh:
+                refresh()
+
+    def _provider_chain(self, requested_model=None):
+        """Return (provider, model) pairs to try, in order, skipping unconfigured ones."""
+        configured = {
+            "gemini": bool(self.model),
+            "groq": bool(getattr(self, "groq_client", None)),
+            "openai": bool(getattr(self, "openai_client", None)),
+        }
+        chain = []
+
+        def add(provider, model):
+            if model and configured[provider] and (provider, model) not in chain:
+                chain.append((provider, model))
+
+        if requested_model:
+            if requested_model.startswith("gpt-"):
+                add("openai", requested_model)
+            elif requested_model.startswith("groq:"):
+                add("groq", requested_model[len("groq:"):])
+            else:
+                add("gemini", requested_model)
+        add("gemini", self.model_name)
+        for model in GEMINI_FALLBACK_MODELS:
+            add("gemini", model)
+        add("groq", getattr(self, "groq_model_name", None))
+        add("openai", getattr(self, "openai_model_name", None))
+        return chain
+
+    def _complete(self, provider, model, prompt, temperature, json_output=True, max_tokens=None):
+        """Run one prompt against one provider and return the response text."""
+        if provider == "gemini":
+            config = {"temperature": temperature}
+            if json_output:
+                config["response_mime_type"] = "application/json"
+            if max_tokens:
+                config["max_output_tokens"] = max_tokens
+            response = self.client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config),
+            )
+            return response.text
+        client = self.groq_client if provider == "groq" else self.openai_client
+        options = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        if json_output:
+            options["response_format"] = {"type": "json_object"}
+        if max_tokens:
+            options["max_completion_tokens"] = max_tokens
+        response = client.chat.completions.create(**options)
+        return response.choices[0].message.content
+
+    @staticmethod
+    def _provider_label(provider, index):
+        label = PROVIDER_LABELS[provider]
+        return label if index == 0 else f"{label} fallback"
+
+    @staticmethod
+    def _no_provider_message():
+        return (
+            "No AI model is configured. Set GOOGLE_API_KEY (free), GROQ_API_KEY (free) "
+            "or OPENAI_API_KEY in the Colab runtime and restart the server."
+        )
     async def generate_summary(self, transcript: list, video_id: str = None, requested_model: str = None):
         """Generate chapter summary using Gemini."""
         try:
-            self._refresh_openai_client()
-            if not transcript or (not self.model and not self.openai_client):
+            self._refresh_clients()
+            chain = self._provider_chain(requested_model)
+            if not transcript or not chain:
                 return JSONResponse({
                     "success": False,
-                    "error": "No transcript available or no summary model is configured. "
-                             "Set GOOGLE_API_KEY or OPENAI_API_KEY in the Colab runtime and restart the server."
+                    "error": "No transcript is available." if not transcript
+                    else self._no_provider_message(),
                 })
 
             # Combine transcript text with timestamps
@@ -98,69 +191,36 @@ Format each chapter exactly like this example:
             # dump prompt into a debug file
             with open('debug.txt', 'w') as f:
                 f.write(prompt)
-            selected_model = requested_model or self.model_name
-            use_openai = selected_model.startswith("gpt-")
-            provider = "OpenAI" if use_openai else "Gemini"
-            try:
-                if use_openai:
-                    if not self.openai_client:
-                        raise RuntimeError("OpenAI is not configured")
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self.openai_client.chat.completions.create,
-                            model=selected_model,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.5,
-                        ),
-                        timeout=90,
-                    )
-                    response_text = response.choices[0].message.content
-                elif not self.model:
-                    raise RuntimeError("Gemini is not configured")
-                else:
-                    response_text = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=selected_model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.5,
-                            response_mime_type="application/json",
-                        ),
-                    ),
-                    timeout=90,
-                    )
-                    response_text = response_text.text
-            except Exception as error:
-                if use_openai:
-                    return JSONResponse({"success": False, "error": f"OpenAI could not generate chapters: {error}"})
-                if not self._is_quota_error(error):
-                    return JSONResponse({
-                        "success": False,
-                        "error": f"Gemini could not generate a summary: {error}"
-                    })
-                if not self.openai_client:
-                    return JSONResponse({
-                        "success": False,
-                        "error": "Gemini quota is exhausted. Configure OPENAI_API_KEY to use the OpenAI fallback."
-                    })
-                provider = "OpenAI fallback"
+            response_text = None
+            failures = []
+            provider = None
+            used_model = None
+            for index, (candidate, model) in enumerate(chain):
                 try:
-                    response = await asyncio.wait_for(
+                    response_text = await asyncio.wait_for(
                         asyncio.to_thread(
-                            self.openai_client.chat.completions.create,
-                            model=self.openai_model_name,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.5,
+                            self._complete, candidate, model, prompt, 0.5,
+                            candidate == "gemini",
                         ),
                         timeout=90,
                     )
-                    response_text = response.choices[0].message.content
-                except Exception as fallback_error:
-                    return JSONResponse({
-                        "success": False,
-                        "error": f"Gemini quota is exhausted and OpenAI fallback failed: {fallback_error}"
-                    })
+                    provider = self._provider_label(candidate, index)
+                    used_model = model
+                    break
+                except Exception as error:
+                    failures.append(f"{PROVIDER_LABELS[candidate]} {model}: {error}")
+                    if not self._is_quota_error(error):
+                        return JSONResponse({
+                            "success": False,
+                            "error": f"{PROVIDER_LABELS[candidate]} {model} could not generate chapters: {error}",
+                        })
+            if response_text is None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Every configured AI model is out of quota or busy. "
+                             "Wait a while, or add GROQ_API_KEY (free) as another fallback. "
+                             "Details: " + " | ".join(failures),
+                })
             try:
                 # Try to parse the response as JSON
                 chapters = json.loads(response_text)
@@ -184,8 +244,11 @@ Format each chapter exactly like this example:
                 "success": True,
                 "chapters": chapters,
                 "provider": provider,
-                "notice": "Gemini quota was exceeded; the OpenAI fallback generated these chapters."
-                    if provider == "OpenAI fallback" else None
+                "model": used_model,
+                "notice": (
+                    f"The first model was out of quota or busy; {provider.replace(' fallback', '')} "
+                    f"{used_model} generated these chapters."
+                ) if provider.endswith("fallback") else None
             })
 
         except Exception as e:
@@ -195,29 +258,19 @@ Format each chapter exactly like this example:
             })
 
     async def translate_transcript(
-        self, transcript, target_language, requested_model=None, force_openai=False
+        self, transcript, target_language, requested_model=None, _chain=None, _chain_offset=0
     ):
         """Translate transcript segments in bounded concurrent batches."""
-        self._refresh_gemini_client()
-        self._refresh_openai_client()
-        if not self.model and not self.openai_client:
-            raise RuntimeError(
-                "No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY "
-                "in the Colab runtime and restart the server."
-            )
-        if force_openai:
-            use_openai = True
-            selected_model = self.openai_model_name
-        elif requested_model:
-            selected_model = requested_model
-            use_openai = selected_model.startswith("gpt-")
-        else:
-            use_openai = not self.model
-            selected_model = self.openai_model_name if use_openai else self.model_name
-        if use_openai and not self.openai_client:
-            raise RuntimeError(f"OpenAI model {selected_model} was selected, but OPENAI_API_KEY is not configured.")
-        if not use_openai and not self.model:
-            raise RuntimeError(f"Gemini model {selected_model} was selected, but GOOGLE_API_KEY is not configured.")
+        if _chain is None:
+            self._refresh_clients()
+            _chain = self._provider_chain(requested_model)
+            if requested_model and (not _chain or _chain[0][1] != requested_model.removeprefix("groq:")):
+                raise RuntimeError(
+                    f"Model {requested_model} was selected, but its API key is not configured."
+                )
+        if not _chain:
+            raise RuntimeError(self._no_provider_message())
+        provider, selected_model = _chain[0]
 
         translation_items = [
             {
@@ -279,34 +332,13 @@ Format each chapter exactly like this example:
                     last_error = None
                     for attempt in range(2):
                         try:
-                            if use_openai:
-                                response = await asyncio.wait_for(
-                                    asyncio.to_thread(
-                                        self.openai_client.chat.completions.create,
-                                        model=selected_model,
-                                        messages=[{"role": "user", "content": prompt}],
-                                        temperature=0.2,
-                                        response_format={"type": "json_object"},
-                                        max_completion_tokens=8192,
-                                    ),
-                                    timeout=120,
-                                )
-                                raw_result = response.choices[0].message.content
-                            else:
-                                response = await asyncio.wait_for(
-                                    asyncio.to_thread(
-                                        self.client.models.generate_content,
-                                        model=selected_model,
-                                        contents=prompt,
-                                        config=types.GenerateContentConfig(
-                                            temperature=0.2,
-                                            response_mime_type="application/json",
-                                            max_output_tokens=8192,
-                                        ),
-                                    ),
-                                    timeout=120,
-                                )
-                                raw_result = response.text
+                            raw_result = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self._complete, provider, selected_model, prompt,
+                                    0.2, True, 8192,
+                                ),
+                                timeout=120,
+                            )
                             break
                         except Exception as error:
                             last_error = error
@@ -383,14 +415,18 @@ Format each chapter exactly like this example:
                 )
             )
         except Exception as error:
-            if use_openai or not self.openai_client or not self._is_quota_error(error):
+            if len(_chain) < 2 or not self._is_quota_error(error):
                 raise
-            print(f"Gemini translation unavailable; using OpenAI fallback: {error}")
-            result = await self.translate_transcript(
-                transcript, target_language, force_openai=True
+            next_provider, next_model = _chain[1]
+            print(
+                f"{PROVIDER_LABELS[provider]} {selected_model} translation unavailable; "
+                f"trying {PROVIDER_LABELS[next_provider]} {next_model}: {error}"
             )
-            result["provider"] = "OpenAI fallback"
-            result["fallback_reason"] = str(error)[:300]
+            result = await self.translate_transcript(
+                transcript, target_language, _chain=_chain[1:],
+                _chain_offset=_chain_offset + 1,
+            )
+            result.setdefault("fallback_reason", str(error)[:300])
             return result
         translated_text = {
             segment_id: text
@@ -412,7 +448,7 @@ Format each chapter exactly like this example:
             )
         return {
             "transcript": translated,
-            "provider": "OpenAI" if use_openai else "Gemini",
+            "provider": self._provider_label(provider, _chain_offset),
             "model": selected_model,
             "batch_count": len(batches),
             "context_lines": context_lines,

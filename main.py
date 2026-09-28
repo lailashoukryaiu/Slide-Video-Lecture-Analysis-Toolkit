@@ -79,22 +79,18 @@ async def yolo_status():
 @app.get("/runtime_status")
 async def runtime_status():
     """Report the compute device used by Whisper and available CUDA GPU."""
-    summary_processor._refresh_gemini_client()
-    summary_processor._refresh_openai_client()
+    summary_processor._refresh_clients()
+    default_chain = summary_processor._provider_chain()
     translation_status = {
         "translation_default_provider": (
-            "Gemini" if summary_processor.model
-            else "OpenAI" if summary_processor.openai_client
-            else None
+            {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}[default_chain[0][0]]
+            if default_chain else None
         ),
-        "translation_default_model": (
-            summary_processor.model_name
-            if summary_processor.model
-            else summary_processor.openai_model_name if summary_processor.openai_client
-            else None
-        ),
+        "translation_default_model": default_chain[0][1] if default_chain else None,
+        "ai_fallback_chain": [f"{provider}:{model}" for provider, model in default_chain],
         "gemini_configured": bool(summary_processor.model),
         "openai_configured": bool(summary_processor.openai_client),
+        "groq_configured": bool(summary_processor.groq_client),
         "huggingface_token_configured": bool(get_huggingface_token()),
         "transcription_providers": cloud_provider_status(),
     }
@@ -224,7 +220,10 @@ async def translate_transcript(video_id: str, request: Request):
     requested_model = data.get("model") or None
     if target not in {"de", "en", "ar", "pl"}:
         raise HTTPException(status_code=400, detail="Unsupported translation language")
-    if requested_model not in {None, "gemini-3.6-flash", "gemini-2.5-flash", "gpt-4.1-mini"}:
+    if requested_model not in {
+        None, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+        "groq:openai/gpt-oss-120b", "gpt-4.1-mini",
+    }:
         raise HTTPException(status_code=400, detail="Unsupported translation model")
     if (
         not isinstance(transcript, list)
@@ -579,6 +578,7 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
         bool(options.get("diarization", False)),
         bool(options.get("force", False)),
         str(options.get("model") or "") or None,
+        str(options.get("prompt") or "").strip() or None,
     )
 
 @app.get("/whisper_transcript_status/{video_id}")

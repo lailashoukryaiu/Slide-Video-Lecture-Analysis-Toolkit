@@ -192,5 +192,85 @@ class SummaryProcessorTranslationTests(unittest.TestCase):
         )
 
 
+class SummaryProviderFallbackTests(unittest.TestCase):
+    def setUp(self):
+        class FakeJSONResponse:
+            def __init__(self, content):
+                self.content = content
+
+        from processors import summary_processor as summary_module
+        self._module = summary_module
+        self._original_response = summary_module.JSONResponse
+        summary_module.JSONResponse = FakeJSONResponse
+
+    def tearDown(self):
+        self._module.JSONResponse = self._original_response
+
+    def _processor(self, gemini_models, groq_completions, openai_completions):
+        processor = SummaryProcessor.__new__(SummaryProcessor)
+        processor.client = SimpleNamespace(models=gemini_models)
+        processor.model = True
+        processor.model_name = "gemini-3.6-flash"
+        processor.groq_client = SimpleNamespace(chat=SimpleNamespace(completions=groq_completions))
+        processor.groq_model_name = "groq-test"
+        processor.openai_client = SimpleNamespace(chat=SimpleNamespace(completions=openai_completions))
+        processor.openai_model_name = "gpt-test"
+        processor._refresh_gemini_client = lambda: None
+        processor._refresh_openai_client = lambda: None
+        processor._refresh_groq_client = lambda: None
+        processor._save_chapters = lambda video_id, chapters: None
+        return processor
+
+    def test_chain_tries_other_gemini_models_then_groq_before_paid_openai(self):
+        processor = self._processor(None, None, None)
+        self.assertEqual(processor._provider_chain("gemini-2.5-flash"), [
+            ("gemini", "gemini-2.5-flash"),
+            ("gemini", "gemini-3.6-flash"),
+            ("gemini", "gemini-2.5-flash-lite"),
+            ("groq", "groq-test"),
+            ("openai", "gpt-test"),
+        ])
+
+    def test_summary_falls_back_to_second_gemini_model(self):
+        class QuotaOnFirstModel:
+            def __init__(self):
+                self.models = []
+
+            def generate_content(self, model, **kwargs):
+                self.models.append(model)
+                if model == "gemini-3.6-flash":
+                    raise RuntimeError("429 RESOURCE_EXHAUSTED")
+                return SimpleNamespace(text='[{"timestamp": "00:00", "title": "Intro"}]')
+
+        gemini = QuotaOnFirstModel()
+        processor = self._processor(gemini, None, None)
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 5, "text": "Welcome"}], "video", "gemini-3.6-flash"
+        ))
+
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(gemini.models, ["gemini-3.6-flash", "gemini-2.5-flash"])
+        self.assertEqual(response.content["provider"], "Gemini fallback")
+        self.assertEqual(response.content["model"], "gemini-2.5-flash")
+
+    def test_summary_reports_every_exhausted_provider(self):
+        class Exhausted:
+            def generate_content(self, **kwargs):
+                raise RuntimeError("429 quota exceeded")
+
+            def create(self, **kwargs):
+                raise RuntimeError("Error code: 429 insufficient_quota")
+
+        exhausted = Exhausted()
+        processor = self._processor(exhausted, exhausted, exhausted)
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 5, "text": "Welcome"}], "video"
+        ))
+
+        self.assertFalse(response.content["success"])
+        self.assertIn("Every configured AI model", response.content["error"])
+        self.assertIn("Groq groq-test", response.content["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

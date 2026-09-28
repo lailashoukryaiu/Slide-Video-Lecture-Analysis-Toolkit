@@ -172,8 +172,8 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             transcript_module.TRANSCRIPTS_DIR = Path(directory)
             calls = []
 
-            def fake_transcribe(path, model_name="turbo"):
-                calls.append(model_name)
+            def fake_transcribe(path, model_name="turbo", prompt=None):
+                calls.append((model_name, prompt))
                 yield "1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n", 100
 
             transcript_module.transcribe_audio = fake_transcribe
@@ -181,19 +181,24 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
                 processor = TranscriptProcessor()
                 output_path = Path(directory) / "video_whisper.json"
                 processor._process_whisper_transcript_sync(
-                    "video", "video.mp4", str(output_path), model="large-v3"
+                    "video", "video.mp4", str(output_path), model="large-v3",
+                    prompt="SAP lecture",
                 )
 
                 metadata = processor._public_whisper_metadata("video")
-                self.assertEqual(calls, ["large-v3"])
+                self.assertEqual(calls, [("large-v3", "SAP lecture")])
                 self.assertEqual(metadata["model"], "large-v3")
+                self.assertEqual(metadata["prompt"], "SAP lecture")
                 self.assertEqual(metadata["device"], "cuda")
                 self.assertFalse(metadata["diarization"])
                 self.assertTrue(
+                    processor._can_reuse_whisper_transcript("video", "large-v3", "SAP lecture")
+                )
+                self.assertFalse(
                     processor._can_reuse_whisper_transcript("video", "large-v3")
                 )
                 self.assertFalse(
-                    processor._can_reuse_whisper_transcript("video", "turbo")
+                    processor._can_reuse_whisper_transcript("video", "turbo", "SAP lecture")
                 )
             finally:
                 transcript_module.TRANSCRIPTS_DIR = original_dir
@@ -222,7 +227,7 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             original_dir = transcript_module.TRANSCRIPTS_DIR
             transcript_module.TRANSCRIPTS_DIR = Path(directory)
 
-            def fake_cloud(path, model):
+            def fake_cloud(path, model, prompt=None):
                 yield [{"text": "Hallo.", "start": 0.0, "duration": 1.5}], 100.0
 
             try:

@@ -40,8 +40,8 @@ class CloudTranscriptionTests(unittest.TestCase):
     def test_parts_are_offset_and_report_progress(self):
         calls = []
 
-        def fake_chunk(audio_path, api_model, api_key):
-            calls.append((api_model, api_key))
+        def fake_chunk(audio_path, api_model, api_key, prompt=None):
+            calls.append((api_model, api_key, prompt))
             return [{"start": 1.0, "end": 3.5, "text": "Hello."}]
 
         with mock.patch.dict(os.environ, {"GROQ_API_KEY": "secret"}, clear=True), \
@@ -49,10 +49,10 @@ class CloudTranscriptionTests(unittest.TestCase):
                 mock.patch.object(cloud_transcribe, "extract_audio_chunk"), \
                 mock.patch.object(cloud_transcribe, "_transcribe_groq_chunk", fake_chunk):
             results = list(cloud_transcribe.transcribe_audio_cloud(
-                "video.mp4", "groq:whisper-large-v3-turbo"
+                "video.mp4", "groq:whisper-large-v3-turbo", "SAP Fiori"
             ))
 
-        self.assertEqual(calls, [("whisper-large-v3-turbo", "secret")] * 2)
+        self.assertEqual(calls, [("whisper-large-v3-turbo", "secret", "SAP Fiori")] * 2)
         self.assertEqual(results[0][0], [{"text": "Hello.", "start": 1.0, "duration": 2.5}])
         self.assertEqual(results[1][0][0]["start"], 1201.0)
         self.assertEqual([round(progress) for _, progress in results], [80, 100])

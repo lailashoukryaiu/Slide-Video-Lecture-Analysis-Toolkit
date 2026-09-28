@@ -47,7 +47,7 @@ def describe_transcription_method(device):
     return "batched (batch size 16)" if device == "cuda" else "streaming with VAD"
 
 
-def transcribe_audio(file_path, batch_size=16, model_name="turbo"):
+def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None):
     """Transcribe audio file and yield sentences as they are processed."""
     if model_name not in WHISPER_MODELS:
         raise ValueError(f"Unsupported Whisper model: {model_name}")
@@ -56,6 +56,7 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo"):
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    prompt_options = {"initial_prompt": prompt} if prompt else {}
     if device == "cuda":
         inference_model = BatchedInferencePipeline(model=model)
         segments, info = inference_model.transcribe(
@@ -63,6 +64,7 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo"):
             batch_size=batch_size,
             word_timestamps=True,
             log_progress=True,
+            **prompt_options,
         )
     else:
         segments, info = model.transcribe(
@@ -70,6 +72,7 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo"):
             word_timestamps=True,
             log_progress=True,
             vad_filter=True,
+            **prompt_options,
         )
     total_duration = info.duration
     print(total_duration)

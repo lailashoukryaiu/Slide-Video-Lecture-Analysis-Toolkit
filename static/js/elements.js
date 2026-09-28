@@ -28,6 +28,7 @@ export const elements = {
     get speakerDiarizationSetup() { return document.getElementById('speakerDiarizationSetup'); },
     get transcriptModel() { return document.getElementById('transcriptModel'); },
     get transcriptModelHelp() { return document.getElementById('transcriptModelHelp'); },
+    get transcriptPrompt() { return document.getElementById('transcriptPrompt'); },
     get transcriptSourceInfo() { return document.getElementById('transcriptSourceInfo'); },
     get speakerNamesPanel() { return document.getElementById('speakerNamesPanel'); },
     get transcriptOptionsBtn() { return document.getElementById('transcriptOptionsBtn'); },

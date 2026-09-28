@@ -41,6 +41,8 @@ PROVIDER_KEY_NAMES = {
 # the JSON response well below the output token limit.
 CHUNK_SECONDS = {"groq": 1200, "gemini": 600}
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Whisper only reads the last 224 tokens of a prompt; about 800 characters.
+GROQ_PROMPT_CHARACTERS = 800
 RETRY_DELAYS_SECONDS = (15, 30, 60, 90)
 
 
@@ -135,10 +137,11 @@ def _field(item, name, default=None):
     return getattr(item, name, default)
 
 
-def _transcribe_groq_chunk(audio_path, api_model, api_key):
+def _transcribe_groq_chunk(audio_path, api_model, api_key, prompt=None):
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, max_retries=0)
+    prompt_options = {"prompt": prompt[:GROQ_PROMPT_CHARACTERS]} if prompt else {}
 
     def call():
         with open(audio_path, "rb") as audio_file:
@@ -148,6 +151,7 @@ def _transcribe_groq_chunk(audio_path, api_model, api_key):
                 response_format="verbose_json",
                 timestamp_granularities=["segment"],
                 temperature=0,
+                **prompt_options,
             )
 
     result = _with_retries(call, "Groq transcription")
@@ -212,19 +216,25 @@ def parse_gemini_segments(response_text, clip_duration):
     return segments
 
 
-def _transcribe_gemini_chunk(audio_path, api_model, api_key, clip_duration):
+def _transcribe_gemini_chunk(audio_path, api_model, api_key, clip_duration, prompt=None):
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
     audio_bytes = Path(audio_path).read_bytes()
+    instructions = GEMINI_PROMPT
+    if prompt:
+        instructions += (
+            "\nContext and spelling guidance from the user (use it to recognize names "
+            f"and terms; still transcribe only what is spoken): {prompt}"
+        )
 
     def call():
         return client.models.generate_content(
             model=api_model,
             contents=[
                 types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"),
-                GEMINI_PROMPT,
+                instructions,
             ],
             config=types.GenerateContentConfig(
                 temperature=0,
@@ -239,7 +249,7 @@ def _transcribe_gemini_chunk(audio_path, api_model, api_key, clip_duration):
         raise RuntimeError(f"Gemini returned an unreadable transcript: {error}") from error
 
 
-def transcribe_audio_cloud(video_path, model):
+def transcribe_audio_cloud(video_path, model, prompt=None):
     """Yield (transcript items, progress percent) for each transcribed part."""
     if model not in CLOUD_TRANSCRIPTION_MODELS:
         raise ValueError(f"Unsupported online transcription model: {model}")
@@ -266,10 +276,12 @@ def transcribe_audio_cloud(video_path, model):
             audio_path = Path(directory) / f"part_{index}.mp3"
             extract_audio_chunk(video_path, audio_path, start, duration)
             if provider == "groq":
-                segments = _transcribe_groq_chunk(audio_path, config["api_model"], api_key)
+                segments = _transcribe_groq_chunk(
+                    audio_path, config["api_model"], api_key, prompt
+                )
             else:
                 segments = _transcribe_gemini_chunk(
-                    audio_path, config["api_model"], api_key, duration
+                    audio_path, config["api_model"], api_key, duration, prompt
                 )
             items = [
                 {

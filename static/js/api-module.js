@@ -22,6 +22,7 @@ export async function regenerateTranscript() {
     const diarization = elements.transcriptDiarization?.checked || false;
     const model = elements.transcriptModel?.value || '';
     if (model) sessionStorage.setItem('transcriptModelSessionV1', model);
+    const prompt = elements.transcriptPrompt?.value.trim() || '';
     const button = elements.regenerateTranscriptBtn;
     if (button) {
         button.disabled = true;
@@ -37,6 +38,7 @@ export async function regenerateTranscript() {
             body: JSON.stringify({
                 diarization,
                 model,
+                prompt,
                 force: true
             })
         });
@@ -160,6 +162,7 @@ export function showTranscriptSourceInfo(source, metadata) {
             else if (metadata.device === 'cpu') parts.push('CPU');
             if (metadata.transcription_method) parts.push(metadata.transcription_method);
             parts.push(metadata.diarization ? 'speakers identified' : 'no speaker identification');
+            if (metadata.prompt) parts.push(`prompt: “${metadata.prompt.length > 80 ? `${metadata.prompt.slice(0, 80)}…` : metadata.prompt}”`);
             if (metadata.generated_at) parts.push(`generated ${metadata.generated_at}`);
             text = `Transcript: ${parts.join(' · ')}`;
         } else {
@@ -396,7 +399,7 @@ export async function updateTranslationModelStatus() {
         elements.translationModel.dataset.available = String(hasTranslationModel);
         if (!hasTranslationModel) {
             elements.translationModelStatus.textContent =
-                'No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY in Colab and restart the server.';
+                'No translation model is configured. Set GOOGLE_API_KEY, GROQ_API_KEY or OPENAI_API_KEY in Colab and restart the server.';
             elements.translateTranscriptBtn.disabled = true;
             return;
         }
@@ -405,6 +408,7 @@ export async function updateTranslationModelStatus() {
             `Auto currently uses ${defaultDescription}. Long transcripts are translated in parallel batches.`;
         [...elements.translationModel.options].forEach((option) => {
             if (option.value.startsWith('gemini-')) option.disabled = !data.gemini_configured;
+            if (option.value.startsWith('groq:')) option.disabled = !data.groq_configured;
             if (option.value.startsWith('gpt-')) option.disabled = !data.openai_configured;
         });
         if (elements.translationModel.selectedOptions[0]?.disabled) {

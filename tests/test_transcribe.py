@@ -96,6 +96,12 @@ class TranscribeAudioTests(unittest.TestCase):
 
         self.assertTrue(FakePipeline.options["word_timestamps"])
         self.assertEqual(FakePipeline.options["batch_size"], 16)
+        self.assertNotIn("initial_prompt", FakePipeline.options)
+
+    def test_prompt_is_passed_as_initial_prompt(self):
+        list(transcribe.transcribe_audio("video.mp4", prompt="SAP Fiori lecture"))
+        options = FakePipeline.options or FakeWhisperModel.options
+        self.assertEqual(options["initial_prompt"], "SAP Fiori lecture")
 
     def test_selected_model_is_loaded(self):
         list(transcribe.transcribe_audio("video.mp4", model_name="large-v3"))
