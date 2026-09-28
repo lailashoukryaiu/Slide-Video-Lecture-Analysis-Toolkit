@@ -97,6 +97,14 @@ class TranscribeAudioTests(unittest.TestCase):
         self.assertTrue(FakePipeline.options["word_timestamps"])
         self.assertEqual(FakePipeline.options["batch_size"], 16)
 
+    def test_selected_model_is_loaded(self):
+        list(transcribe.transcribe_audio("video.mp4", model_name="large-v3"))
+        self.assertEqual(FakeWhisperModel.model_name, "large-v3")
+
+    def test_unknown_model_is_rejected(self):
+        with self.assertRaises(ValueError):
+            list(transcribe.transcribe_audio("video.mp4", model_name="huge"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,12 @@ import threading
 import multiprocessing
 from fastapi.responses import JSONResponse
 from youtube_transcript_api import YouTubeTranscriptApi
-from transcribe import transcribe_audio
+from transcribe import (
+    WHISPER_MODELS,
+    describe_transcription_method,
+    get_whisper_device_config,
+    transcribe_audio,
+)
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
 
 
@@ -28,10 +33,12 @@ _ACTIVE_WHISPER_PROCESSES_LOCK = threading.Lock()
 
 
 def _run_whisper_worker(
-    video_id, video_path, output_path, diarization, existing_transcript
+    video_id, video_path, output_path, diarization, existing_transcript,
+    model="turbo",
 ):
     TranscriptProcessor()._process_whisper_transcript_sync(
-        video_id, video_path, output_path, diarization, existing_transcript
+        video_id, video_path, output_path, diarization, existing_transcript,
+        model,
     )
 
 
@@ -92,7 +99,11 @@ class TranscriptProcessor:
             
             return JSONResponse({
                 "success": True,
-                "transcript": transcript
+                "transcript": transcript,
+                "metadata": (
+                    self._public_whisper_metadata(video_id)
+                    if source == "whisper" else None
+                ),
             })
         except Exception as e:
             return JSONResponse({
@@ -130,9 +141,15 @@ class TranscriptProcessor:
             return None, str(e)
 
     async def generate_whisper_transcript(
-        self, video_id: str, background_tasks, diarization=False, force=False
+        self, video_id: str, background_tasks, diarization=False, force=False,
+        model="turbo",
     ):
         """Generate a transcript using Whisper."""
+        if model not in WHISPER_MODELS:
+            return JSONResponse({
+                "success": False,
+                "error": f"Unsupported Whisper model: {model}",
+            })
         try:
             if force:
                 self._terminate_whisper_process(video_id)
@@ -191,7 +208,7 @@ class TranscriptProcessor:
                 diarization
                 and force
                 and os.path.exists(output_path)
-                and self._can_reuse_whisper_transcript(video_id)
+                and self._can_reuse_whisper_transcript(video_id, model)
             ):
                 existing_transcript = self._read_transcript(video_id)
                 if not existing_transcript:
@@ -215,6 +232,7 @@ class TranscriptProcessor:
                 output_path,
                 diarization,
                 existing_transcript,
+                model,
             )
             
             return JSONResponse({
@@ -258,7 +276,7 @@ class TranscriptProcessor:
 
     async def process_whisper_transcript(
         self, video_id: str, video_path: str, output_path: str,
-        diarization=False, existing_transcript=None
+        diarization=False, existing_transcript=None, model="turbo"
     ):
         """Run native Whisper inference outside the FastAPI server process."""
         process = multiprocessing.get_context("spawn").Process(
@@ -269,6 +287,7 @@ class TranscriptProcessor:
                 output_path,
                 diarization,
                 existing_transcript,
+                model,
             ),
             name=f"whisper-{video_id}",
         )
@@ -319,7 +338,7 @@ class TranscriptProcessor:
 
     def _process_whisper_transcript_sync(
         self, video_id: str, video_path: str, output_path: str,
-        diarization=False, existing_transcript=None
+        diarization=False, existing_transcript=None, model="turbo"
     ):
         """Blocking Whisper transcription and diarization, run off the event loop."""
         original_transcript = [
@@ -336,7 +355,9 @@ class TranscriptProcessor:
             transcript = [dict(item) for item in original_transcript]
             if not transcript:
                 self._write_whisper_phase(video_id, "transcribing")
-                for sentence_data, progress in transcribe_audio(video_path):
+                for sentence_data, progress in transcribe_audio(
+                    video_path, model_name=model
+                ):
                     lines = sentence_data.strip().split('\n')
                     i = 0
                     while i < len(lines):
@@ -379,12 +400,24 @@ class TranscriptProcessor:
                 transcript, speaker_names = self.apply_diarization(video_path, transcript)
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
+            previous_metadata = self._read_whisper_metadata(video_id)
+            if original_transcript:
+                device = previous_metadata.get("device")
+                method = previous_metadata.get("transcription_method")
+                generated_at = previous_metadata.get("generated_at")
+            else:
+                device, _ = get_whisper_device_config()
+                method = describe_transcription_method(device)
+                generated_at = time.strftime("%Y-%m-%d %H:%M")
             with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"), "w") as f:
                 json.dump({
-                    "model": "turbo",
-                    "transcription_method": "original_batched_turbo",
+                    "model": model,
+                    "device": device,
+                    "transcription_method": method,
+                    "word_timestamps": True,
                     "diarization": bool(diarization),
                     "speaker_names": speaker_names,
+                    "generated_at": generated_at,
                 }, f)
 
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
@@ -442,8 +475,9 @@ class TranscriptProcessor:
                     "success": True,
                     "status": "complete",
                     "transcript": transcript,
-                    "model": self._read_whisper_model(video_id)
-                    ,"speaker_names": self._read_speaker_names(video_id)
+                    "model": self._read_whisper_model(video_id),
+                    "speaker_names": self._read_speaker_names(video_id),
+                    "metadata": self._public_whisper_metadata(video_id),
                 })
 
             progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
@@ -509,15 +543,31 @@ class TranscriptProcessor:
                 return {}
         return {}
 
-    def _can_reuse_whisper_transcript(self, video_id):
+    def _read_whisper_metadata(self, video_id):
         metadata_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json"
-        if not metadata_path.exists():
-            return False
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _public_whisper_metadata(self, video_id):
+        metadata = self._read_whisper_metadata(video_id)
+        if not metadata:
+            return None
+        return {
+            key: metadata.get(key)
+            for key in (
+                "model", "device", "transcription_method",
+                "diarization", "generated_at",
+            )
+        }
+
+    def _can_reuse_whisper_transcript(self, video_id, model="turbo"):
+        metadata = self._read_whisper_metadata(video_id)
+        if not metadata:
             return False
-        return metadata.get("model", "turbo") == "turbo"
+        return metadata.get("model", "turbo") == model
 
     def _whisper_phase_path(self, video_id):
         return TRANSCRIPTS_DIR / f"{video_id}_whisper_phase.txt"

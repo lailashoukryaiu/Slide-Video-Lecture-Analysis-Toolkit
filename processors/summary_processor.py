@@ -194,7 +194,9 @@ Format each chapter exactly like this example:
                 "error": str(e)
             })
 
-    async def translate_transcript(self, transcript, target_language, requested_model=None):
+    async def translate_transcript(
+        self, transcript, target_language, requested_model=None, force_openai=False
+    ):
         """Translate transcript segments in bounded concurrent batches."""
         self._refresh_gemini_client()
         self._refresh_openai_client()
@@ -203,7 +205,10 @@ Format each chapter exactly like this example:
                 "No translation model is configured. Set GOOGLE_API_KEY or OPENAI_API_KEY "
                 "in the Colab runtime and restart the server."
             )
-        if requested_model:
+        if force_openai:
+            use_openai = True
+            selected_model = self.openai_model_name
+        elif requested_model:
             selected_model = requested_model
             use_openai = selected_model.startswith("gpt-")
         else:
@@ -370,12 +375,23 @@ Format each chapter exactly like this example:
                     )
                 return translated_by_id
 
-        translated_batches = await asyncio.gather(
-            *(
-                translate_batch(batch, batch_number)
-                for batch_number, batch in enumerate(batches, start=1)
+        try:
+            translated_batches = await asyncio.gather(
+                *(
+                    translate_batch(batch, batch_number)
+                    for batch_number, batch in enumerate(batches, start=1)
+                )
             )
-        )
+        except Exception as error:
+            if use_openai or not self.openai_client or not self._is_quota_error(error):
+                raise
+            print(f"Gemini translation unavailable; using OpenAI fallback: {error}")
+            result = await self.translate_transcript(
+                transcript, target_language, force_openai=True
+            )
+            result["provider"] = "OpenAI fallback"
+            result["fallback_reason"] = str(error)[:300]
+            return result
         translated_text = {
             segment_id: text
             for batch in translated_batches

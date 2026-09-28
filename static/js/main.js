@@ -382,6 +382,12 @@ function initApp() {
     elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationV1') || '10';
     elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || '60';
     elements.slideImageQuality.value = localStorage.getItem('slideImageQualityV1') || '720';
+    if (elements.transcriptModel) {
+        const savedModel = localStorage.getItem('transcriptModelV1');
+        if ([...elements.transcriptModel.options].some((option) => option.value === savedModel)) {
+            elements.transcriptModel.value = savedModel;
+        }
+    }
     elements.youtubeVideoQuality.value = localStorage.getItem('youtubeVideoQualityV1') || '480';
     elements.mergeSimilarSlides.checked = localStorage.getItem('mergeSimilarSlidesV1') !== 'false';
     elements.includeChapterBoundaries.checked = localStorage.getItem('includeChapterBoundariesV1') !== 'false';

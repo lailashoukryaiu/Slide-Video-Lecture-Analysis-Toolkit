@@ -20,6 +20,8 @@ export async function regenerateTranscript() {
     const originalTranscript = state.currentTranscript.map((item) => ({ ...item }));
 
     const diarization = elements.transcriptDiarization?.checked || false;
+    const model = elements.transcriptModel?.value || 'turbo';
+    localStorage.setItem('transcriptModelV1', model);
     const button = elements.regenerateTranscriptBtn;
     if (button) {
         button.disabled = true;
@@ -34,6 +36,7 @@ export async function regenerateTranscript() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 diarization,
+                model,
                 force: true
             })
         });
@@ -59,7 +62,7 @@ export async function regenerateTranscript() {
                 state.currentTranscriptSource = 'whisper';
                 loadTranscript(applySpeakerNames(status.transcript, status.speaker_names || {}));
                 renderSpeakerNames(status.speaker_names || {});
-                showNotification(`Transcript generated with ${status.model || model}.`, 'success');
+                showNotification(`Transcript generated with Whisper ${status.model || model}.`, 'success');
                 return;
             }
             if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
@@ -116,6 +119,60 @@ function renderWhisperProgress(status, startedAt) {
 
 function delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+let transcriptInfoGeneration = 0;
+
+async function refreshTranscriptSourceInfo() {
+    const generation = ++transcriptInfoGeneration;
+    const source = state.currentTranscriptSource;
+    const videoId = state.currentVideoId;
+    if (!state.currentTranscript?.length || !videoId) {
+        showTranscriptSourceInfo(null, null);
+        return;
+    }
+    let metadata = null;
+    if (source === 'whisper') {
+        try {
+            const response = await fetch(`/transcript_metadata/${encodeURIComponent(videoId)}`);
+            metadata = (await response.json()).metadata || null;
+        } catch (error) {
+            metadata = null;
+        }
+    }
+    if (generation === transcriptInfoGeneration) {
+        showTranscriptSourceInfo(source, metadata);
+    }
+}
+
+document.addEventListener('transcriptUpdated', () => {
+    queueMicrotask(refreshTranscriptSourceInfo);
+});
+
+export function showTranscriptSourceInfo(source, metadata) {
+    const info = elements.transcriptSourceInfo;
+    if (!info) return;
+    let text = '';
+    if (source === 'whisper') {
+        if (metadata?.model) {
+            const parts = [`Whisper ${metadata.model}`];
+            if (metadata.device) parts.push(metadata.device === 'cuda' ? 'GPU' : 'CPU');
+            if (metadata.transcription_method) parts.push(metadata.transcription_method);
+            parts.push(metadata.diarization ? 'speakers identified' : 'no speaker identification');
+            if (metadata.generated_at) parts.push(`generated ${metadata.generated_at}`);
+            text = `Transcript: ${parts.join(' · ')}`;
+        } else {
+            text = 'Transcript: Whisper (generation options were not recorded for this transcript)';
+        }
+    } else if (source === 'youtube') {
+        text = 'Transcript: YouTube captions';
+    } else if (source === 'uploaded') {
+        text = 'Transcript: uploaded file';
+    } else if (typeof source === 'string' && source.startsWith('translation:')) {
+        text = `Transcript: translated to ${source.slice('translation:'.length).toUpperCase()}`;
+    }
+    info.textContent = text;
+    info.hidden = !text;
 }
 
 function escapeHtml(value) {
@@ -230,7 +287,9 @@ export async function translateTranscript() {
         if (elements.translationModelStatus) {
             elements.translationModelStatus.textContent = `Translation failed: ${error.message}`;
         }
-        throw error;
+        throw new Error(
+            `Translation failed, so the original transcript was kept. ${error.message}`
+        );
     } finally {
         clearInterval(elapsedTimer);
         if (translationProgressTimer) clearInterval(translationProgressTimer);
@@ -249,9 +308,13 @@ export async function updateTranslationModelStatus() {
         const response = await fetch('/runtime_status');
         const data = await readJsonResponse(response, 'Runtime status');
         if (elements.speakerDiarizationTokenStatus) {
-            elements.speakerDiarizationTokenStatus.textContent = data.huggingface_token_configured
-                ? 'Hugging Face token detected. '
-                : 'No Hugging Face token detected. ';
+            const hasToken = Boolean(data.huggingface_token_configured);
+            elements.speakerDiarizationTokenStatus.textContent = hasToken
+                ? 'Speakers are identified with pyannote after transcription.'
+                : 'No Hugging Face token detected.';
+            if (elements.speakerDiarizationSetup) {
+                elements.speakerDiarizationSetup.hidden = hasToken;
+            }
         }
         const hasTranslationModel = Boolean(
             data.translation_default_provider && data.translation_default_model

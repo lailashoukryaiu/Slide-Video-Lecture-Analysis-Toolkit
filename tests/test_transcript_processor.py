@@ -28,6 +28,9 @@ sys.modules.setdefault("youtube_transcript_api", youtube_module)
 
 transcribe_module = ModuleType("transcribe")
 transcribe_module.transcribe_audio = lambda *args, **kwargs: ()
+transcribe_module.WHISPER_MODELS = ("turbo", "large-v3", "medium", "small", "base")
+transcribe_module.get_whisper_device_config = lambda: ("cuda", "float16")
+transcribe_module.describe_transcription_method = lambda device: "batched (batch size 16)"
 sys.modules.setdefault("transcribe", transcribe_module)
 
 from processors import transcript_processor as transcript_module
@@ -161,6 +164,48 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
     @staticmethod
     def _unexpected_transcription(*args, **kwargs):
         raise AssertionError("ASR should not run when reusing a transcript")
+
+    def test_selected_model_is_used_and_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir = transcript_module.TRANSCRIPTS_DIR
+            original_transcribe = transcript_module.transcribe_audio
+            transcript_module.TRANSCRIPTS_DIR = Path(directory)
+            calls = []
+
+            def fake_transcribe(path, model_name="turbo"):
+                calls.append(model_name)
+                yield "1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n", 100
+
+            transcript_module.transcribe_audio = fake_transcribe
+            try:
+                processor = TranscriptProcessor()
+                output_path = Path(directory) / "video_whisper.json"
+                processor._process_whisper_transcript_sync(
+                    "video", "video.mp4", str(output_path), model="large-v3"
+                )
+
+                metadata = processor._public_whisper_metadata("video")
+                self.assertEqual(calls, ["large-v3"])
+                self.assertEqual(metadata["model"], "large-v3")
+                self.assertEqual(metadata["device"], "cuda")
+                self.assertFalse(metadata["diarization"])
+                self.assertTrue(
+                    processor._can_reuse_whisper_transcript("video", "large-v3")
+                )
+                self.assertFalse(
+                    processor._can_reuse_whisper_transcript("video", "turbo")
+                )
+            finally:
+                transcript_module.TRANSCRIPTS_DIR = original_dir
+                transcript_module.transcribe_audio = original_transcribe
+
+    def test_unsupported_model_is_rejected(self):
+        response = asyncio.run(
+            TranscriptProcessor().generate_whisper_transcript(
+                "video", None, model="unknown"
+            )
+        )
+        self.assertFalse(response.content["success"])
 
 
 class TranscriptProcessorIsolationTests(unittest.IsolatedAsyncioTestCase):

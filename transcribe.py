@@ -40,12 +40,22 @@ def timestamps_to_srt(word_timestamps):
     return srt_format_corrected
 
 
-def transcribe_audio(file_path, batch_size=16):
+WHISPER_MODELS = ("turbo", "large-v3", "medium", "small", "base")
+
+
+def describe_transcription_method(device):
+    return "batched (batch size 16)" if device == "cuda" else "streaming with VAD"
+
+
+def transcribe_audio(file_path, batch_size=16, model_name="turbo"):
     """Transcribe audio file and yield sentences as they are processed."""
+    if model_name not in WHISPER_MODELS:
+        raise ValueError(f"Unsupported Whisper model: {model_name}")
     device, compute_type = get_whisper_device_config()
+    print(f"Whisper model: {model_name}")
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
-    model = WhisperModel("turbo", device=device, compute_type=compute_type)
+    model = WhisperModel(model_name, device=device, compute_type=compute_type)
     if device == "cuda":
         inference_model = BatchedInferencePipeline(model=model)
         segments, info = inference_model.transcribe(

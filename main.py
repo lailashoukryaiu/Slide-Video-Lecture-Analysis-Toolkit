@@ -574,11 +574,16 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
         background_tasks,
         bool(options.get("diarization", False)),
         bool(options.get("force", False)),
+        str(options.get("model") or "turbo"),
     )
 
 @app.get("/whisper_transcript_status/{video_id}")
 async def whisper_transcript_status(video_id: str):
     return await transcript_processor.get_whisper_status(video_id)
+
+@app.get("/transcript_metadata/{video_id}")
+async def transcript_metadata(video_id: str):
+    return {"metadata": transcript_processor._public_whisper_metadata(video_id)}
 
 @app.post("/speaker_names/{video_id}")
 async def speaker_names(video_id: str, request: Request):

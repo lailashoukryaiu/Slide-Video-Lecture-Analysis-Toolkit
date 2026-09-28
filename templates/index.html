@@ -6,7 +6,7 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=compact-video-20260923">
+    <link rel="stylesheet" href="/static/styles.css?v=transcript-info-20260928">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -176,16 +176,25 @@
                                     <button id="closeTranscriptOptionsBtn" class="dialog-close" type="submit" value="cancel" aria-label="Close transcript options">&times;</button>
                                 </div>
                             <div class="transcript-generation-controls" id="transcriptGenerationControls">
-                                <p class="settings-description">Transcription uses the original batched Whisper Turbo workflow.</p>
+                                <label for="transcriptModel">Whisper model</label>
+                                <select id="transcriptModel">
+                                    <option value="turbo" selected>Turbo (recommended: fast and accurate)</option>
+                                    <option value="large-v3">Large v3 (most accurate, slowest)</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="small">Small (faster, less accurate)</option>
+                                    <option value="base">Base (fastest, least accurate)</option>
+                                </select>
+                                <small id="transcriptModelHelp">A GPU runtime is strongly recommended for Turbo and Large v3.</small>
                                 <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers</label>
                                 <small id="speakerDiarizationHelp">
                                     <strong id="speakerDiarizationTokenStatus"></strong>
-                                    Speaker identification uses Whisper for transcription and pyannote for speaker timing.
+                                    <span id="speakerDiarizationSetup">
                                     Create a Hugging Face read token, accept the terms for
                                     <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer">speaker-diarization-3.1</a>
                                     and
                                     <a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer">segmentation-3.0</a>,
-                                    then export <code>HUGGINGFACE_TOKEN</code> into the server environment (Colab Secrets alone are not visible to the server) and restart the server.
+                                    then set <code>HF_TOKEN</code> in the server environment and restart the server.
+                                    </span>
                                 </small>
                                 <button id="regenerateTranscriptAction" class="btn btn-secondary" type="button">Regenerate transcript</button>
                                 <div id="speakerNamesPanel" class="speaker-names-panel" hidden></div>
@@ -216,6 +225,7 @@
                                 </form>
                             </dialog>
                         </div>
+                        <p id="transcriptSourceInfo" class="transcript-source-info" hidden></p>
                         <div class="tab-body" id="transcriptContainer">
                             <!-- Transcript lines will be added here -->
                         </div>
@@ -527,7 +537,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=cpu-job-scheduling-20260923"></script>
+    <script type="module" src="/static/js/index.js?v=transcript-info-20260928"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

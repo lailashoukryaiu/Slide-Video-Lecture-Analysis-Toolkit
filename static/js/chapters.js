@@ -205,10 +205,15 @@ export async function generateChapters() {
         setSummaryStatus('complete', '<i class="fas fa-check-circle"></i> Summary and chapters ready.');
     } catch (error) {
         showError(`Error generating summary: ${error.message}`);
-        const isModelError = /gemini|model|429|404|quota|overload|unavailable|high demand/i.test(error.message);
+        const isModelError = /gemini|openai|model|429|404|quota|overload|unavailable|high demand/i.test(error.message);
+        const detail = document.createElement('span');
+        detail.textContent = error.message;
+        const openAiHint = /OPENAI_API_KEY/.test(error.message)
+            ? ' Add OPENAI_API_KEY in Colab to enable the OpenAI fallback.'
+            : '';
         const statusMessage = isModelError
-            ? '<i class="fas fa-exclamation-circle"></i> The selected AI provider is unavailable or out of quota. Your existing chapters were kept. Configure OPENAI_API_KEY in Colab to use the OpenAI fallback, or stop automatic retry.'
-            : '<i class="fas fa-exclamation-circle"></i> Summary generation failed. Your existing chapters were kept. You can retry without reloading the video.';
+            ? `<i class="fas fa-exclamation-circle"></i> The AI provider could not generate chapters: ${detail.innerHTML}. Your existing chapters were kept.${openAiHint}`
+            : `<i class="fas fa-exclamation-circle"></i> Summary generation failed: ${detail.innerHTML}. Your existing chapters were kept. You can retry without reloading the video.`;
         const status = setSummaryStatus(
             'error',
             statusMessage

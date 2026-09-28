@@ -1626,6 +1626,12 @@ input:checked + .toggle-slider:before {
     color: var(--text-secondary);
 }
 
+.transcript-source-info {
+    margin: 4px 0 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
 .radio-group {
     display: flex;
     flex-direction: column;

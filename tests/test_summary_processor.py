@@ -132,6 +132,49 @@ class SummaryProcessorTranslationTests(unittest.TestCase):
         self.assertEqual(payloads[1]["context_before"], ["First", "Second"])
         self.assertEqual(payloads[1]["context_after"], [])
 
+    def test_gemini_quota_error_falls_back_to_openai(self):
+        class ExhaustedGemini:
+            def generate_content(self, **kwargs):
+                raise RuntimeError("429 RESOURCE_EXHAUSTED: quota exceeded")
+
+        class FakeOpenAICompletions:
+            def create(self, **kwargs):
+                payload = json.loads(kwargs["messages"][0]["content"].split("\n", 1)[1])
+                content = json.dumps({"translations": [
+                    {"id": item["id"], "text": f"übersetzt: {item['text']}"}
+                    for item in payload["lines"]
+                ]})
+                return SimpleNamespace(choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=content))
+                ])
+
+        processor = SummaryProcessor.__new__(SummaryProcessor)
+        processor.client = SimpleNamespace(models=ExhaustedGemini())
+        processor.model = True
+        processor.model_name = "gemini-test"
+        processor.openai_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeOpenAICompletions())
+        )
+        processor.openai_model_name = "gpt-test"
+        processor._refresh_gemini_client = lambda: None
+        processor._refresh_openai_client = lambda: None
+        original_sleep = asyncio.sleep
+
+        async def no_sleep(seconds):
+            return None
+
+        asyncio.sleep = no_sleep
+        try:
+            result = asyncio.run(processor.translate_transcript(
+                [{"start": 0, "duration": 1, "text": "Hello"}], "de"
+            ))
+        finally:
+            asyncio.sleep = original_sleep
+
+        self.assertEqual(result["provider"], "OpenAI fallback")
+        self.assertEqual(result["model"], "gpt-test")
+        self.assertEqual(result["transcript"][0]["text"], "übersetzt: Hello")
+
     def test_translation_batches_respect_item_and_character_limits(self):
         items = [
             {"id": "segment-0", "position": 0, "text": "abcd"},
