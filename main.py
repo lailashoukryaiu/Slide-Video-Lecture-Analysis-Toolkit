@@ -38,6 +38,7 @@ from processors.video_processor import VideoProcessor
 from processors.scene_processor import SceneProcessor
 from processors.ocr_processor import OCRProcessor
 from processors.transcript_processor import TranscriptProcessor, get_huggingface_token
+from cloud_transcribe import cloud_provider_status, recommended_transcription_model
 from processors.embedding_processor import EmbeddingProcessor
 from processors.summary_processor import SummaryProcessor
 
@@ -95,6 +96,7 @@ async def runtime_status():
         "gemini_configured": bool(summary_processor.model),
         "openai_configured": bool(summary_processor.openai_client),
         "huggingface_token_configured": bool(get_huggingface_token()),
+        "transcription_providers": cloud_provider_status(),
     }
     try:
         import torch
@@ -108,10 +110,12 @@ async def runtime_status():
             "whisper_device": "cuda" if cuda_available else "cpu",
             "whisper_compute_type": "float16" if cuda_available else "int8",
             "colab_gpu": os.getenv("COLAB_GPU") or None,
+            "recommended_transcription_model": recommended_transcription_model(cuda_available),
             **translation_status,
         })
     except Exception as error:
         return JSONResponse({
+            "recommended_transcription_model": recommended_transcription_model(False),
             "cuda_available": False,
             "gpu_name": None,
             "cuda_version": None,
@@ -574,7 +578,7 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
         background_tasks,
         bool(options.get("diarization", False)),
         bool(options.get("force", False)),
-        str(options.get("model") or "turbo"),
+        str(options.get("model") or "") or None,
     )
 
 @app.get("/whisper_transcript_status/{video_id}")

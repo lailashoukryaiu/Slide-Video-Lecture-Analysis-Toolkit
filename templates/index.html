@@ -6,7 +6,7 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=transcript-info-20260928">
+    <link rel="stylesheet" href="/static/styles.css?v=online-transcription-20260928">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -176,15 +176,23 @@
                                     <button id="closeTranscriptOptionsBtn" class="dialog-close" type="submit" value="cancel" aria-label="Close transcript options">&times;</button>
                                 </div>
                             <div class="transcript-generation-controls" id="transcriptGenerationControls">
-                                <label for="transcriptModel">Whisper model</label>
+                                <label for="transcriptModel">Transcription model</label>
                                 <select id="transcriptModel">
-                                    <option value="turbo" selected>Turbo (recommended: fast and accurate)</option>
-                                    <option value="large-v3">Large v3 (most accurate, slowest)</option>
-                                    <option value="medium">Medium</option>
-                                    <option value="small">Small (faster, less accurate)</option>
-                                    <option value="base">Base (fastest, least accurate)</option>
+                                    <optgroup label="On this server (Whisper)">
+                                        <option value="turbo" selected>Turbo (fast and accurate on a GPU)</option>
+                                        <option value="large-v3">Large v3 (most accurate, slowest)</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="small">Small (faster, less accurate)</option>
+                                        <option value="base">Base (fastest, least accurate)</option>
+                                    </optgroup>
+                                    <optgroup label="Online (free tier, no GPU needed)">
+                                        <option value="groq:whisper-large-v3-turbo">Groq Whisper Large v3 Turbo</option>
+                                        <option value="groq:whisper-large-v3">Groq Whisper Large v3</option>
+                                        <option value="gemini:gemini-3.6-flash">Gemini 3.6 Flash</option>
+                                        <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                    </optgroup>
                                 </select>
-                                <small id="transcriptModelHelp">A GPU runtime is strongly recommended for Turbo and Large v3.</small>
+                                <small id="transcriptModelHelp">The default adapts to this session's GPU and API keys.</small>
                                 <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers</label>
                                 <small id="speakerDiarizationHelp">
                                     <strong id="speakerDiarizationTokenStatus"></strong>
@@ -537,7 +545,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=transcript-info-20260928"></script>
+    <script type="module" src="/static/js/index.js?v=online-transcription-20260928"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

@@ -20,8 +20,8 @@ export async function regenerateTranscript() {
     const originalTranscript = state.currentTranscript.map((item) => ({ ...item }));
 
     const diarization = elements.transcriptDiarization?.checked || false;
-    const model = elements.transcriptModel?.value || 'turbo';
-    localStorage.setItem('transcriptModelV1', model);
+    const model = elements.transcriptModel?.value || '';
+    if (model) sessionStorage.setItem('transcriptModelSessionV1', model);
     const button = elements.regenerateTranscriptBtn;
     if (button) {
         button.disabled = true;
@@ -62,7 +62,7 @@ export async function regenerateTranscript() {
                 state.currentTranscriptSource = 'whisper';
                 loadTranscript(applySpeakerNames(status.transcript, status.speaker_names || {}));
                 renderSpeakerNames(status.speaker_names || {});
-                showNotification(`Transcript generated with Whisper ${status.model || model}.`, 'success');
+                showNotification(`Transcript generated with ${describeTranscriptionModel(status.model || model)}.`, 'success');
                 return;
             }
             if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
@@ -98,7 +98,7 @@ function renderWhisperProgress(status, startedAt) {
         ? 'Identifying speakers with pyannote'
         : status.phase === 'transcribing' || progress > 0
             ? 'Transcribing audio'
-            : 'Starting Whisper model';
+            : 'Starting transcription';
     const lastUpdate = Number.isFinite(Number(status.last_updated_seconds_ago))
         ? ` Server heartbeat: ${Math.round(Number(status.last_updated_seconds_ago))}s ago.`
         : '';
@@ -155,8 +155,9 @@ export function showTranscriptSourceInfo(source, metadata) {
     let text = '';
     if (source === 'whisper') {
         if (metadata?.model) {
-            const parts = [`Whisper ${metadata.model}`];
-            if (metadata.device) parts.push(metadata.device === 'cuda' ? 'GPU' : 'CPU');
+            const parts = [describeTranscriptionModel(metadata.model)];
+            if (metadata.device === 'cuda') parts.push('GPU');
+            else if (metadata.device === 'cpu') parts.push('CPU');
             if (metadata.transcription_method) parts.push(metadata.transcription_method);
             parts.push(metadata.diarization ? 'speakers identified' : 'no speaker identification');
             if (metadata.generated_at) parts.push(`generated ${metadata.generated_at}`);
@@ -179,6 +180,78 @@ function escapeHtml(value) {
     const element = document.createElement('div');
     element.textContent = String(value);
     return element.innerHTML;
+}
+
+const TRANSCRIPTION_MODEL_LABELS = {
+    'groq:whisper-large-v3-turbo': 'Groq Whisper Large v3 Turbo (online)',
+    'groq:whisper-large-v3': 'Groq Whisper Large v3 (online)',
+    'gemini:gemini-3.6-flash': 'Gemini 3.6 Flash (online)',
+    'gemini:gemini-2.5-flash': 'Gemini 2.5 Flash (online)',
+};
+
+function describeTranscriptionModel(model) {
+    return TRANSCRIPTION_MODEL_LABELS[model] || `Whisper ${model}`;
+}
+
+let transcriptionRuntime = null;
+
+function applyTranscriptionModelStatus(data) {
+    const select = elements.transcriptModel;
+    if (!select || !data) return;
+    transcriptionRuntime = data;
+    const providers = data.transcription_providers || {};
+    const keyNames = { groq: 'GROQ_API_KEY', gemini: 'GOOGLE_API_KEY' };
+    [...select.options].forEach((option) => {
+        const provider = option.value.split(':')[0];
+        if (!(provider in keyNames)) return;
+        if (!option.dataset.label) option.dataset.label = option.textContent;
+        const available = Boolean(providers[provider]);
+        option.disabled = !available;
+        option.textContent = available
+            ? option.dataset.label
+            : `${option.dataset.label} (needs ${keyNames[provider]})`;
+    });
+    const usable = (value) => [...select.options].some(
+        (option) => option.value === value && !option.disabled
+    );
+    const chosen = sessionStorage.getItem('transcriptModelSessionV1');
+    const recommended = data.recommended_transcription_model;
+    if (usable(chosen)) {
+        select.value = chosen;
+    } else if (usable(recommended)) {
+        select.value = recommended;
+    } else if (select.selectedOptions[0]?.disabled) {
+        select.value = 'turbo';
+    }
+    updateTranscriptModelHelp();
+}
+
+export function updateTranscriptModelHelp() {
+    const help = elements.transcriptModelHelp;
+    const model = elements.transcriptModel?.value || '';
+    if (!help) return;
+    const recommended = transcriptionRuntime?.recommended_transcription_model;
+    const suffix = recommended
+        ? ` Default for this session: ${describeTranscriptionModel(recommended)}.`
+        : '';
+    if (model.startsWith('groq:')) {
+        help.textContent = 'Runs on Groq\'s free tier: very fast, no GPU needed. Audio is sent to Groq.' + suffix;
+    } else if (model.startsWith('gemini:')) {
+        help.textContent = 'Uses your Gemini key: no GPU needed, but timestamps are approximate and it uses your Gemini quota. Audio is sent to Google.' + suffix;
+    } else if (transcriptionRuntime && !transcriptionRuntime.cuda_available) {
+        help.textContent = 'No GPU in this session: local Whisper runs on the CPU and is slow. Small or Base, or an online model, is much faster.' + suffix;
+    } else {
+        help.textContent = 'Runs on this server\'s GPU.' + suffix;
+    }
+}
+
+export async function updateTranscriptionModelOptions() {
+    try {
+        const response = await fetch('/runtime_status');
+        applyTranscriptionModelStatus(await readJsonResponse(response, 'Runtime status'));
+    } catch (error) {
+        console.warn('Could not check transcription models:', error);
+    }
 }
 
 export async function uploadTranscriptFile() {
@@ -307,6 +380,7 @@ export async function updateTranslationModelStatus() {
     try {
         const response = await fetch('/runtime_status');
         const data = await readJsonResponse(response, 'Runtime status');
+        applyTranscriptionModelStatus(data);
         if (elements.speakerDiarizationTokenStatus) {
             const hasToken = Boolean(data.huggingface_token_configured);
             elements.speakerDiarizationTokenStatus.textContent = hasToken

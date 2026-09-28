@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from types import ModuleType
-
+from unittest import mock
 
 fastapi_module = sys.modules.setdefault("fastapi", ModuleType("fastapi"))
 fastapi_responses_module = sys.modules.setdefault(
@@ -206,6 +206,44 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             )
         )
         self.assertFalse(response.content["success"])
+
+    def test_online_model_without_key_is_rejected(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            response = asyncio.run(
+                TranscriptProcessor().generate_whisper_transcript(
+                    "video", None, model="groq:whisper-large-v3-turbo"
+                )
+            )
+        self.assertFalse(response.content["success"])
+        self.assertIn("GROQ_API_KEY", response.content["error"])
+
+    def test_online_model_is_used_and_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original_dir = transcript_module.TRANSCRIPTS_DIR
+            transcript_module.TRANSCRIPTS_DIR = Path(directory)
+
+            def fake_cloud(path, model):
+                yield [{"text": "Hallo.", "start": 0.0, "duration": 1.5}], 100.0
+
+            try:
+                with mock.patch.object(transcript_module, "transcribe_audio_cloud", fake_cloud), \
+                        mock.patch.object(transcript_module, "transcribe_audio",
+                                          self._unexpected_transcription):
+                    processor = TranscriptProcessor()
+                    output_path = Path(directory) / "video_whisper.json"
+                    processor._process_whisper_transcript_sync(
+                        "video", "video.mp4", str(output_path),
+                        model="gemini:gemini-2.5-flash",
+                    )
+                    metadata = processor._public_whisper_metadata("video")
+                    transcript = processor._read_transcript("video")
+            finally:
+                transcript_module.TRANSCRIPTS_DIR = original_dir
+
+        self.assertEqual(transcript[0]["text"], "Hallo.")
+        self.assertEqual(metadata["model"], "gemini:gemini-2.5-flash")
+        self.assertEqual(metadata["device"], "cloud")
+        self.assertIn("Gemini API", metadata["transcription_method"])
 
 
 class TranscriptProcessorIsolationTests(unittest.IsolatedAsyncioTestCase):

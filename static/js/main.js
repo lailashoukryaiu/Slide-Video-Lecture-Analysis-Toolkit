@@ -7,7 +7,7 @@ import { generateChapters, updateChapters, exportChapters, updateExportAvailabil
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
-import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript, updateTranslationModelStatus } from './api-module.js';
+import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript, updateTranslationModelStatus, updateTranscriptionModelOptions, updateTranscriptModelHelp } from './api-module.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
 
@@ -383,10 +383,11 @@ function initApp() {
     elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || '60';
     elements.slideImageQuality.value = localStorage.getItem('slideImageQualityV1') || '720';
     if (elements.transcriptModel) {
-        const savedModel = localStorage.getItem('transcriptModelV1');
-        if ([...elements.transcriptModel.options].some((option) => option.value === savedModel)) {
-            elements.transcriptModel.value = savedModel;
-        }
+        bind(elements.transcriptModel, 'change', (event) => {
+            sessionStorage.setItem('transcriptModelSessionV1', event.target.value);
+            updateTranscriptModelHelp();
+        });
+        void updateTranscriptionModelOptions();
     }
     elements.youtubeVideoQuality.value = localStorage.getItem('youtubeVideoQualityV1') || '480';
     elements.mergeSimilarSlides.checked = localStorage.getItem('mergeSimilarSlidesV1') !== 'false';

@@ -12,7 +12,22 @@ from transcribe import (
     get_whisper_device_config,
     transcribe_audio,
 )
+from cloud_transcribe import (
+    CLOUD_TRANSCRIPTION_MODELS,
+    describe_cloud_method,
+    is_cloud_model,
+    provider_api_key,
+    recommended_transcription_model,
+    transcribe_audio_cloud,
+)
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
+
+TRANSCRIPTION_MODELS = tuple(WHISPER_MODELS) + tuple(CLOUD_TRANSCRIPTION_MODELS)
+
+
+def default_transcription_model():
+    device, _ = get_whisper_device_config()
+    return recommended_transcription_model(device == "cuda")
 
 
 def get_huggingface_token():
@@ -144,12 +159,24 @@ class TranscriptProcessor:
         self, video_id: str, background_tasks, diarization=False, force=False,
         model="turbo",
     ):
-        """Generate a transcript using Whisper."""
-        if model not in WHISPER_MODELS:
+        """Generate a transcript using local Whisper or an online model."""
+        model = model or default_transcription_model()
+        if model not in TRANSCRIPTION_MODELS:
             return JSONResponse({
                 "success": False,
-                "error": f"Unsupported Whisper model: {model}",
+                "error": f"Unsupported transcription model: {model}",
             })
+        if is_cloud_model(model):
+            provider = CLOUD_TRANSCRIPTION_MODELS[model]["provider"]
+            if not provider_api_key(provider):
+                key_name = "GROQ_API_KEY" if provider == "groq" else "GOOGLE_API_KEY"
+                return JSONResponse({
+                    "success": False,
+                    "error": (
+                        f"{CLOUD_TRANSCRIPTION_MODELS[model]['label']} needs {key_name} "
+                        "in the server environment. Add it and restart the server."
+                    ),
+                })
         try:
             if force:
                 self._terminate_whisper_process(video_id)
@@ -272,7 +299,10 @@ class TranscriptProcessor:
             f.write("0")
         
         # Start background task
-        background_tasks.add_task(self.process_whisper_transcript, video_id, video_path, output_path)
+        background_tasks.add_task(
+            self.process_whisper_transcript, video_id, video_path, output_path,
+            model=default_transcription_model(),
+        )
 
     async def process_whisper_transcript(
         self, video_id: str, video_path: str, output_path: str,
@@ -355,8 +385,15 @@ class TranscriptProcessor:
             transcript = [dict(item) for item in original_transcript]
             if not transcript:
                 self._write_whisper_phase(video_id, "transcribing")
-                for sentence_data, progress in transcribe_audio(
-                    video_path, model_name=model
+                if is_cloud_model(model):
+                    for items, progress in transcribe_audio_cloud(video_path, model):
+                        transcript.extend(items)
+                        (TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt").write_text(
+                            str(progress), encoding="utf-8"
+                        )
+                for sentence_data, progress in (
+                    () if is_cloud_model(model)
+                    else transcribe_audio(video_path, model_name=model)
                 ):
                     lines = sentence_data.strip().split('\n')
                     i = 0
@@ -405,6 +442,10 @@ class TranscriptProcessor:
                 device = previous_metadata.get("device")
                 method = previous_metadata.get("transcription_method")
                 generated_at = previous_metadata.get("generated_at")
+            elif is_cloud_model(model):
+                device = "cloud"
+                method = describe_cloud_method(model)
+                generated_at = time.strftime("%Y-%m-%d %H:%M")
             else:
                 device, _ = get_whisper_device_config()
                 method = describe_transcription_method(device)
@@ -414,7 +455,7 @@ class TranscriptProcessor:
                     "model": model,
                     "device": device,
                     "transcription_method": method,
-                    "word_timestamps": True,
+                    "word_timestamps": not is_cloud_model(model),
                     "diarization": bool(diarization),
                     "speaker_names": speaker_names,
                     "generated_at": generated_at,
