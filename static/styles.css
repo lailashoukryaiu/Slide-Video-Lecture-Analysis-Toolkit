@@ -2263,6 +2263,52 @@ input:checked + .toggle-slider:before {
     text-align: center;
 } 
 
+.transcript-processing .transcript-steps {
+    list-style: none;
+    width: 100%;
+    max-width: 640px;
+    margin: 0.75rem 0;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-size: 0.85rem;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 6px;
+}
+
+.transcript-processing .transcript-step {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.2rem 0;
+    color: #555;
+}
+
+.transcript-processing .transcript-step i {
+    font-size: 0.8rem;
+    margin: 0;
+    color: #34a853;
+}
+
+.transcript-processing .transcript-step-current {
+    color: inherit;
+    font-weight: 500;
+}
+
+.transcript-processing .transcript-step-current i {
+    color: #4285f4;
+}
+
+.transcript-processing .transcript-step-time {
+    min-width: 2.8rem;
+    font-variant-numeric: tabular-nums;
+    color: #888;
+}
+
+.transcript-processing .transcript-step-duration {
+    color: #888;
+    font-weight: normal;
+}
+
 /* OCR text content styles */
 .ocr-text-content {
     width: 100%;

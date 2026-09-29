@@ -48,6 +48,45 @@ _ACTIVE_WHISPER_PROCESSES = {}
 _ACTIVE_WHISPER_PROCESSES_LOCK = threading.Lock()
 
 
+def _transcript_steps_path(video_id):
+    return TRANSCRIPTS_DIR / f"{video_id}_whisper_steps.jsonl"
+
+
+def log_transcript_step(video_id, message, reset=False):
+    """Append a timestamped step; the file is shared with the transcription process."""
+    message = str(message)[:400]
+    print(f"[transcript {video_id}] {message}")
+    try:
+        with open(_transcript_steps_path(video_id), "w" if reset else "a", encoding="utf-8") as file:
+            file.write(json.dumps({"time": time.time(), "message": message}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def read_transcript_steps(video_id, limit=60):
+    """Return steps with seconds since the job started, and the current elapsed time."""
+    path = _transcript_steps_path(video_id)
+    entries = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict) and "time" in entry:
+                entries.append(entry)
+    except OSError:
+        return [], None
+    if not entries:
+        return [], None
+    first = float(entries[0]["time"])
+    steps = [
+        {"elapsed": round(float(entry["time"]) - first, 1), "message": str(entry.get("message", ""))}
+        for entry in entries
+    ]
+    return steps[-limit:], round(time.time() - first, 1)
+
+
 def _run_whisper_worker(
     video_id, video_path, output_path, diarization, existing_transcript,
     model="turbo", prompt=None,
@@ -254,6 +293,14 @@ class TranscriptProcessor:
                 video_id,
                 "identifying_speakers" if existing_transcript else "starting",
             )
+            log_transcript_step(
+                video_id,
+                "Speaker identification requested for the existing transcript"
+                if existing_transcript
+                else f"Transcription requested with {model}"
+                + (", then speaker identification" if diarization else ""),
+                reset=True,
+            )
             background_tasks.add_task(
                 self.process_whisper_transcript,
                 video_id,
@@ -300,6 +347,11 @@ class TranscriptProcessor:
         # Create progress file
         with open(progress_path, 'w') as f:
             f.write("0")
+        log_transcript_step(
+            video_id,
+            f"Transcription requested with {default_transcription_model()}",
+            reset=True,
+        )
         
         # Start background task
         background_tasks.add_task(
@@ -313,6 +365,10 @@ class TranscriptProcessor:
         prompt=None,
     ):
         """Run native Whisper inference outside the FastAPI server process."""
+        log_transcript_step(
+            video_id,
+            "Starting a separate transcription process (loads the AI libraries first)",
+        )
         process = multiprocessing.get_context("spawn").Process(
             target=_run_whisper_worker,
             args=(
@@ -364,6 +420,7 @@ class TranscriptProcessor:
             f": {error}" if error is not None
             else f" with exit code {exit_code}"
         )
+        log_transcript_step(video_id, f"Transcription process stopped unexpectedly{detail}")
         error_path.write_text(
             "Whisper's isolated inference process stopped unexpectedly"
             f"{detail}. The web server remained available; retry transcription "
@@ -387,19 +444,34 @@ class TranscriptProcessor:
             daemon=True,
         )
         heartbeat.start()
+        started = time.monotonic()
+
+        def step(message):
+            log_transcript_step(video_id, message)
+
         try:
             transcript = [dict(item) for item in original_transcript]
-            if not transcript:
+            if transcript:
+                step("Reusing the existing transcript; only speakers will be identified")
+            else:
                 self._write_whisper_phase(video_id, "transcribing")
+                step(
+                    f"Transcription process ready; using {model}"
+                    + (" with your prompt" if prompt else "")
+                )
                 if is_cloud_model(model):
-                    for items, progress in transcribe_audio_cloud(video_path, model, prompt):
+                    for items, progress in transcribe_audio_cloud(
+                        video_path, model, prompt, on_step=step
+                    ):
                         transcript.extend(items)
                         (TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt").write_text(
                             str(progress), encoding="utf-8"
                         )
                 for sentence_data, progress in (
                     () if is_cloud_model(model)
-                    else transcribe_audio(video_path, model_name=model, prompt=prompt)
+                    else transcribe_audio(
+                        video_path, model_name=model, prompt=prompt, on_step=step
+                    )
                 ):
                     lines = sentence_data.strip().split('\n')
                     i = 0
@@ -437,18 +509,23 @@ class TranscriptProcessor:
                     "Whisper completed without any transcript segments. "
                     "The video may not contain recognizable speech."
                 )
+            if not original_transcript:
+                step(f"Transcription finished: {len(transcript)} lines")
             speaker_names = {}
             diarization_error = None
             if diarization:
                 self._write_whisper_phase(video_id, "identifying_speakers")
                 try:
-                    transcript, speaker_names = self.apply_diarization(video_path, transcript)
+                    transcript, speaker_names = self.apply_diarization(
+                        video_path, transcript, on_step=step
+                    )
                 except Exception as error:
                     if original_transcript:
                         raise
                     # Keep the new transcript; only the speaker labels are missing.
                     diarization_error = str(error)[:500]
-                    print(f"Speaker identification failed; keeping the transcript: {error}")
+                    step(f"Speaker identification failed; keeping the transcript: {error}")
+            step(f"Saving the transcript (total {time.monotonic() - started:.0f}s)")
             with open(output_path, 'w') as f:
                 json.dump(transcript, f)
             previous_metadata = self._read_whisper_metadata(video_id)
@@ -486,6 +563,7 @@ class TranscriptProcessor:
 
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
+            step(f"Failed after {time.monotonic() - started:.0f}s: {e}")
             heartbeat_stop.set()
             heartbeat.join(timeout=self.heartbeat_seconds + 1)
             progress_file = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
@@ -500,6 +578,19 @@ class TranscriptProcessor:
 
     async def get_whisper_status(self, video_id: str):
         """Check the status of Whisper transcript generation."""
+        response = await self._get_whisper_status(video_id)
+        steps, elapsed = read_transcript_steps(video_id)
+        if isinstance(getattr(response, "content", None), dict):
+            response.content.update({"steps": steps, "steps_elapsed": elapsed})
+            return response
+        try:
+            payload = json.loads(response.body)
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            return response
+        payload.update({"steps": steps, "steps_elapsed": elapsed})
+        return JSONResponse(payload)
+
+    async def _get_whisper_status(self, video_id: str):
         try:
             error_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt")
             if os.path.exists(error_path):
@@ -697,20 +788,37 @@ class TranscriptProcessor:
             raise RuntimeError("The video has no audio track to identify speakers in.")
         return {"waveform": torch.from_numpy(samples).unsqueeze(0), "sample_rate": 16000}
 
-    def _run_pyannote(self, Pipeline, token, video_path):
+    def _run_pyannote(self, Pipeline, token, video_path, on_step=None):
+        step = on_step or (lambda message: None)
+        step("Loading the pyannote speaker model (the first use downloads it)")
+        started = time.monotonic()
         pipeline = self._load_pyannote_pipeline(Pipeline, token)
+        step(f"Speaker model loaded in {time.monotonic() - started:.0f}s")
+        device = "CPU"
         try:
             import torch
 
             if torch.cuda.is_available():
                 pipeline.to(torch.device("cuda"))
+                device = "GPU"
         except Exception as error:
             print(f"Speaker identification will run on the CPU: {error}")
-        result = pipeline(self._load_audio_waveform(video_path))
+        step("Decoding the audio for speaker detection")
+        started = time.monotonic()
+        audio = self._load_audio_waveform(video_path)
+        step(f"Audio decoded in {time.monotonic() - started:.0f}s")
+        step(
+            f"Detecting speakers on the {device}"
+            + (" (much slower without a GPU)" if device == "CPU" else "")
+        )
+        started = time.monotonic()
+        result = pipeline(audio)
         # pyannote.audio 4 returns an object whose speaker_diarization is the annotation.
-        return getattr(result, "speaker_diarization", result)
+        annotation = getattr(result, "speaker_diarization", result)
+        step(f"Speaker detection finished in {time.monotonic() - started:.0f}s")
+        return annotation
 
-    def apply_diarization(self, video_path, transcript):
+    def apply_diarization(self, video_path, transcript, on_step=None):
         """Assign pyannote speaker labels to Whisper segments by timestamp overlap."""
         token = get_huggingface_token()
         if not token:
@@ -727,7 +835,7 @@ class TranscriptProcessor:
                 "requirements and retry."
             ) from error
         try:
-            annotation = self._run_pyannote(Pipeline, token, video_path)
+            annotation = self._run_pyannote(Pipeline, token, video_path, on_step)
         except Exception as error:
             raise RuntimeError(
                 f"Speaker identification could not start. Confirm the Hugging Face token "
@@ -739,6 +847,8 @@ class TranscriptProcessor:
             for turn, _, speaker in annotation.itertracks(yield_label=True)
         ]
         speakers = sorted({speaker for _, _, speaker in speaker_segments})
+        if on_step:
+            on_step(f"Found {len(speakers)} speaker(s); matching them to transcript lines")
         speaker_names = {speaker: speaker.replace("_", " ").title() for speaker in speakers}
         for item in transcript:
             start = float(item.get("start", 0))

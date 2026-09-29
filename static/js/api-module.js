@@ -72,12 +72,20 @@ export async function regenerateTranscript() {
                 }
                 return;
             }
-            if (status.status === 'error') throw new Error(status.error || 'Transcript regeneration failed');
+            if (status.status === 'error') {
+                const error = new Error(status.error || 'Transcript regeneration failed');
+                error.steps = status;
+                throw error;
+            }
             renderWhisperProgress(status, startedAt);
             await delay(3000);
         }
     } catch (error) {
-        showError(`Error regenerating transcript: ${error.message}`);
+        const lastStep = error.steps?.steps?.at(-1)?.message;
+        showError(
+            `Error regenerating transcript: ${error.message}`
+            + (lastStep && lastStep !== error.message ? ` (last step: ${lastStep})` : '')
+        );
         if (originalTranscript.length) {
             loadTranscript(originalTranscript);
         } else {
@@ -85,6 +93,7 @@ export async function regenerateTranscript() {
                 <div class="transcript-processing transcript-error">
                     <i class="fas fa-info-circle"></i>
                     <p>Transcript regeneration stopped. ${escapeHtml(error.message)}</p>
+                    ${renderTranscriptSteps(error.steps, { running: false })}
                 </div>
             `;
         }
@@ -94,6 +103,37 @@ export async function regenerateTranscript() {
             button.textContent = 'Regenerate transcript';
         }
     }
+}
+
+function formatStepTime(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+export function renderTranscriptSteps(status, { running = true } = {}) {
+    const steps = Array.isArray(status?.steps) ? status.steps : [];
+    if (!steps.length) return '';
+    const now = Number(status.steps_elapsed);
+    const items = steps.map((step, index) => {
+        const isCurrent = running && index === steps.length - 1;
+        const isFailure = !running && index === steps.length - 1;
+        const icon = isCurrent ? 'fa-spinner fa-spin' : isFailure ? 'fa-times' : 'fa-check';
+        const next = steps[index + 1];
+        const duration = next
+            ? Number(next.elapsed) - Number(step.elapsed)
+            : Number.isFinite(now) ? now - Number(step.elapsed) : null;
+        const durationText = duration !== null && duration >= 1
+            ? ` <span class="transcript-step-duration">${isCurrent ? 'running for ' : 'took '}${formatStepTime(duration)}</span>`
+            : '';
+        return `
+            <li class="transcript-step${isCurrent ? ' transcript-step-current' : ''}">
+                <span class="transcript-step-time">${formatStepTime(step.elapsed)}</span>
+                <i class="fas ${icon}"></i>
+                <span>${escapeHtml(step.message)}${durationText}</span>
+            </li>
+        `;
+    }).join('');
+    return `<ol class="transcript-steps">${items}</ol>`;
 }
 
 function renderWhisperProgress(status, startedAt) {
@@ -119,6 +159,7 @@ function renderWhisperProgress(status, startedAt) {
                 <div class="progress-text">${Math.round(progress)}%</div>
             </div>
             <p>${phase} (${elapsedSeconds}s elapsed).${lastUpdate}</p>
+            ${renderTranscriptSteps(status)}
             <p>You can continue using slide detection and video controls while this runs.</p>
         </div>
     `;
@@ -521,9 +562,14 @@ async function startYoutubeWhisperPolling(videoId) {
         showNotification('Whisper transcript generation complete. Generate Summary is ready.', 'success');
     };
 
+    const pollStartedAt = Date.now();
     const checkStatus = async () => {
         const response = await fetch(`/whisper_transcript_status/${videoId}`);
         const data = await response.json();
+        if (data.status === 'in_progress') {
+            renderWhisperProgress(data, pollStartedAt);
+            return false;
+        }
         if (data.status === 'complete' && Array.isArray(data.transcript)) {
             updateTranscript(data.transcript);
             if (state.youtubeTranscriptInterval) {
@@ -540,8 +586,9 @@ async function startYoutubeWhisperPolling(videoId) {
             elements.transcriptContainer.innerHTML = `
                 <div class="transcript-processing transcript-error">
                     <i class="fas fa-info-circle"></i>
-                    <p>Transcript generation stopped: ${data.error || 'No recognizable speech was found in this video.'}</p>
+                    <p>Transcript generation stopped: ${escapeHtml(data.error || 'No recognizable speech was found in this video.')}</p>
                     <p>You can still detect slides, but transcript-based summaries are unavailable.</p>
+                    ${renderTranscriptSteps(data, { running: false })}
                 </div>
             `;
             elements.generateSummaryBtn.disabled = true;
@@ -991,6 +1038,7 @@ export async function processVideoUpload(file) {
                                 <i class="fas fa-info-circle"></i>
                                 <p>Transcript generation stopped: ${escapeHtml(whisperData.error || 'No recognizable speech was found in this video.')}</p>
                                 <p>You can still detect slides, but transcript-based summaries are unavailable.</p>
+                                ${renderTranscriptSteps(whisperData, { running: false })}
                             </div>
                         `;
                         elements.generateSummaryBtn.disabled = true;

@@ -1,3 +1,5 @@
+import time
+
 import torch
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
@@ -47,16 +49,30 @@ def describe_transcription_method(device):
     return "batched (batch size 16)" if device == "cuda" else "streaming with VAD"
 
 
-def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None):
+def format_clock(seconds):
+    seconds = max(0, int(seconds or 0))
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None, on_step=None):
     """Transcribe audio file and yield sentences as they are processed."""
     if model_name not in WHISPER_MODELS:
         raise ValueError(f"Unsupported Whisper model: {model_name}")
+    step = on_step or (lambda message: None)
     device, compute_type = get_whisper_device_config()
     print(f"Whisper model: {model_name}")
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
+    step(
+        f"Loading Whisper {model_name} on the {device.upper()} ({compute_type}); "
+        "the first use in a session downloads the model"
+    )
+    started = time.monotonic()
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    step(f"Whisper model loaded in {time.monotonic() - started:.0f}s")
     prompt_options = {"initial_prompt": prompt} if prompt else {}
+    step("Decoding the audio and detecting the spoken language")
+    started = time.monotonic()
     if device == "cuda":
         inference_model = BatchedInferencePipeline(model=model)
         segments, info = inference_model.transcribe(
@@ -76,8 +92,22 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None):
         )
     total_duration = info.duration
     print(total_duration)
+    language = getattr(info, "language", None)
+    language_text = (
+        f", language {language} ({getattr(info, 'language_probability', 0):.0%} sure)"
+        if language else ""
+    )
+    step(
+        f"Audio ready in {time.monotonic() - started:.0f}s: "
+        f"{format_clock(total_duration)} of audio{language_text}"
+    )
+    step(
+        "Transcribing on the GPU" if device == "cuda"
+        else "Transcribing on the CPU (much slower than on a GPU; an online model is faster)"
+    )
 
     processed_duration = 0
+    next_milestone = 20
     for segment in segments:
         word_list = []
         for word in segment.words:
@@ -92,5 +122,11 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None):
             processed_duration = max(processed_duration, word_list[-1]["end"])
 
         progress = min(100, (processed_duration / total_duration) * 100) if total_duration > 0 else 0
+        if progress >= next_milestone:
+            step(
+                f"Transcribed {int(progress)}% "
+                f"({format_clock(processed_duration)} of {format_clock(total_duration)})"
+            )
+            next_milestone = (int(progress) // 20 + 1) * 20
         sentence_data = timestamps_to_srt(word_list)
         yield sentence_data, progress

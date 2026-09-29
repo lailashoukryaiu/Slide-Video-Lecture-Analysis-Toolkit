@@ -40,17 +40,21 @@ class CloudTranscriptionTests(unittest.TestCase):
     def test_parts_are_offset_and_report_progress(self):
         calls = []
 
-        def fake_chunk(audio_path, api_model, api_key, prompt=None):
+        def fake_chunk(audio_path, api_model, api_key, prompt=None, on_step=None):
             calls.append((api_model, api_key, prompt))
             return [{"start": 1.0, "end": 3.5, "text": "Hello."}]
 
+        steps = []
         with mock.patch.dict(os.environ, {"GROQ_API_KEY": "secret"}, clear=True), \
                 mock.patch.object(cloud_transcribe, "media_duration", return_value=1500), \
                 mock.patch.object(cloud_transcribe, "extract_audio_chunk"), \
                 mock.patch.object(cloud_transcribe, "_transcribe_groq_chunk", fake_chunk):
             results = list(cloud_transcribe.transcribe_audio_cloud(
-                "video.mp4", "groq:whisper-large-v3-turbo", "SAP Fiori"
+                "video.mp4", "groq:whisper-large-v3-turbo", "SAP Fiori", on_step=steps.append
             ))
+
+        self.assertIn("Part 2/2: extracting audio with ffmpeg", steps)
+        self.assertTrue(any("Part 1/2: Groq returned 1 segments" in step for step in steps))
 
         self.assertEqual(calls, [("whisper-large-v3-turbo", "secret", "SAP Fiori")] * 2)
         self.assertEqual(results[0][0], [{"text": "Hello.", "start": 1.0, "duration": 2.5}])
@@ -73,9 +77,11 @@ class CloudTranscriptionTests(unittest.TestCase):
                 raise RuntimeError("Error code: 429 rate limit reached")
             return "ok"
 
+        steps = []
         with mock.patch.object(cloud_transcribe.time, "sleep"):
-            self.assertEqual(cloud_transcribe._with_retries(flaky, "Groq"), "ok")
+            self.assertEqual(cloud_transcribe._with_retries(flaky, "Groq", steps.append), "ok")
         self.assertEqual(len(attempts), 2)
+        self.assertIn("429 rate limit", steps[0])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Online transcription through free-tier APIs (Groq Whisper and Gemini)."""
 import json
+import math
 import os
 import re
 import shutil
@@ -124,14 +125,22 @@ def _is_retryable(error):
     ))
 
 
-def _with_retries(call, description):
+def _with_retries(call, description, on_step=None):
+    last_error = None
     for attempt, wait in enumerate((0,) + RETRY_DELAYS_SECONDS):
         if wait:
-            print(f"{description} is rate limited or busy; retrying in {wait}s")
+            message = (
+                f"{description} is rate limited or busy ({str(last_error)[:150]}); "
+                f"retry {attempt} of {len(RETRY_DELAYS_SECONDS)} in {wait}s"
+            )
+            print(message)
+            if on_step:
+                on_step(message)
             time.sleep(wait)
         try:
             return call()
         except Exception as error:
+            last_error = error
             if attempt == len(RETRY_DELAYS_SECONDS) or not _is_retryable(error):
                 raise RuntimeError(f"{description} failed: {error}") from error
 
@@ -142,7 +151,7 @@ def _field(item, name, default=None):
     return getattr(item, name, default)
 
 
-def _transcribe_groq_chunk(audio_path, api_model, api_key, prompt=None):
+def _transcribe_groq_chunk(audio_path, api_model, api_key, prompt=None, on_step=None):
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, max_retries=0)
@@ -159,7 +168,7 @@ def _transcribe_groq_chunk(audio_path, api_model, api_key, prompt=None):
                 **prompt_options,
             )
 
-    result = _with_retries(call, "Groq transcription")
+    result = _with_retries(call, "Groq transcription", on_step)
     segments = []
     for segment in _field(result, "segments", None) or []:
         text = str(_field(segment, "text", "") or "").strip()
@@ -221,7 +230,9 @@ def parse_gemini_segments(response_text, clip_duration):
     return segments
 
 
-def _transcribe_gemini_chunk(audio_path, api_model, api_key, clip_duration, prompt=None):
+def _transcribe_gemini_chunk(
+    audio_path, api_model, api_key, clip_duration, prompt=None, on_step=None
+):
     from google import genai
     from google.genai import types
 
@@ -247,19 +258,21 @@ def _transcribe_gemini_chunk(audio_path, api_model, api_key, clip_duration, prom
             ),
         )
 
-    response = _with_retries(call, "Gemini transcription")
+    response = _with_retries(call, "Gemini transcription", on_step)
     try:
         return parse_gemini_segments(response.text, clip_duration)
     except (json.JSONDecodeError, TypeError, AttributeError) as error:
         raise RuntimeError(f"Gemini returned an unreadable transcript: {error}") from error
 
 
-def transcribe_audio_cloud(video_path, model, prompt=None):
+def transcribe_audio_cloud(video_path, model, prompt=None, on_step=None):
     """Yield (transcript items, progress percent) for each transcribed part."""
     if model not in CLOUD_TRANSCRIPTION_MODELS:
         raise ValueError(f"Unsupported online transcription model: {model}")
+    step = on_step or (lambda message: None)
     config = CLOUD_TRANSCRIPTION_MODELS[model]
     provider = config["provider"]
+    provider_name = "Groq" if provider == "groq" else "Google Gemini"
     api_key = provider_api_key(provider)
     if not api_key:
         key_name = PROVIDER_KEY_NAMES[provider][0]
@@ -267,11 +280,17 @@ def transcribe_audio_cloud(video_path, model, prompt=None):
             f"{config['label']} requires {key_name} in the server environment. "
             "Add it and restart the server."
         )
+    step("Reading the video's duration")
     total = media_duration(video_path)
     if total <= 0:
         raise RuntimeError("Could not read the video's duration for online transcription.")
     chunk_seconds = CHUNK_SECONDS[provider]
+    part_count = max(1, math.ceil(total / chunk_seconds))
     print(f"Online transcription: {config['label']}, {total:.0f}s in {chunk_seconds}s parts")
+    step(
+        f"Video has {total / 60:.1f} min of audio; sending {part_count} "
+        f"part{'s' if part_count != 1 else ''} to {config['label']}"
+    )
 
     with tempfile.TemporaryDirectory(prefix="cloud_transcribe_") as directory:
         start = 0.0
@@ -279,15 +298,28 @@ def transcribe_audio_cloud(video_path, model, prompt=None):
         while start < total:
             duration = min(chunk_seconds, total - start)
             audio_path = Path(directory) / f"part_{index}.mp3"
+            label = f"Part {index + 1}/{part_count}"
+            step(f"{label}: extracting audio with ffmpeg")
+            started = time.monotonic()
             extract_audio_chunk(video_path, audio_path, start, duration)
+            size_mb = audio_path.stat().st_size / 1_000_000 if audio_path.exists() else 0
+            step(
+                f"{label}: audio extracted in {time.monotonic() - started:.0f}s "
+                f"({size_mb:.1f} MB); waiting for {provider_name}"
+            )
+            started = time.monotonic()
             if provider == "groq":
                 segments = _transcribe_groq_chunk(
-                    audio_path, config["api_model"], api_key, prompt
+                    audio_path, config["api_model"], api_key, prompt, on_step=step
                 )
             else:
                 segments = _transcribe_gemini_chunk(
-                    audio_path, config["api_model"], api_key, duration, prompt
+                    audio_path, config["api_model"], api_key, duration, prompt, on_step=step
                 )
+            step(
+                f"{label}: {provider_name} returned {len(segments)} segments "
+                f"in {time.monotonic() - started:.0f}s"
+            )
             items = [
                 {
                     "text": segment["text"],

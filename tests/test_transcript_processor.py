@@ -131,7 +131,7 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             transcript_module.transcribe_audio = self._unexpected_transcription
             try:
                 processor = TranscriptProcessor()
-                processor.apply_diarization = lambda path, transcript: (
+                processor.apply_diarization = lambda path, transcript, **kwargs: (
                     [{**item, "speaker": "SPEAKER_00"} for item in transcript],
                     {"SPEAKER_00": "Speaker 00"},
                 )
@@ -172,8 +172,9 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             transcript_module.TRANSCRIPTS_DIR = Path(directory)
             calls = []
 
-            def fake_transcribe(path, model_name="turbo", prompt=None):
+            def fake_transcribe(path, model_name="turbo", prompt=None, on_step=None):
                 calls.append((model_name, prompt))
+                on_step("Loading Whisper")
                 yield "1\n00:00:00,000 --> 00:00:01,000\nHello.\n\n", 100
 
             transcript_module.transcribe_audio = fake_transcribe
@@ -187,6 +188,12 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
 
                 metadata = processor._public_whisper_metadata("video")
                 self.assertEqual(calls, [("large-v3", "SAP lecture")])
+                steps, elapsed = transcript_module.read_transcript_steps("video")
+                messages = [step["message"] for step in steps]
+                self.assertIn("Loading Whisper", messages)
+                self.assertTrue(any(m.startswith("Transcription finished") for m in messages))
+                self.assertTrue(any(m.startswith("Saving the transcript") for m in messages))
+                self.assertIsNotNone(elapsed)
                 self.assertEqual(metadata["model"], "large-v3")
                 self.assertEqual(metadata["prompt"], "SAP lecture")
                 self.assertEqual(metadata["device"], "cuda")
@@ -227,7 +234,7 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
             original_dir = transcript_module.TRANSCRIPTS_DIR
             transcript_module.TRANSCRIPTS_DIR = Path(directory)
 
-            def fake_cloud(path, model, prompt=None):
+            def fake_cloud(path, model, prompt=None, on_step=None):
                 yield [{"text": "Hallo.", "start": 0.0, "duration": 1.5}], 100.0
 
             try:
