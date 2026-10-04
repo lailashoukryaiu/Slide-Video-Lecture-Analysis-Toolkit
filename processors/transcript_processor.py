@@ -220,7 +220,10 @@ class TranscriptProcessor:
                 })
         try:
             if force:
-                self._terminate_whisper_process(video_id)
+                if self._terminate_whisper_process(video_id):
+                    progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
+                    progress_path.unlink(missing_ok=True)
+                    self._remove_whisper_phase(video_id)
 
             # Check if video exists
             video_files = os.listdir(VIDEO_DIR)
@@ -382,15 +385,24 @@ class TranscriptProcessor:
             ),
             name=f"whisper-{video_id}",
         )
-        with _ACTIVE_WHISPER_PROCESSES_LOCK:
-            _ACTIVE_WHISPER_PROCESSES[video_id] = process
+        started = False
         try:
-            process.start()
+            with _ACTIVE_WHISPER_PROCESSES_LOCK:
+                process.start()
+                started = True
+                _ACTIVE_WHISPER_PROCESSES[video_id] = process
             await asyncio.to_thread(process.join)
-            if process.exitcode != 0:
-                self._record_whisper_process_failure(video_id, process.exitcode)
+            with _ACTIVE_WHISPER_PROCESSES_LOCK:
+                if (
+                    _ACTIVE_WHISPER_PROCESSES.get(video_id) is process
+                    and process.exitcode != 0
+                ):
+                    self._record_whisper_process_failure(video_id, process.exitcode)
         except Exception as error:
-            self._record_whisper_process_failure(video_id, None, error)
+            with _ACTIVE_WHISPER_PROCESSES_LOCK:
+                active = _ACTIVE_WHISPER_PROCESSES.get(video_id)
+                if active is process or (not started and active is None):
+                    self._record_whisper_process_failure(video_id, None, error)
         finally:
             with _ACTIVE_WHISPER_PROCESSES_LOCK:
                 if _ACTIVE_WHISPER_PROCESSES.get(video_id) is process:
@@ -406,6 +418,8 @@ class TranscriptProcessor:
             if process.is_alive():
                 process.kill()
                 process.join(timeout=5)
+            return True
+        return False
 
     def _record_whisper_process_failure(self, video_id, exit_code, error=None):
         output_path = TRANSCRIPTS_DIR / f"{video_id}_whisper.json"
@@ -420,11 +434,18 @@ class TranscriptProcessor:
             f": {error}" if error is not None
             else f" with exit code {exit_code}"
         )
+        guidance = (
+            " The worker received SIGTERM (a termination request), not a CUDA "
+            "library error. Check whether the server/runtime was restarted or "
+            "another transcription request replaced this job."
+            if exit_code == -15 and error is None
+            else " Retry transcription and check the server output for memory "
+            "or CTranslate2 errors."
+        )
         log_transcript_step(video_id, f"Transcription process stopped unexpectedly{detail}")
         error_path.write_text(
             "Whisper's isolated inference process stopped unexpectedly"
-            f"{detail}. The web server remained available; retry transcription "
-            "and check the server output for memory or CTranslate2 errors.",
+            f"{detail}. The web server remained available.{guidance}",
             encoding="utf-8",
         )
 

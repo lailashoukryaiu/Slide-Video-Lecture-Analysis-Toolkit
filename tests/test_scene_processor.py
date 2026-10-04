@@ -2,6 +2,8 @@ import sys
 import unittest
 from types import ModuleType
 
+import numpy as np
+
 
 scenedetect_module = sys.modules.setdefault("scenedetect", ModuleType("scenedetect"))
 scenedetect_module.open_video = object
@@ -20,6 +22,54 @@ fastapi_responses_module.JSONResponse = object
 fastapi_module.responses = fastapi_responses_module
 
 from processors.scene_processor import SceneProcessor
+
+
+class AdaptiveDetailTests(unittest.TestCase):
+    def test_adaptive_detail_changes_candidate_count_for_lecture_transitions(self):
+        scores = np.zeros(360, dtype=np.float32)
+        transition_strengths = np.linspace(0.04, 0.55, 24, dtype=np.float32)
+        for transition, strength in enumerate(transition_strengths):
+            start = 5 + transition * 14
+            scores[start:start + 4] = strength * np.array(
+                [0.2, 0.6, 1.0, 0.35], dtype=np.float32
+            )
+        samples = [
+            (sample_index * 2, float(score), None)
+            for sample_index, score in enumerate(scores)
+        ]
+        scores = np.array([sample[1] for sample in samples[1:]], dtype=np.float32)
+
+        candidate_counts = {
+            detail: len(
+                SceneProcessor._adaptive_change_candidates(
+                    samples,
+                    SceneProcessor._adaptive_score_threshold(scores, detail)[1],
+                )
+            )
+            for detail in ("more", "balanced", "fewer")
+        }
+
+        self.assertEqual(candidate_counts, {"more": 21, "balanced": 17, "fewer": 10})
+
+    def test_static_frame_scores_do_not_change_the_learned_threshold(self):
+        scores = np.zeros(1000, dtype=np.float32)
+        scores[::100] = np.linspace(0.01, 0.1, 10, dtype=np.float32)
+
+        thresholds = [
+            SceneProcessor._adaptive_score_threshold(scores, detail)[1]
+            for detail in ("more", "balanced", "fewer")
+        ]
+
+        self.assertEqual(thresholds, sorted(thresholds))
+        self.assertTrue(all(threshold > 0.005 for threshold in thresholds))
+
+    def test_no_changed_frame_scores_use_the_minimum_threshold(self):
+        scores = np.zeros(1000, dtype=np.float32)
+
+        self.assertEqual(
+            SceneProcessor._adaptive_score_threshold(scores, "balanced"),
+            (70.0, 0.005),
+        )
 
 
 class SceneProcessorLimitTests(unittest.TestCase):

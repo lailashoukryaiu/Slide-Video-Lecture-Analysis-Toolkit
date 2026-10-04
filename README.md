@@ -127,6 +127,12 @@ libraries can load; otherwise it reports the reason in its progress log and
 uses CPU int8. The runtime status distinguishes GPU availability from the
 device usable by Whisper. Groq transcription does not require local CUDA.
 
+Regenerating a transcript replaces an active transcription worker. An
+intentionally stopped worker cannot overwrite the replacement job's progress
+or report its termination as a new failure. An unexpected exit code `-15`
+means SIGTERM: check for a server/runtime restart or an external termination
+request, rather than treating it as proof of a CUDA or memory error.
+
 1. **Set up Google Gemini API:**
    ```bash
    # Create .env file
@@ -205,7 +211,9 @@ ocr_text = requests.get("http://localhost:8000/find_ocr_for_transcript/video_id/
 ### Core Functionality
 
 #### Scene Detection and Analysis
-- **Adaptive Detection**: Automatically identifies scene transitions
+- **Adaptive Detection**: Automatically identifies scene transitions. Detail
+  presets learn their threshold from changed-frame scores rather than unchanged
+  frames, so “More slides” uses a lower threshold than “Balanced” or “Fewer slides”.
 - **Content-based Segmentation**: Detects visual changes in presentation slides
 - **Keyframe Extraction**: Saves representative frames for each scene
 - **Thumbnail Generation**: Creates navigation thumbnails

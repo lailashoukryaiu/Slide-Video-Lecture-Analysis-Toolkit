@@ -326,6 +326,86 @@ class TranscriptProcessorIsolationTests(unittest.IsolatedAsyncioTestCase):
             "video", transcript_module._ACTIVE_WHISPER_PROCESSES
         )
 
+    async def test_replaced_worker_cannot_overwrite_new_job_status(self):
+        class ReplacedProcess:
+            exitcode = -15
+
+            def start(self):
+                pass
+
+            def join(self):
+                TranscriptProcessor._terminate_whisper_process("video")
+                transcript_module._ACTIVE_WHISPER_PROCESSES["video"] = replacement
+
+            def is_alive(self):
+                return False
+
+        replacement = object()
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)), \
+                mock.patch.object(transcript_module.multiprocessing, "get_context") as context:
+            context.return_value.Process.return_value = ReplacedProcess()
+            progress = Path(directory) / "video_whisper_progress.txt"
+            progress.write_text("42", encoding="utf-8")
+            processor = TranscriptProcessor()
+            processor._write_whisper_phase("video", "transcribing")
+            try:
+                await processor.process_whisper_transcript("video", "video.mp4", "output.json")
+                self.assertEqual(progress.read_text(), "42")
+                self.assertTrue((Path(directory) / "video_whisper_phase.txt").exists())
+                self.assertFalse((Path(directory) / "video_whisper_error.txt").exists())
+                self.assertIs(transcript_module._ACTIVE_WHISPER_PROCESSES["video"], replacement)
+            finally:
+                transcript_module._ACTIVE_WHISPER_PROCESSES.pop("video", None)
+
+    async def test_forced_retry_starts_immediately_after_terminating_worker(self):
+        class BackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, *args):
+                self.tasks.append(args)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "VIDEO_DIR", Path(directory)), \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)):
+            (Path(directory) / "video.mp4").write_bytes(b"video")
+            progress = Path(directory) / "video_whisper_progress.txt"
+            progress.write_text("42", encoding="utf-8")
+            process = mock.Mock()
+            process.is_alive.side_effect = [True, False]
+            transcript_module._ACTIVE_WHISPER_PROCESSES["video"] = process
+            tasks = BackgroundTasks()
+            response = await TranscriptProcessor().generate_whisper_transcript(
+                "video", tasks, force=True
+            )
+            process.terminate.assert_called_once()
+            self.assertEqual(len(tasks.tasks), 1)
+            self.assertEqual(response.content["phase"], "starting")
+            self.assertEqual(progress.read_text(), "0")
+
+    async def test_worker_start_failure_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)), \
+                mock.patch.object(transcript_module.multiprocessing, "get_context") as context:
+            context.return_value.Process.return_value.start.side_effect = OSError(
+                "Cannot start the worker"
+            )
+            await TranscriptProcessor().process_whisper_transcript(
+                "video", "video.mp4", "output.json"
+            )
+            message = (Path(directory) / "video_whisper_error.txt").read_text()
+            self.assertIn("Cannot start the worker", message)
+            self.assertNotIn("video", transcript_module._ACTIVE_WHISPER_PROCESSES)
+
+    def test_external_sigterm_has_specific_guidance(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)):
+            TranscriptProcessor()._record_whisper_process_failure("video", -15)
+            message = (Path(directory) / "video_whisper_error.txt").read_text()
+            self.assertIn("SIGTERM", message)
+            self.assertIn("restarted", message)
+
 
 class HuggingFaceTokenTests(unittest.TestCase):
     def setUp(self):

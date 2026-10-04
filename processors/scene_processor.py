@@ -281,18 +281,10 @@ class SceneProcessor:
                     "sampled_frames": len(samples),
                     "detected_changes": 1,
                 }
-            percentiles = {"fewer": 98.0, "balanced": 96.5, "more": 94.0}
-            percentile = percentiles[options["adaptive_detail"]]
-            adaptive_threshold = max(0.005, float(np.percentile(scores, percentile)))
-            candidates = []
-            for index in range(1, len(samples) - 1):
-                timestamp, score, signature = samples[index]
-                if (
-                    score >= adaptive_threshold
-                    and score >= samples[index - 1][1]
-                    and score >= samples[index + 1][1]
-                ):
-                    candidates.append((timestamp, score, signature))
+            percentile, adaptive_threshold = self._adaptive_score_threshold(
+                scores, options["adaptive_detail"]
+            )
+            candidates = self._adaptive_change_candidates(samples, adaptive_threshold)
 
             candidates.sort(key=lambda item: item[1], reverse=True)
             selected = [(0.0, 1.0, samples[0][2])]
@@ -344,6 +336,30 @@ class SceneProcessor:
             }
         finally:
             cap.release()
+
+    @staticmethod
+    def _adaptive_score_threshold(scores, detail):
+        percentiles = {"fewer": 90.0, "balanced": 70.0, "more": 45.0}
+        percentile = percentiles[detail]
+        changed_scores = scores[scores > 0]
+        threshold = (
+            max(0.005, float(np.percentile(changed_scores, percentile)))
+            if changed_scores.size
+            else 0.005
+        )
+        return percentile, threshold
+
+    @staticmethod
+    def _adaptive_change_candidates(samples, threshold):
+        return [
+            samples[index]
+            for index in range(1, len(samples) - 1)
+            if (
+                samples[index][1] >= threshold
+                and samples[index][1] >= samples[index - 1][1]
+                and samples[index][1] >= samples[index + 1][1]
+            )
+        ]
 
     @staticmethod
     def _signature_difference(first, second):
