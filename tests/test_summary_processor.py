@@ -221,6 +221,21 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         processor._save_chapters = lambda video_id, chapters: None
         return processor
 
+    def test_summary_default_prefers_groq_and_preserves_explicit_choice(self):
+        processor = self._processor(None, None, None)
+        self.assertEqual(
+            processor._provider_chain(prefer_groq=True)[0], ("groq", "groq-test")
+        )
+        self.assertEqual(
+            processor._provider_chain("gemini-3.8-flash", prefer_groq=True)[0],
+            ("gemini", "gemini-3.8-flash"),
+        )
+        processor.groq_client = None
+        self.assertEqual(
+            processor._provider_chain(prefer_groq=True)[0],
+            ("gemini", "gemini-3.6-flash"),
+        )
+
     def test_chain_tries_other_gemini_models_then_groq_before_paid_openai(self):
         processor = self._processor(None, None, None)
         self.assertEqual(processor._provider_chain("gemini-2.5-flash"), [

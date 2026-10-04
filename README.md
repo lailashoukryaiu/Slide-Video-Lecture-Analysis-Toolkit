@@ -27,6 +27,8 @@
 - **Semantic Embeddings**: Sentence-BERT based semantic similarity for transcript-OCR alignment
 - **YOLO Object Detection**: Custom-trained YOLOv8 model for slide content detection (`slidevqa_best.pt`)
 - **AI-Powered Summarization**: Google Gemini integration for chapter generation
+- **Summary Provider Default**: Automatic summary generation prefers configured
+  Groq, then Gemini and OpenAI; explicit model choices remain available.
 - **Web Interface**: FastAPI-based web application with real-time updates
 
 ## Interactive User Interface

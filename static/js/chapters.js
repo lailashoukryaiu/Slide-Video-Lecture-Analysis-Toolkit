@@ -162,16 +162,22 @@ export async function exportChapters() {
  * Generates chapter markers from the transcript
  */
 export async function generateChapters() {
-    if (state.summaryGenerationInProgress) return;
+    if (state.summaryGenerationInProgress) {
+        showNotification('Summary generation is already running.', 'info');
+        return;
+    }
+    if (!state.currentTranscript?.length) {
+        showError('Generate or load a transcript before generating a summary.');
+        return;
+    }
     state.summaryGenerationInProgress = true;
     const generateSummaryBtn = elements.generateSummaryBtn;
     
-    generateSummaryBtn.disabled = true;
-    generateSummaryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
-    setSummaryStatus('generating', '<i class="fas fa-spinner fa-spin"></i> Generating summary and chapters. This may take a minute...');
-    showError('');
-
     try {
+        generateSummaryBtn.disabled = true;
+        generateSummaryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+        setSummaryStatus('generating', '<i class="fas fa-spinner fa-spin"></i> Generating summary and chapters. This may take a minute...');
+        showError('');
         const response = await fetch('/generate_summary', {
             method: 'POST',
             headers: {
@@ -180,7 +186,7 @@ export async function generateChapters() {
             body: JSON.stringify({
                 transcript: state.currentTranscript,
                 video_id: state.currentVideoId,
-                model: elements.summaryModel?.value || 'gemini-3.8-flash'
+                model: elements.summaryModel?.value || null
             })
         });
 
@@ -237,7 +243,7 @@ export async function generateChapters() {
                         void generateChapters();
                     }
                 }, 15000);
-                showNotification('Retrying Gemini now; automatic retries will continue every 15 seconds.', 'info');
+                showNotification('Retrying summary generation now; automatic retries will continue every 15 seconds.', 'info');
                 void generateChapters();
             });
             status.appendChild(autoRetryButton);
@@ -250,7 +256,7 @@ export async function generateChapters() {
                     clearInterval(state.summaryRetryTimer);
                     state.summaryRetryTimer = null;
                 }
-                showNotification('Automatic Gemini retry stopped.', 'info');
+                showNotification('Automatic summary retry stopped.', 'info');
             });
             status.appendChild(stopRetryButton);
         }

@@ -11,6 +11,10 @@ export function loadTranscript(transcript) {
     state.currentTranscript = Array.isArray(transcript)
         ? transcript
         : (Array.isArray(transcript?.segments) ? transcript.segments : []);
+    if (elements.generateSummaryBtn) {
+        elements.generateSummaryBtn.disabled =
+            state.summaryGenerationInProgress || state.currentTranscript.length === 0;
+    }
     updateTranscriptDisplay();
     
     // Dispatch event that transcript is loaded

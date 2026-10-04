@@ -107,7 +107,7 @@ class SummaryProcessor:
             return ("groq", requested_model[len("groq:"):])
         return ("gemini", requested_model)
 
-    def _provider_chain(self, requested_model=None):
+    def _provider_chain(self, requested_model=None, prefer_groq=False):
         """Return (provider, model) pairs to try, in order, skipping unconfigured ones."""
         configured = {
             "gemini": bool(self.model),
@@ -126,6 +126,8 @@ class SummaryProcessor:
 
         if requested_model:
             add(*self._provider_chain_entry(requested_model))
+        if prefer_groq and not requested_model:
+            add("groq", getattr(self, "groq_model_name", None))
         add("gemini", self.model_name)
         for model in GEMINI_FALLBACK_MODELS:
             add("gemini", model)
@@ -172,10 +174,10 @@ class SummaryProcessor:
             "or OPENAI_API_KEY in the Colab runtime and restart the server."
         )
     async def generate_summary(self, transcript: list, video_id: str = None, requested_model: str = None):
-        """Generate chapter summary using Gemini."""
+        """Generate chapters, preferring configured Groq unless a model is selected."""
         try:
             self._refresh_clients()
-            chain = self._provider_chain(requested_model)
+            chain = self._provider_chain(requested_model, prefer_groq=True)
             if not transcript or not chain:
                 return JSONResponse({
                     "success": False,
