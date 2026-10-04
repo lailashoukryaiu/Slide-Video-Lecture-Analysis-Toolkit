@@ -19,5 +19,7 @@ sentence-transformers
 numpy
 faiss-cpu
 faster-whisper
+# faster-whisper 1.2.1 uses metadata_errors, which PyAV 19 removed.
+av>=11,<19
 dill
 pyannote.audio

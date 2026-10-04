@@ -106,6 +106,13 @@ brew install tesseract ffmpeg
    pip install -r requirements.txt
    ```
 
+   Local Whisper transcription requires `av>=11,<19`: PyAV 19 removed the
+   `metadata_errors` argument used by faster-whisper 1.2.1. If an existing
+   environment reports `open() got an unexpected keyword argument
+   'metadata_errors'`, reinstall the requirements and restart the application
+   before retrying transcription. Updating the repository alone does not update
+   installed packages.
+
 ### Configuration
 
 1. **Set up Google Gemini API:**
