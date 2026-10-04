@@ -1184,6 +1184,37 @@ export async function loadUploadedVideo(videoId) {
     }
 }
 
+// Mirrored by PRESET_LIMITS in tests/test_scene_processor.py.
+const DETAIL_LEVEL_LIMITS = {
+    more: { label: 'More slides', minimumDuration: 5, maximumSlidesPerHour: 0 },
+    balanced: { label: 'Balanced', minimumDuration: 10, maximumSlidesPerHour: 0 },
+    fewer: { label: 'Fewer slides', minimumDuration: 20, maximumSlidesPerHour: 60 },
+};
+
+function resolveSlideLimits(mode, detail) {
+    const preset = DETAIL_LEVEL_LIMITS[mode === 'adaptive' ? detail : 'balanced']
+        || DETAIL_LEVEL_LIMITS.balanced;
+    const durationValue = elements.minimumSlideDuration.value;
+    const limitValue = elements.maximumSlidesPerHour.value;
+    return {
+        minimumDuration: durationValue === 'auto' ? preset.minimumDuration : Number(durationValue),
+        maximumSlidesPerHour: limitValue === 'auto' ? preset.maximumSlidesPerHour : Number(limitValue),
+        durationSource: durationValue === 'auto' ? 'detail level' : 'custom',
+        limitSource: limitValue === 'auto' ? 'detail level' : 'custom',
+    };
+}
+
+function describeAppliedSlideSettings(mode, detail, contentThreshold, limits) {
+    if (mode === 'chapters') return 'Method: Transcript chapters.';
+    const method = mode === 'adaptive'
+        ? `Adaptive (${(DETAIL_LEVEL_LIMITS[detail] || DETAIL_LEVEL_LIMITS.balanced).label})`
+        : `Content cuts (threshold ${contentThreshold})`;
+    const limit = limits.maximumSlidesPerHour
+        ? `${limits.maximumSlidesPerHour} slides/hour`
+        : 'no slide limit';
+    return `Method: ${method} ? minimum ${limits.minimumDuration} s (${limits.durationSource}) ? ${limit} (${limits.limitSource}) ? similar-slide merging ${elements.mergeSimilarSlides.checked ? 'on' : 'off'}.`;
+}
+
 export async function detectScenes() {
     const videoId = state.currentVideoId;
     if (!videoId) return;
@@ -1195,8 +1226,9 @@ export async function detectScenes() {
         return;
     }
     const contentThreshold = Number(elements.sceneDetectionThreshold.value);
-    const minimumDuration = Number(elements.minimumSlideDuration.value);
-    const maximumSlidesPerHour = Number(elements.maximumSlidesPerHour.value);
+    const detail = elements.adaptiveDetail.value;
+    const limits = resolveSlideLimits(mode, detail);
+    const { minimumDuration, maximumSlidesPerHour } = limits;
     const screenshotHeight = Number(elements.slideImageQuality.value);
     if (
         !Number.isFinite(contentThreshold)
@@ -1219,7 +1251,7 @@ export async function detectScenes() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mode,
-                adaptive_detail: elements.adaptiveDetail.value,
+                adaptive_detail: detail,
                 content_threshold: contentThreshold,
                 minimum_slide_duration: minimumDuration,
                 maximum_slides_per_hour: maximumSlidesPerHour,
@@ -1232,7 +1264,7 @@ export async function detectScenes() {
         if (!response.ok || !data.success) throw new Error(data.detail || data.error || 'Could not start scene detection');
         elements.scenesContainer.insertAdjacentHTML(
             'afterbegin',
-            `<p class="scene-progress-status">Method: ${mode === 'adaptive' ? `Adaptive (${elements.adaptiveDetail.value})` : mode === 'content' ? `Content cuts (${contentThreshold})` : 'Transcript chapters'}.</p>`
+            `<p class="scene-progress-status">${describeAppliedSlideSettings(mode, detail, contentThreshold, limits)}</p>`
         );
         await checkSceneDetection(videoId);
         state.sceneDetectionInterval = setInterval(() => checkSceneDetection(videoId), 2000);

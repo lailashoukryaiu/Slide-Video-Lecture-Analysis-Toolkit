@@ -27,6 +27,51 @@ export function stopDetectionPolling() {
     detectionPollingVideoId = null;
 }
 
+const DETAIL_LABELS = { more: 'More slides', balanced: 'Balanced', fewer: 'Fewer slides' };
+
+function describeSlideLimits(diagnostics) {
+    const limit = diagnostics.maximum_slides_per_hour
+        ? `${diagnostics.maximum_slides_per_hour} slides/hour${diagnostics.slide_limit ? ` (${diagnostics.slide_limit} for this video)` : ''}`
+        : 'no slide limit';
+    return `minimum ${diagnostics.minimum_slide_duration_seconds} s, ${limit}`;
+}
+
+function describeSceneDetection(diagnostics, slideCount) {
+    if (diagnostics.mode === 'chapters') {
+        return `Created ${slideCount} slides from transcript chapter boundaries.`;
+    }
+    const parts = [];
+    if (diagnostics.mode === 'adaptive' && diagnostics.visual_changes === undefined) {
+        parts.push(`Detected ${slideCount} slides from ${diagnostics.raw_candidates || 0} adaptive candidates (saved before detailed diagnostics).`);
+    } else if (diagnostics.mode === 'adaptive') {
+        parts.push(
+            `Detected ${slideCount} slides (Adaptive, ${DETAIL_LABELS[diagnostics.detail_level] || diagnostics.detail_level}; ${describeSlideLimits(diagnostics)}).`
+        );
+        parts.push(
+            `${diagnostics.visual_changes ?? 0} settled visual changes: ${diagnostics.builds_merged ?? 0} build steps and ${diagnostics.small_changes_merged ?? 0} small edits merged, ${diagnostics.merged_by_minimum_duration ?? 0} quick changes merged by the minimum duration.`
+        );
+    } else {
+        parts.push(
+            `Detected ${slideCount} slides from ${diagnostics.raw_boundaries || 0} content-cut boundaries (threshold ${diagnostics.content_threshold}; ${describeSlideLimits(diagnostics)}); ${diagnostics.near_duplicates_removed || 0} near-duplicates removed.`
+        );
+    }
+    if (diagnostics.removed_by_slide_limit) {
+        parts.push(
+            `The slide limit hid ${diagnostics.removed_by_slide_limit} detected slides (the most distinct ones were kept). Choose a higher or unlimited Maximum slides per hour to see them.`
+        );
+    }
+    const presetCounts = diagnostics.preset_counts;
+    if (presetCounts) {
+        const comparison = `With these limits: More ${presetCounts.more}, Balanced ${presetCounts.balanced}, Fewer ${presetCounts.fewer}.`;
+        const identical = presetCounts.more === presetCounts.balanced
+            && presetCounts.balanced === presetCounts.fewer;
+        parts.push(identical
+            ? `${comparison} ${diagnostics.removed_by_slide_limit ? 'The slide limit makes every detail level equal.' : 'This video has no builds or small edits to merge, so every detail level keeps the same slides.'}`
+            : comparison);
+    }
+    return parts.join(' ');
+}
+
 /**
  * Checks the status of scene detection for a video
  * @param {string} videoId - The YouTube video ID
@@ -47,12 +92,7 @@ export async function checkSceneDetection(videoId) {
                 
                 updateScenes(data.scenes, videoPlayer);
                 if (data.scenes.length > 1 && data.diagnostics) {
-                    const diagnostics = data.diagnostics;
-                    const summary = diagnostics.mode === 'adaptive'
-                        ? `Detected ${data.scenes.length} slides from ${diagnostics.raw_candidates || 0} adaptive candidates; removed ${diagnostics.near_duplicates_removed || 0} near-duplicates.`
-                        : diagnostics.mode === 'content'
-                            ? `Detected ${data.scenes.length} slides from ${diagnostics.raw_boundaries || 0} content-cut boundaries.`
-                            : `Created ${data.scenes.length} slides from transcript chapter boundaries.`;
+                    const summary = describeSceneDetection(data.diagnostics, data.scenes.length);
                     elements.scenesContainer.insertAdjacentHTML(
                         'afterbegin',
                         `<p class="scene-help">${summary}</p>`
@@ -68,7 +108,7 @@ export async function checkSceneDetection(videoId) {
                 if (data.scenes.length === 0) {
                     const diagnostics = data.diagnostics;
                     const diagnosticText = diagnostics && diagnostics.mode === 'adaptive'
-                        ? `<p class="scene-help">Adaptive scan sampled ${diagnostics.sampled_frames} frames and found ${diagnostics.raw_candidates || 0} visual-change candidates. ${diagnostics.near_duplicates_removed || 0} near-duplicates were removed (learned threshold: ${Number(diagnostics.adaptive_threshold_percent || 0).toFixed(2)}%).</p>`
+                        ? `<p class="scene-help">Adaptive scan sampled ${diagnostics.sampled_frames} frames. ${describeSceneDetection(diagnostics, 0)}</p>`
                         : '';
                     elements.scenesContainer.innerHTML = `
                         <p>No scene changes detected.</p>

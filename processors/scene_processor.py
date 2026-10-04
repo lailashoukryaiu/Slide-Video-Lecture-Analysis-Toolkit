@@ -10,6 +10,24 @@ from concurrent.futures import ThreadPoolExecutor
 
 from project_paths import SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR
 
+SIGNATURE_SIZE = (128, 72)
+PIXEL_CHANGE_LEVEL = 18
+INK_LEVEL = 25
+# Share of the frame (outside live regions) that must change to count at all,
+# e.g. ignoring cursor movement and compression noise.
+NOISE_CHANGE_FRACTION = 0.003
+DUPLICATE_CHANGE_FRACTION = 0.005
+LIVE_REGION_ACTIVITY = 0.1
+QUIET_PAIR_FRACTION = 0.02
+MAXIMUM_BUILD_FRACTION = 0.12
+BUILD_REMOVED_RATIO = 0.15
+ADAPTIVE_PRESETS = {
+    "more": {"change_threshold": 0.005, "keep_builds": "all", "large_build": 0.0},
+    "balanced": {"change_threshold": 0.005, "keep_builds": "large", "large_build": 0.025},
+    "fewer": {"change_threshold": 0.015, "keep_builds": "none", "large_build": 1.0},
+}
+
+
 class SceneProcessor:
     def __init__(self):
         self.executor = ThreadPoolExecutor(max_workers=2)
@@ -207,38 +225,87 @@ class SceneProcessor:
             self._release_video_stream(video)
         timestamps = [0.0, *[scene[0].get_seconds() for scene in detected_scenes]]
         duration_seconds = self._video_duration(video_path)
+        raw_boundaries = len(self._merge_boundaries(
+            timestamps, chapter_timestamps, options["minimum_slide_duration"]
+        ))
+        priorities = None
+        duplicates_removed = 0
+        if options["merge_similar_slides"]:
+            before_merge = len(set(timestamps))
+            timestamps, priorities = self._remove_similar_timestamps(
+                video_path, timestamps, DUPLICATE_CHANGE_FRACTION
+            )
+            duplicates_removed = max(0, before_merge - len(timestamps))
         timestamps = self._merge_boundaries(
             timestamps, chapter_timestamps, options["minimum_slide_duration"]
         )
-        before_filter = len(timestamps)
+        before_limit = len(timestamps)
         timestamps = self._apply_hourly_cap(
             timestamps,
             duration_seconds,
             options["maximum_slides_per_hour"],
             preserved=chapter_timestamps,
+            priorities=priorities,
         )
-        if options["merge_similar_slides"]:
-            timestamps = self._remove_similar_timestamps(video_path, timestamps, 0.055)
-            timestamps = self._merge_boundaries(
-                timestamps, chapter_timestamps, options["minimum_slide_duration"]
-            )
-        timestamps = self._apply_hourly_cap(
-            timestamps,
-            duration_seconds,
-            options["maximum_slides_per_hour"],
-            preserved=chapter_timestamps,
-        )
+        removed_by_limit = before_limit - len(timestamps)
         return timestamps, {
             "mode": "content",
             "content_threshold": options["content_threshold"],
+            "duration_seconds": duration_seconds,
             "minimum_slide_duration_seconds": options["minimum_slide_duration"],
-            "raw_boundaries": before_filter,
+            "maximum_slides_per_hour": options["maximum_slides_per_hour"],
+            "slide_limit": self._maximum_slide_count(
+                duration_seconds, options["maximum_slides_per_hour"]
+            ),
+            "merge_similar_slides": options["merge_similar_slides"],
+            "raw_boundaries": raw_boundaries,
+            "near_duplicates_removed": duplicates_removed,
+            "removed_by_slide_limit": removed_by_limit,
+            "limited_by": ["slide_limit"] if removed_by_limit else [],
             "chapter_boundaries_added": len(chapter_timestamps),
             "detected_changes": len(timestamps),
         }
 
     def detect_adaptive_scenes(self, video_path: str, options: dict, chapter_timestamps: list) -> tuple:
-        """Detect video-specific visual-change peaks in one low-resolution pass."""
+        """Detect settled slide states in one low-resolution pass."""
+        fps, frame_count, duration_seconds, sample_interval, samples = (
+            self._sample_video_signatures(video_path)
+        )
+        if len(samples) < 2:
+            return [0.0], {
+                "mode": "adaptive",
+                "duration_seconds": duration_seconds,
+                "sampled_frames": len(samples),
+                "detected_changes": 1,
+            }
+        mask = self._static_area_mask([signature for _, signature in samples])
+        timestamps, diagnostics = self._select_adaptive_timestamps(
+            samples, duration_seconds, options, chapter_timestamps, mask
+        )
+        diagnostics["preset_counts"] = {
+            detail: len(self._select_adaptive_timestamps(
+                samples, duration_seconds, {**options, "adaptive_detail": detail},
+                chapter_timestamps, mask,
+            )[0])
+            for detail in ADAPTIVE_PRESETS
+        }
+        diagnostics.update({
+            "fps": fps,
+            "frame_count": frame_count,
+            "sampled_frames": len(samples),
+            "sample_interval_seconds": sample_interval,
+            "static_area_percent": (
+                100.0 if mask is None else float(mask.mean() * 100)
+            ),
+        })
+        return timestamps, diagnostics
+
+    @staticmethod
+    def _signature(frame):
+        gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(gray, SIGNATURE_SIZE, interpolation=cv2.INTER_AREA)
+
+    def _sample_video_signatures(self, video_path):
         cap = cv2.VideoCapture(video_path)
         try:
             fps = cap.get(cv2.CAP_PROP_FPS)
@@ -249,123 +316,169 @@ class SceneProcessor:
 
             sample_interval_seconds = max(1.0, min(2.0, duration_seconds / 3600))
             sample_step = max(1, int(round(fps * sample_interval_seconds)))
-            previous_frame = None
             samples = []
             frame_number = 0
             while True:
                 if frame_number % sample_step == 0:
                     ret, frame = cap.read()
+                    if ret:
+                        samples.append((frame_number / fps, self._signature(frame)))
                 else:
                     ret = cap.grab()
-                    frame = None
                 if not ret:
                     break
-                if frame is not None:
-                    sample = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (320, 180))
-                    score = 0.0
-                    if previous_frame is not None:
-                        difference = cv2.absdiff(previous_frame, sample)
-                        score = cv2.countNonZero(
-                            cv2.compare(difference, 25, cv2.CMP_GT)
-                        ) / difference.size
-                    signature = cv2.resize(sample, (64, 36), interpolation=cv2.INTER_AREA)
-                    samples.append((frame_number / fps, score, signature))
-                    previous_frame = sample
                 frame_number += 1
-
-            scores = np.array([item[1] for item in samples[1:]], dtype=np.float32)
-            if not scores.size:
-                return [0.0], {
-                    "mode": "adaptive",
-                    "duration_seconds": duration_seconds,
-                    "sampled_frames": len(samples),
-                    "detected_changes": 1,
-                }
-            percentile, adaptive_threshold = self._adaptive_score_threshold(
-                scores, options["adaptive_detail"]
-            )
-            candidates = self._adaptive_change_candidates(samples, adaptive_threshold)
-
-            candidates.sort(key=lambda item: item[1], reverse=True)
-            selected = [(0.0, 1.0, samples[0][2])]
-            minimum_duration = options["minimum_slide_duration"]
-            max_count = self._maximum_slide_count(
-                duration_seconds, options["maximum_slides_per_hour"]
-            )
-            duplicate_thresholds = {"fewer": 0.075, "balanced": 0.055, "more": 0.035}
-            duplicate_threshold = duplicate_thresholds[options["adaptive_detail"]]
-            duplicates_removed = 0
-            for candidate in candidates:
-                if max_count and len(selected) >= max_count:
-                    break
-                if any(abs(candidate[0] - item[0]) < minimum_duration for item in selected):
-                    continue
-                if options["merge_similar_slides"] and any(
-                    self._signature_difference(candidate[2], item[2]) < duplicate_threshold
-                    for item in selected
-                ):
-                    duplicates_removed += 1
-                    continue
-                selected.append(candidate)
-
-            timestamps = sorted(item[0] for item in selected)
-            timestamps = self._merge_boundaries(
-                timestamps, chapter_timestamps, minimum_duration
-            )
-            timestamps = self._apply_hourly_cap(
-                timestamps, duration_seconds, options["maximum_slides_per_hour"],
-                preserved=chapter_timestamps,
-            )
-            return timestamps, {
-                "mode": "adaptive",
-                "strategy": "adaptive_peaks",
-                "fps": fps,
-                "frame_count": frame_count,
-                "duration_seconds": duration_seconds,
-                "sampled_frames": len(samples),
-                "sample_interval_seconds": sample_step / fps,
-                "minimum_slide_duration_seconds": minimum_duration,
-                "detail_level": options["adaptive_detail"],
-                "adaptive_percentile": percentile,
-                "adaptive_threshold_percent": adaptive_threshold * 100,
-                "raw_candidates": len(candidates),
-                "near_duplicates_removed": duplicates_removed,
-                "chapter_boundaries_added": len(chapter_timestamps),
-                "maximum_slides_per_hour": options["maximum_slides_per_hour"],
-                "detected_changes": len(timestamps)
-            }
+            return fps, frame_count, duration_seconds, sample_step / fps, samples
         finally:
             cap.release()
 
     @staticmethod
-    def _adaptive_score_threshold(scores, detail):
-        percentiles = {"fewer": 90.0, "balanced": 70.0, "more": 45.0}
-        percentile = percentiles[detail]
-        changed_scores = scores[scores > 0]
-        threshold = (
-            max(0.005, float(np.percentile(changed_scores, percentile)))
-            if changed_scores.size
-            else 0.005
+    def _static_area_mask(signatures):
+        """Ignore regions that change almost constantly, such as webcam insets."""
+        if len(signatures) < 20:
+            return None
+        change_counts = np.zeros(signatures[0].shape, dtype=np.float32)
+        quiet_pairs = 0
+        for previous, current in zip(signatures, signatures[1:]):
+            changed = cv2.absdiff(previous, current) > PIXEL_CHANGE_LEVEL
+            # Slide transitions change many pixels at once; only count the
+            # small, local changes that happen between them.
+            if changed.mean() < QUIET_PAIR_FRACTION:
+                change_counts += changed
+                quiet_pairs += 1
+        if quiet_pairs < 10:
+            return None
+        live = (change_counts / quiet_pairs) > LIVE_REGION_ACTIVITY
+        if not live.any():
+            return None
+        live = cv2.dilate(live.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        static = ~live
+        return static if static.mean() >= 0.3 else None
+
+    @staticmethod
+    def _change_fraction(first, second, mask=None):
+        changed = cv2.absdiff(first, second) > PIXEL_CHANGE_LEVEL
+        if mask is None:
+            return float(changed.mean())
+        return float(changed[mask].mean())
+
+    @staticmethod
+    def _is_additive_change(before, after, mask=None):
+        """True when new content appears without removing existing content (a build)."""
+        before = before.astype(np.int16)
+        after = after.astype(np.int16)
+        region = np.ones(before.shape, dtype=bool) if mask is None else mask
+        background = float(np.median(before[region]))
+        ink_before = np.abs(before - background) > INK_LEVEL
+        ink_after = np.abs(after - background) > INK_LEVEL
+        changed = (np.abs(after - before) > PIXEL_CHANGE_LEVEL) & region
+        added = int(np.count_nonzero(changed & ink_after & ~ink_before))
+        removed = int(np.count_nonzero(changed & ink_before & ~ink_after))
+        return (
+            added > 0
+            and removed <= BUILD_REMOVED_RATIO * added
+            and removed < NOISE_CHANGE_FRACTION * np.count_nonzero(region)
         )
-        return percentile, threshold
 
-    @staticmethod
-    def _adaptive_change_candidates(samples, threshold):
-        return [
-            samples[index]
-            for index in range(1, len(samples) - 1)
-            if (
-                samples[index][1] >= threshold
-                and samples[index][1] >= samples[index - 1][1]
-                and samples[index][1] >= samples[index + 1][1]
-            )
-        ]
+    def _select_adaptive_timestamps(
+        self, samples, duration_seconds, options, chapter_timestamps, mask=None
+    ):
+        """Turn sampled signatures into final slide timestamps for one detail level.
 
-    @staticmethod
-    def _signature_difference(first, second):
-        difference = cv2.absdiff(first, second)
-        changed = cv2.compare(difference, 18, cv2.CMP_GT)
-        return cv2.countNonZero(changed) / difference.size
+        Each settled visual state is compared with the current slide. Detail
+        levels decide which differences start a new slide: every build step
+        (More), only large builds (Balanced) or only slide replacements
+        (Fewer). Full slide replacements are kept by every level.
+        """
+        detail = options["adaptive_detail"]
+        preset = ADAPTIVE_PRESETS[detail]
+        merge_similar = options["merge_similar_slides"]
+        minimum_duration = options["minimum_slide_duration"]
+        change_threshold = (
+            preset["change_threshold"] if merge_similar else DUPLICATE_CHANGE_FRACTION
+        )
+        keep_builds = preset["keep_builds"] if merge_similar else "all"
+
+        selected = [{"time": 0.0, "strength": 1.0}]
+        reference = samples[0][1]
+        state = samples[0][1]
+        visual_changes = 0
+        small_changes_merged = 0
+        builds_merged = 0
+        merged_by_minimum_duration = 0
+        for index in range(1, len(samples)):
+            timestamp, signature = samples[index]
+            if self._change_fraction(state, signature, mask) < NOISE_CHANGE_FRACTION:
+                continue
+            if index + 1 < len(samples):
+                still_changing = self._change_fraction(
+                    signature, samples[index + 1][1], mask
+                )
+                if still_changing >= NOISE_CHANGE_FRACTION:
+                    continue
+            state = signature
+            visual_changes += 1
+            novelty = self._change_fraction(reference, signature, mask)
+            if novelty < change_threshold:
+                small_changes_merged += 1
+                reference = signature
+                continue
+            if keep_builds != "all" and novelty < MAXIMUM_BUILD_FRACTION and (
+                self._is_additive_change(reference, signature, mask)
+            ) and (keep_builds == "none" or novelty < preset["large_build"]):
+                builds_merged += 1
+                reference = signature
+                continue
+            reference = signature
+            previous = selected[-1]
+            if timestamp - previous["time"] < minimum_duration:
+                merged_by_minimum_duration += 1
+                if previous["time"] > 0:
+                    previous["time"] = timestamp
+                    previous["strength"] = max(previous["strength"], novelty)
+                continue
+            selected.append({"time": timestamp, "strength": novelty})
+
+        visual_timestamps = [round(item["time"], 3) for item in selected]
+        priorities = {
+            round(item["time"], 3): item["strength"] for item in selected
+        }
+        timestamps = self._merge_boundaries(
+            visual_timestamps, chapter_timestamps, minimum_duration
+        )
+        before_limit = len(timestamps)
+        timestamps = self._apply_hourly_cap(
+            timestamps, duration_seconds, options["maximum_slides_per_hour"],
+            preserved=chapter_timestamps, priorities=priorities,
+        )
+        removed_by_limit = before_limit - len(timestamps)
+        limited_by = []
+        if merged_by_minimum_duration:
+            limited_by.append("minimum_slide_duration")
+        if removed_by_limit:
+            limited_by.append("slide_limit")
+        return timestamps, {
+            "mode": "adaptive",
+            "strategy": "settled_slide_states",
+            "duration_seconds": duration_seconds,
+            "detail_level": detail,
+            "minimum_slide_duration_seconds": minimum_duration,
+            "maximum_slides_per_hour": options["maximum_slides_per_hour"],
+            "slide_limit": self._maximum_slide_count(
+                duration_seconds, options["maximum_slides_per_hour"]
+            ),
+            "merge_similar_slides": merge_similar,
+            "change_threshold_percent": change_threshold * 100,
+            "keep_builds": keep_builds,
+            "visual_changes": visual_changes,
+            "small_changes_merged": small_changes_merged,
+            "builds_merged": builds_merged,
+            "merged_by_minimum_duration": merged_by_minimum_duration,
+            "removed_by_slide_limit": removed_by_limit,
+            "limited_by": limited_by,
+            "chapter_boundaries_added": len(chapter_timestamps),
+            "detected_changes": len(timestamps),
+        }
 
     @staticmethod
     def _video_duration(video_path):
@@ -388,8 +501,10 @@ class SceneProcessor:
         return max(short_video_allowance, proportional_limit)
 
     def _apply_hourly_cap(
-        self, timestamps, duration_seconds, maximum_slides_per_hour, preserved=None
+        self, timestamps, duration_seconds, maximum_slides_per_hour,
+        preserved=None, priorities=None,
     ):
+        """Limit the slide count, keeping the start, chapters and strongest changes."""
         maximum_count = self._maximum_slide_count(
             duration_seconds, maximum_slides_per_hour
         )
@@ -406,10 +521,16 @@ class SceneProcessor:
         remaining_slots = max(0, maximum_count - len(required))
         optional = [timestamp for timestamp in timestamps if timestamp not in required]
         if remaining_slots and optional:
-            indices = np.linspace(
-                0, len(optional) - 1, min(remaining_slots, len(optional)), dtype=int
-            )
-            required.update(optional[index] for index in indices)
+            if priorities:
+                ranked = sorted(
+                    optional, key=lambda item: priorities.get(item, 0.0), reverse=True
+                )
+                required.update(ranked[:remaining_slots])
+            else:
+                indices = np.linspace(
+                    0, len(optional) - 1, min(remaining_slots, len(optional)), dtype=int
+                )
+                required.update(optional[index] for index in indices)
         return sorted(required)
 
     @staticmethod
@@ -422,25 +543,28 @@ class SceneProcessor:
         return sorted(merged)
 
     def _remove_similar_timestamps(self, video_path, timestamps, threshold):
+        """Drop cuts whose frame matches the previous kept slide; return change strengths."""
         cap = cv2.VideoCapture(video_path)
         try:
             accepted = []
+            strengths = {}
             previous_signature = None
             fps = cap.get(cv2.CAP_PROP_FPS)
-            for timestamp in sorted(timestamps):
+            for timestamp in sorted(set(timestamps)):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(timestamp * fps)))
                 success, frame = cap.read()
                 if not success:
                     continue
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                signature = cv2.resize(gray, (64, 36), interpolation=cv2.INTER_AREA)
-                if (
-                    previous_signature is None
-                    or self._signature_difference(signature, previous_signature) >= threshold
-                ):
+                signature = self._signature(frame)
+                strength = (
+                    1.0 if previous_signature is None
+                    else self._change_fraction(signature, previous_signature)
+                )
+                if strength >= threshold:
                     accepted.append(timestamp)
+                    strengths[round(float(timestamp), 3)] = strength
                     previous_signature = signature
-            return accepted
+            return accepted, strengths
         finally:
             cap.release()
 

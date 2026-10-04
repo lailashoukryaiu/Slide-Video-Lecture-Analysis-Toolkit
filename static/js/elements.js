@@ -61,6 +61,7 @@ export const elements = {
     get summaryOptionsBtn() { return document.getElementById('summaryOptionsBtn'); },
     get summaryOptionsPanel() { return document.getElementById('summaryOptionsPanel'); },
     get summaryModel() { return document.getElementById('summaryModel'); },
+    get summaryLanguage() { return document.getElementById('summaryLanguage'); },
     get transcriptContainer() { return document.getElementById('transcriptContainer'); },
     get slideContentContainer() { return document.getElementById('slideContentContainer'); },
     get detectionOverlay() { return document.getElementById('detectionOverlay'); },

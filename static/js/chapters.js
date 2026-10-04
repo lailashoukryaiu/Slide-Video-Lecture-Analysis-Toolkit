@@ -186,7 +186,8 @@ export async function generateChapters() {
             body: JSON.stringify({
                 transcript: state.currentTranscript,
                 video_id: state.currentVideoId,
-                model: elements.summaryModel?.value || null
+                model: elements.summaryModel?.value || null,
+                language: elements.summaryLanguage?.value || 'transcript'
             })
         });
 

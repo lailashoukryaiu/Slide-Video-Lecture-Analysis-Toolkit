@@ -262,6 +262,16 @@
                                     <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini (paid)</option>
                                 </select>
                                 <small>Automatic prefers Groq (<code>GROQ_API_KEY</code>) when configured, then Gemini and OpenAI. An explicit model choice is tried first, with quota/unavailability fallbacks. Do not paste API keys into the browser.</small>
+                                <label for="summaryLanguage">Summary and chapter language</label>
+                                <select id="summaryLanguage">
+                                    <option value="transcript" selected>Same as transcript</option>
+                                    <option value="en">English</option>
+                                    <option value="de">German</option>
+                                    <option value="fr">French</option>
+                                    <option value="es">Spanish</option>
+                                    <option value="ar">Arabic</option>
+                                </select>
+                                <small>Grouping, fixed intervals, timestamps, subparts and document formats are in Export Chapters.</small>
                             </div>
                             <button id="exportChaptersBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-download"></i> Export Chapters
@@ -354,6 +364,7 @@
                                         <option value="balanced" selected>Balanced</option>
                                         <option value="more">More slides</option>
                                     </select>
+                                    <small>More keeps every build step, Balanced merges small bullet builds, and Fewer merges all builds and quick flips. Full slide changes are kept at every level, so decks without builds can give the same count.</small>
                                 </div>
                                 <div id="contentCutOptions" hidden>
                                     <label class="range-label" for="contentCutThreshold">
@@ -366,19 +377,21 @@
                                 <div id="visualDetectionOptions">
                                     <label for="minimumSlideDuration">Minimum slide duration</label>
                                     <select id="minimumSlideDuration">
+                                        <option value="auto" selected>Match detail level (More 5 s, Balanced 10 s, Fewer 20 s)</option>
                                         <option value="5">5 seconds</option>
-                                        <option value="10" selected>10 seconds</option>
+                                        <option value="10">10 seconds</option>
                                         <option value="20">20 seconds</option>
                                         <option value="30">30 seconds</option>
                                     </select>
                                     <label for="maximumSlidesPerHour">Maximum slides per hour</label>
                                     <select id="maximumSlidesPerHour">
+                                        <option value="auto" selected>Match detail level (More/Balanced unlimited, Fewer 60)</option>
                                         <option value="40">40</option>
-                                        <option value="60" selected>60</option>
+                                        <option value="60">60</option>
                                         <option value="90">90</option>
                                         <option value="0">Unlimited</option>
                                     </select>
-                                    <small>Short clips may include up to 10 slides so the hourly safety cap does not reduce them to one.</small>
+                                    <small>A fixed limit applies to every detail level, so a low limit can make all levels return the same count. Short clips may include up to 10 slides; when the limit is reached, the most distinct changes are kept.</small>
                                     <label><input id="mergeSimilarSlides" type="checkbox" checked> Merge visually similar slides</label>
                                     <label for="slideImageQuality">Screenshot quality</label>
                                     <select id="slideImageQuality">
@@ -391,7 +404,7 @@
                                     <input id="includeChapterBoundaries" type="checkbox" checked>
                                     Include transcript chapter boundaries when available
                                 </label>
-                                <small id="sceneDetectionHelp">Adaptive mode learns a threshold from this video and filters duplicate slide builds before generating screenshots.</small>
+                                <small id="sceneDetectionHelp">Adaptive mode finds settled slide states, ignores cursor and webcam movement, and merges builds according to the detail level.</small>
                                 </div>
                                 <div class="dialog-actions">
                                     <button class="btn btn-secondary" type="submit" value="cancel">Cancel</button>
@@ -554,7 +567,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=groq-summary-20261004"></script>
+    <script type="module" src="/static/js/index.js?v=chapter-options-20261004"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

@@ -1,7 +1,11 @@
+import math
+import os
 import sys
+import tempfile
 import unittest
 from types import ModuleType
 
+import cv2
 import numpy as np
 
 
@@ -24,52 +28,238 @@ fastapi_module.responses = fastapi_responses_module
 from processors.scene_processor import SceneProcessor
 
 
-class AdaptiveDetailTests(unittest.TestCase):
-    def test_adaptive_detail_changes_candidate_count_for_lecture_transitions(self):
-        scores = np.zeros(360, dtype=np.float32)
-        transition_strengths = np.linspace(0.04, 0.55, 24, dtype=np.float32)
-        for transition, strength in enumerate(transition_strengths):
-            start = 5 + transition * 14
-            scores[start:start + 4] = strength * np.array(
-                [0.2, 0.6, 1.0, 0.35], dtype=np.float32
-            )
-        samples = [
-            (sample_index * 2, float(score), None)
-            for sample_index, score in enumerate(scores)
-        ]
-        scores = np.array([sample[1] for sample in samples[1:]], dtype=np.float32)
+FRAME_WIDTH, FRAME_HEIGHT, FRAME_RATE = 640, 360, 1
+WORDS = ["gradient", "loss", "model", "layer", "data", "train", "error", "weights"]
 
-        candidate_counts = {
-            detail: len(
-                SceneProcessor._adaptive_change_candidates(
-                    samples,
-                    SceneProcessor._adaptive_score_threshold(scores, detail)[1],
-                )
+
+def render_slide(title, bullets, shown, diagram=False, boxed=False):
+    image = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), 250, np.uint8)
+    cv2.rectangle(image, (0, 0), (FRAME_WIDTH, 50), (120, 60, 20), -1)
+    cv2.putText(image, title, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    for row, bullet in enumerate(bullets[:shown]):
+        cv2.putText(
+            image, "- " + bullet, (30, 95 + row * 40),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30, 30, 30), 1,
+        )
+    if boxed:
+        cv2.rectangle(image, (420, 200), (600, 320), (40, 120, 200), -1)
+    if diagram:
+        cv2.rectangle(image, (380, 120), (620, 330), (30, 160, 60), -1)
+        cv2.circle(image, (500, 225), 60, (240, 240, 240), -1)
+    return image
+
+
+def lecture_plan():
+    """Ten-minute same-template lecture: 15 slides, two 3-step builds, one quick slide."""
+    rng = np.random.default_rng(0)
+    plan = []
+    slide_seconds = 40
+    for slide in range(15):
+        bullets = [" ".join(rng.choice(WORDS, 4)) for _ in range(4)]
+        start = slide * slide_seconds
+        if slide in (2, 9):
+            for step in range(3):
+                plan.append((start + step * 13, dict(
+                    title=f"Build {slide}", bullets=bullets, shown=2 + step,
+                    diagram=slide == 9 and step == 2,
+                )))
+        elif slide == 12:
+            plan.append((start, dict(title="Recap A", bullets=bullets, shown=4)))
+            plan.append((start + 12, dict(title="Recap B", bullets=bullets[::-1], shown=4)))
+        else:
+            plan.append((start, dict(
+                title=f"Slide {slide} topic", bullets=bullets, shown=4,
+                boxed=slide % 3 == 1,
+            )))
+    return plan
+
+
+def write_video(path, plan, duration, cursor=False, webcam=False):
+    writer = cv2.VideoWriter(
+        path, cv2.VideoWriter_fourcc(*"MJPG"), FRAME_RATE, (FRAME_WIDTH, FRAME_HEIGHT)
+    )
+    state = 0
+    for frame_number in range(int(duration * FRAME_RATE)):
+        seconds = frame_number / FRAME_RATE
+        while state + 1 < len(plan) and plan[state + 1][0] <= seconds:
+            state += 1
+        image = render_slide(**plan[state][1])
+        if cursor and (frame_number // 10) % 3 == 0:
+            x = int(200 + 150 * math.sin(frame_number / 4))
+            cv2.circle(image, (x, 180), 5, (0, 0, 255), -1)
+        if webcam:
+            inset = np.full((90, 120, 3), 60, np.uint8)
+            center = (int(60 + 12 * math.sin(frame_number / 3)), int(50 + 6 * math.cos(frame_number / 4)))
+            cv2.ellipse(inset, center, (25, 32), 0, 0, 360, (150, 170, 210), -1)
+            image[FRAME_HEIGHT - 95:FRAME_HEIGHT - 5, FRAME_WIDTH - 125:FRAME_WIDTH - 5] = inset
+        writer.write(image)
+    writer.release()
+
+
+def detection_options(detail, minimum_duration, maximum_per_hour, merge=True):
+    return {
+        "adaptive_detail": detail,
+        "minimum_slide_duration": minimum_duration,
+        "maximum_slides_per_hour": maximum_per_hour,
+        "merge_similar_slides": merge,
+    }
+
+
+# Mirrors the "Match detail level" defaults resolved in static/js/api-module.js.
+PRESET_LIMITS = {"more": (5, 0), "balanced": (10, 0), "fewer": (20, 60)}
+
+
+class AdaptiveFinalCountTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.processor = SceneProcessor.__new__(SceneProcessor)
+        cls.plan = lecture_plan()
+        cls.lecture_path = os.path.join(cls.temp_dir.name, "lecture.avi")
+        write_video(cls.lecture_path, cls.plan, 600, cursor=True)
+        cls.webcam_path = os.path.join(cls.temp_dir.name, "webcam.avi")
+        write_video(cls.webcam_path, cls.plan, 600, cursor=True, webcam=True)
+        cls.slide_starts = [
+            start for start, slide in cls.plan
+            if not slide["title"].startswith("Build") or slide["shown"] == 2
+        ]
+        cls.build_steps = [
+            start for start, slide in cls.plan
+            if slide["title"].startswith("Build") and slide["shown"] > 2
+        ]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp_dir.cleanup()
+
+    def detect(self, path, detail, minimum_duration, maximum_per_hour, merge=True):
+        return self.processor.detect_adaptive_scenes(
+            path, detection_options(detail, minimum_duration, maximum_per_hour, merge), []
+        )
+
+    def assertFindsTimes(self, timestamps, expected):
+        for expected_time in expected:
+            self.assertTrue(
+                any(0 <= timestamp - expected_time <= 3 for timestamp in timestamps),
+                f"missing slide at {expected_time}s in {timestamps}",
             )
+
+    def test_old_default_limit_made_every_detail_level_identical(self):
+        counts = {}
+        for detail in ("more", "balanced", "fewer"):
+            timestamps, diagnostics = self.detect(self.lecture_path, detail, 10, 60)
+            counts[detail] = len(timestamps)
+            self.assertIn("slide_limit", diagnostics["limited_by"])
+            self.assertEqual(diagnostics["slide_limit"], 10)
+        self.assertEqual(counts, {"more": 10, "balanced": 10, "fewer": 10})
+
+    def test_detail_levels_differ_in_final_count_with_same_limits(self):
+        results = {
+            detail: self.detect(self.lecture_path, detail, 5, 0)
             for detail in ("more", "balanced", "fewer")
         }
+        counts = {detail: len(result[0]) for detail, result in results.items()}
 
-        self.assertEqual(candidate_counts, {"more": 21, "balanced": 17, "fewer": 10})
+        self.assertEqual(counts["more"], len(self.plan))
+        self.assertGreater(counts["more"], counts["balanced"])
+        self.assertGreaterEqual(counts["balanced"], counts["fewer"])
+        for timestamps, diagnostics in results.values():
+            self.assertFindsTimes(timestamps, self.slide_starts)
+            self.assertEqual(diagnostics["preset_counts"], counts)
+            self.assertEqual(diagnostics["removed_by_slide_limit"], 0)
+        self.assertFindsTimes(results["more"][0], self.build_steps)
+        self.assertEqual(results["balanced"][1]["builds_merged"], 3)
 
-    def test_static_frame_scores_do_not_change_the_learned_threshold(self):
-        scores = np.zeros(1000, dtype=np.float32)
-        scores[::100] = np.linspace(0.01, 0.1, 10, dtype=np.float32)
+    def test_preset_default_limits_give_more_balanced_fewer_order(self):
+        counts = {}
+        for detail, (minimum_duration, maximum_per_hour) in PRESET_LIMITS.items():
+            timestamps, diagnostics = self.detect(
+                self.lecture_path, detail, minimum_duration, maximum_per_hour
+            )
+            counts[detail] = len(timestamps)
+            self.assertEqual(diagnostics["detected_changes"], len(timestamps))
+        self.assertGreater(counts["more"], counts["balanced"])
+        self.assertGreater(counts["balanced"], counts["fewer"])
 
-        thresholds = [
-            SceneProcessor._adaptive_score_threshold(scores, detail)[1]
-            for detail in ("more", "balanced", "fewer")
-        ]
+    def test_webcam_inset_does_not_add_or_hide_slides(self):
+        for detail in ("more", "balanced", "fewer"):
+            lecture, _ = self.detect(self.lecture_path, detail, 5, 0)
+            with_webcam, diagnostics = self.detect(self.webcam_path, detail, 5, 0)
+            self.assertEqual(len(with_webcam), len(lecture), detail)
+            self.assertFindsTimes(with_webcam, self.slide_starts)
+            self.assertLess(diagnostics["static_area_percent"], 100)
 
-        self.assertEqual(thresholds, sorted(thresholds))
-        self.assertTrue(all(threshold > 0.005 for threshold in thresholds))
+    def test_turning_off_merging_keeps_every_build_step(self):
+        timestamps, diagnostics = self.detect(self.lecture_path, "fewer", 5, 0, merge=False)
+        self.assertEqual(len(timestamps), len(self.plan))
+        self.assertEqual(diagnostics["builds_merged"], 0)
 
-    def test_no_changed_frame_scores_use_the_minimum_threshold(self):
-        scores = np.zeros(1000, dtype=np.float32)
 
-        self.assertEqual(
-            SceneProcessor._adaptive_score_threshold(scores, "balanced"),
-            (70.0, 0.005),
+class EqualStrengthTransitionTests(unittest.TestCase):
+    """Full slide replacements of equal strength are genuine for every preset."""
+
+    @staticmethod
+    def samples(slide_count=12, seconds_per_slide=30):
+        samples = []
+        signatures = []
+        for slide in range(slide_count):
+            signature = np.full((72, 128), 245, np.uint8)
+            cv2.putText(
+                signature, f"S{slide}", (10 + slide * 4, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.4, 20, 3,
+            )
+            signatures.append(signature)
+        for second in range(slide_count * seconds_per_slide):
+            samples.append((float(second), signatures[second // seconds_per_slide]))
+        return samples
+
+    def select(self, samples, detail, minimum_duration=10, maximum_per_hour=0):
+        return SceneProcessor.__new__(SceneProcessor)._select_adaptive_timestamps(
+            samples, len(samples), detection_options(detail, minimum_duration, maximum_per_hour), [],
         )
+
+    def test_every_detail_level_keeps_all_equal_strength_slides(self):
+        samples = self.samples()
+        for detail in ("more", "balanced", "fewer"):
+            timestamps, diagnostics = self.select(samples, detail)
+            self.assertEqual(timestamps, [float(second) for second in range(0, 360, 30)])
+            self.assertEqual(diagnostics["limited_by"], [])
+
+    def test_limit_reports_when_it_hides_genuine_slides(self):
+        timestamps, diagnostics = self.select(self.samples(), "more", maximum_per_hour=40)
+        self.assertEqual(len(timestamps), 10)
+        self.assertEqual(diagnostics["removed_by_slide_limit"], 2)
+        self.assertEqual(diagnostics["limited_by"], ["slide_limit"])
+
+    def test_minimum_duration_merges_quick_flips_and_reports_it(self):
+        samples = self.samples(slide_count=6, seconds_per_slide=8)
+        timestamps, diagnostics = self.select(samples, "balanced", minimum_duration=20)
+        self.assertLess(len(timestamps), 6)
+        self.assertEqual(diagnostics["limited_by"], ["minimum_slide_duration"])
+
+    def test_static_frames_with_cursor_noise_stay_one_slide(self):
+        base = np.full((72, 128), 245, np.uint8)
+        samples = []
+        for second in range(120):
+            signature = base.copy()
+            cv2.circle(signature, (20 + second % 60, 30), 1, 0, -1)
+            samples.append((float(second), signature))
+        timestamps, diagnostics = self.select(samples, "more", minimum_duration=5)
+        self.assertEqual(timestamps, [0.0])
+        self.assertEqual(diagnostics["visual_changes"], 0)
+
+
+class SlideLimitPriorityTests(unittest.TestCase):
+    def test_cap_keeps_start_chapters_and_strongest_changes(self):
+        processor = SceneProcessor.__new__(SceneProcessor)
+        timestamps = [0.0] + [float(value) for value in range(30, 600, 30)]
+        priorities = {timestamp: 0.01 for timestamp in timestamps}
+        priorities.update({90.0: 0.4, 300.0: 0.3})
+        capped = processor._apply_hourly_cap(
+            timestamps, 600, 40, preserved=[450.0], priorities=priorities
+        )
+        self.assertEqual(len(capped), 10)
+        self.assertTrue({0.0, 90.0, 300.0, 450.0}.issubset(capped))
 
 
 class SceneProcessorLimitTests(unittest.TestCase):

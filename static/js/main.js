@@ -312,11 +312,11 @@ function initApp() {
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });
-    bind(elements.exportChaptersBtn, async () => {
+    bind(elements.exportChaptersBtn, 'click', () => {
         if (!elements.exportOptionsDialog.open) {
-            await loadExportSuggestions();
             updateExportAvailability();
             elements.exportOptionsDialog.showModal();
+            void loadExportSuggestions();
         }
     });
     bind(elements.startExportBtn, 'click', () => {
@@ -372,15 +372,15 @@ function initApp() {
         elements.visualDetectionOptions.hidden = mode === 'chapters';
         elements.includeChapterBoundariesLabel.hidden = mode === 'chapters';
         elements.sceneDetectionHelp.textContent = mode === 'adaptive'
-            ? 'Adaptive mode learns a threshold from this video and filters duplicate slide builds before generating screenshots.'
+            ? 'Adaptive mode finds settled slide states, ignores cursor and webcam movement, and merges builds according to the detail level.'
             : mode === 'content'
                 ? 'Content cuts detect abrupt visual transitions using the separate PySceneDetect threshold above.'
                 : 'Uses existing transcript chapter timestamps without scanning the complete video.';
     };
     elements.sceneDetectionMode.value = localStorage.getItem('sceneDetectionModeV1') || 'adaptive';
     elements.adaptiveDetail.value = localStorage.getItem('adaptiveDetailV1') || 'balanced';
-    elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationV1') || '10';
-    elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || '60';
+    elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationV1') || 'auto';
+    elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || 'auto';
     elements.slideImageQuality.value = localStorage.getItem('slideImageQualityV1') || '720';
     if (elements.transcriptModel) {
         bind(elements.transcriptModel, 'change', (event) => {

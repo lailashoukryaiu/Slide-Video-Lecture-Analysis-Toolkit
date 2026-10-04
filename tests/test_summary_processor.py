@@ -193,6 +193,12 @@ class SummaryProcessorTranslationTests(unittest.TestCase):
 
 
 class SummaryProviderFallbackTests(unittest.TestCase):
+    def test_summary_language_defaults_to_transcript_and_supports_selection(self):
+        self.assertIn("same language", SummaryProcessor._summary_language_instruction("transcript"))
+        self.assertIn("German", SummaryProcessor._summary_language_instruction("de"))
+        with self.assertRaisesRegex(ValueError, "Unsupported summary language"):
+            SummaryProcessor._summary_language_instruction("invalid")
+
     def setUp(self):
         class FakeJSONResponse:
             def __init__(self, content):
@@ -235,6 +241,23 @@ class SummaryProviderFallbackTests(unittest.TestCase):
             processor._provider_chain(prefer_groq=True)[0],
             ("gemini", "gemini-3.6-flash"),
         )
+
+    def test_selected_language_is_sent_to_summary_provider(self):
+        for language, expected in (("transcript", "same language"), ("de", "German")):
+            with self.subTest(language=language):
+                processor = self._processor(None, None, None)
+                prompts = []
+
+                def complete(provider, model, prompt, *args):
+                    prompts.append(prompt)
+                    return '[{"timestamp": "00:00", "title": "Introduction"}]'
+
+                processor._complete = complete
+                response = asyncio.run(processor.generate_summary(
+                    [{"start": 0, "text": "Welcome"}], language=language
+                ))
+                self.assertTrue(response.content["success"], response.content)
+                self.assertIn(expected, prompts[0])
 
     def test_chain_tries_other_gemini_models_then_groq_before_paid_openai(self):
         processor = self._processor(None, None, None)

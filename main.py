@@ -882,7 +882,9 @@ async def generate_summary(request: Request):
         data = await request.json()
         transcript = data.get("transcript", [])
         video_id = data.get("video_id")
-        return await summary_processor.generate_summary(transcript, video_id, data.get("model"))
+        return await summary_processor.generate_summary(
+            transcript, video_id, data.get("model"), data.get("language", "transcript")
+        )
     except Exception as e:
         return JSONResponse({
             "success": False,

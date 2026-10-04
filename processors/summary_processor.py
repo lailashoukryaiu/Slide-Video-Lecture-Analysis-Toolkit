@@ -173,9 +173,26 @@ class SummaryProcessor:
             "No AI model is configured. Set GOOGLE_API_KEY (free), GROQ_API_KEY (free) "
             "or OPENAI_API_KEY in the Colab runtime and restart the server."
         )
-    async def generate_summary(self, transcript: list, video_id: str = None, requested_model: str = None):
+    @staticmethod
+    def _summary_language_instruction(language):
+        languages = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "ar": "Arabic"}
+        if language in (None, "", "transcript"):
+            return (
+                "Write all chapter titles and summary text in the same language as "
+                "the supplied transcript. Infer its predominant language from its text; "
+                "do not translate it into English."
+            )
+        if language not in languages:
+            raise ValueError(f"Unsupported summary language: {language}")
+        return f"Write all chapter titles and summary text in {languages[language]}."
+
+    async def generate_summary(
+        self, transcript: list, video_id: str = None, requested_model: str = None,
+        language: str = "transcript",
+    ):
         """Generate chapters, preferring configured Groq unless a model is selected."""
         try:
+            language_instruction = self._summary_language_instruction(language)
             self._refresh_clients()
             chain = self._provider_chain(requested_model, prefer_groq=True)
             if not transcript or not chain:
@@ -195,7 +212,8 @@ class SummaryProcessor:
                 full_text += timestamp + item["text"] + "\n"
             
 
-            prompt = f"""Based on the following transcript with timestamps, create chapters that outline the main topics.
+            prompt = f"""{language_instruction}
+Based on the following transcript with timestamps, create chapters that outline the main topics.
 For each chapter, provide:
 The timestamp where the chapter starts (in MM:SS format)
 A title

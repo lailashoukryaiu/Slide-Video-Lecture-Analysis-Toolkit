@@ -29,6 +29,10 @@
 - **AI-Powered Summarization**: Google Gemini integration for chapter generation
 - **Summary Provider Default**: Automatic summary generation prefers configured
   Groq, then Gemini and OpenAI; explicit model choices remain available.
+- **Summary Language**: Chapter options default to the transcript's language,
+  with English, German, French, Spanish and Arabic overrides.
+- **Export Options**: Export Chapters opens the full options dialog immediately:
+  grouping, fixed intervals, timestamps, subparts, filenames and document formats.
 - **Web Interface**: FastAPI-based web application with real-time updates
 
 ## Interactive User Interface
@@ -216,9 +220,15 @@ ocr_text = requests.get("http://localhost:8000/find_ocr_for_transcript/video_id/
 ### Core Functionality
 
 #### Scene Detection and Analysis
-- **Adaptive Detection**: Automatically identifies scene transitions. Detail
-  presets learn their threshold from changed-frame scores rather than unchanged
-  frames, so “More slides” uses a lower threshold than “Balanced” or “Fewer slides”.
+- **Adaptive Detection**: Finds settled slide states and ignores cursor movement,
+  compression noise and constantly moving regions such as webcam insets. Full
+  slide changes are kept at every detail level; “More slides” also keeps each
+  build step, “Balanced” merges small bullet builds, and “Fewer slides” merges
+  all builds. With “Match detail level”, the minimum duration and slide limit
+  follow the preset (More 5 s/unlimited, Balanced 10 s/unlimited, Fewer 20 s/60
+  per hour). A fixed limit applies to every level, so a low limit can make all
+  levels return the same count; the result summary shows the applied settings,
+  what was merged or hidden by the limit, and the count each level would give.
 - **Content-based Segmentation**: Detects visual changes in presentation slides
 - **Keyframe Extraction**: Saves representative frames for each scene
 - **Thumbnail Generation**: Creates navigation thumbnails
