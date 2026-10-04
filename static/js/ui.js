@@ -110,9 +110,11 @@ export function openSettingsModal() {
                 return data;
             })
             .then((data) => {
-                if (data.cuda_available) {
+                if (data.whisper_device === 'cuda') {
                     elements.runtimeStatus.textContent =
                         `GPU enabled: ${data.gpu_name || 'CUDA device'} (Whisper uses ${data.whisper_compute_type}).`;
+                } else if (data.whisper_device_warning) {
+                    elements.runtimeStatus.textContent = data.whisper_device_warning;
                 } else {
                     elements.runtimeStatus.textContent =
                         'GPU not available: Whisper is using the CPU. Enable a GPU runtime in Colab and restart the server.';

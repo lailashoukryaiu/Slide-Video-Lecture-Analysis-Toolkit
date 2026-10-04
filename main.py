@@ -39,6 +39,7 @@ from processors.scene_processor import SceneProcessor
 from processors.ocr_processor import OCRProcessor
 from processors.transcript_processor import TranscriptProcessor, get_huggingface_token
 from cloud_transcribe import cloud_provider_status, recommended_transcription_model
+from transcribe import get_whisper_device_config
 from processors.embedding_processor import EmbeddingProcessor
 from processors.summary_processor import SummaryProcessor
 
@@ -99,14 +100,19 @@ async def runtime_status():
 
         cuda_available = bool(torch.cuda.is_available())
         gpu_name = torch.cuda.get_device_name(0) if cuda_available else None
+        device_warnings = []
+        whisper_device, whisper_compute_type = get_whisper_device_config(
+            on_step=device_warnings.append
+        )
         return JSONResponse({
             "cuda_available": cuda_available,
             "gpu_name": gpu_name,
             "cuda_version": torch.version.cuda,
-            "whisper_device": "cuda" if cuda_available else "cpu",
-            "whisper_compute_type": "float16" if cuda_available else "int8",
+            "whisper_device": whisper_device,
+            "whisper_compute_type": whisper_compute_type,
+            "whisper_device_warning": device_warnings[0] if device_warnings else None,
             "colab_gpu": os.getenv("COLAB_GPU") or None,
-            "recommended_transcription_model": recommended_transcription_model(cuda_available),
+            "recommended_transcription_model": recommended_transcription_model(whisper_device == "cuda"),
             **translation_status,
         })
     except Exception as error:

@@ -119,6 +119,14 @@ brew install tesseract ffmpeg
 
 ### Configuration
 
+Local Whisper GPU inference needs CUDA 12 cuBLAS and cuDNN 9 in addition to
+a GPU recognized by PyTorch. On Linux, install `nvidia-cublas-cu12` and
+`nvidia-cudnn-cu12==9.*`, and include their `lib` directories in
+`LD_LIBRARY_PATH` **before starting the server**. Whisper checks that these
+libraries can load; otherwise it reports the reason in its progress log and
+uses CPU int8. The runtime status distinguishes GPU availability from the
+device usable by Whisper. Groq transcription does not require local CUDA.
+
 1. **Set up Google Gemini API:**
    ```bash
    # Create .env file

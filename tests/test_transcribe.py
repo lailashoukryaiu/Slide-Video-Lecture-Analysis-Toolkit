@@ -102,7 +102,7 @@ class TranscribeAudioTests(unittest.TestCase):
 
     def test_gpu_keeps_batch_size_sixteen(self):
         original_device_config = transcribe.get_whisper_device_config
-        transcribe.get_whisper_device_config = lambda: ("cuda", "float16")
+        transcribe.get_whisper_device_config = lambda **kwargs: ("cuda", "float16")
         try:
             list(transcribe.transcribe_audio("video.mp4"))
         finally:
@@ -125,6 +125,54 @@ class TranscribeAudioTests(unittest.TestCase):
     def test_unknown_model_is_rejected(self):
         with self.assertRaises(ValueError):
             list(transcribe.transcribe_audio("video.mp4", model_name="huge"))
+
+
+class WhisperDeviceTests(unittest.TestCase):
+    def test_no_gpu_does_not_load_cuda_libraries(self):
+        with mock.patch.object(transcribe.torch.cuda, "is_available", return_value=False), \
+                mock.patch.object(transcribe.ctypes, "CDLL") as load:
+            self.assertEqual(transcribe.get_whisper_device_config(), ("cpu", "int8"))
+        load.assert_not_called()
+
+    def test_gpu_with_loadable_libraries_uses_cuda(self):
+        with mock.patch.object(transcribe.torch.cuda, "is_available", return_value=True), \
+                mock.patch.object(transcribe.sys, "platform", "linux"), \
+                mock.patch.object(transcribe.ctypes, "CDLL") as load:
+            self.assertEqual(transcribe.get_whisper_device_config(), ("cuda", "float16"))
+        self.assertEqual(load.call_args_list, [
+            mock.call("libcublasLt.so.12"),
+            mock.call("libcublas.so.12"),
+            mock.call("libcudnn.so.9"),
+        ])
+
+    def test_missing_cuda_library_falls_back_with_visible_step(self):
+        for missing in ("libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9"):
+            with self.subTest(missing=missing):
+                def load(name):
+                    if name == missing:
+                        raise OSError(f"{name} is not found")
+                steps = []
+                with mock.patch.object(transcribe.torch.cuda, "is_available", return_value=True), \
+                        mock.patch.object(transcribe.sys, "platform", "linux"), \
+                        mock.patch.object(transcribe.ctypes, "CDLL", side_effect=load), \
+                        self.assertLogs("transcribe_under_test", level="WARNING"):
+                    self.assertEqual(
+                        transcribe.get_whisper_device_config(on_step=steps.append),
+                        ("cpu", "int8"),
+                    )
+                self.assertIn(missing, steps[0])
+                self.assertIn("using CPU int8", steps[0])
+
+    def test_transcription_continues_when_cublas_is_missing(self):
+        steps = []
+        with mock.patch.object(transcribe.torch.cuda, "is_available", return_value=True), \
+                mock.patch.object(transcribe.ctypes, "CDLL", side_effect=OSError("libcublas.so.12")), \
+                mock.patch.object(transcribe, "WhisperModel", FakeWhisperModel), \
+                mock.patch.object(transcribe, "decode_audio_samples", return_value=np.zeros(16000, dtype=np.float32)), \
+                self.assertLogs("transcribe_under_test", level="WARNING"):
+            result = list(transcribe.transcribe_audio("video.mp4", on_step=steps.append))
+        self.assertIn("Segment text", result[0][0])
+        self.assertIn("libcublas.so.12", steps[0])
 
 
 if __name__ == "__main__":

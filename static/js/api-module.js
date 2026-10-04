@@ -294,8 +294,9 @@ export function updateTranscriptModelHelp() {
         help.textContent = 'Runs on Groq\'s free tier: very fast, no GPU needed. Audio is sent to Groq.' + suffix;
     } else if (model.startsWith('gemini:')) {
         help.textContent = 'Uses your Gemini key: no GPU needed, but timestamps are approximate and it uses your Gemini quota. Audio is sent to Google.' + suffix;
-    } else if (transcriptionRuntime && !transcriptionRuntime.cuda_available) {
-        help.textContent = 'No GPU in this session: local Whisper runs on the CPU and is slow. Small or Base, or an online model, is much faster.' + suffix;
+    } else if (transcriptionRuntime && transcriptionRuntime.whisper_device !== 'cuda') {
+        help.textContent = (transcriptionRuntime.whisper_device_warning
+            || 'No usable GPU in this session: local Whisper runs on the CPU and is slow. Small or Base, or an online model, is much faster.') + suffix;
     } else {
         help.textContent = 'Runs on this server\'s GPU.' + suffix;
     }

@@ -1,3 +1,6 @@
+import ctypes
+import logging
+import sys
 import time
 
 import torch
@@ -5,9 +8,27 @@ from faster_whisper import WhisperModel, BatchedInferencePipeline
 from audio_decoder import decode_audio_samples
 
 
-def get_whisper_device_config():
-    """Select a CUDA-capable device when available; otherwise fall back to CPU."""
+def get_whisper_device_config(on_step=None):
+    """Use CUDA only when Whisper's native runtime libraries can load."""
     if torch.cuda.is_available():
+        libraries = (
+            ("cublasLt64_12.dll", "cublas64_12.dll", "cudnn64_9.dll")
+            if sys.platform == "win32"
+            else ("libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9")
+        )
+        try:
+            for library in libraries:
+                ctypes.CDLL(library)
+        except OSError as error:
+            message = (
+                f"Whisper GPU libraries could not load ({error}); using CPU int8 instead. "
+                "Choose Groq for faster transcription, or install CUDA 12 cuBLAS and cuDNN 9 "
+                "and restart the server with their library directories on the loader path."
+            )
+            logging.getLogger(__name__).warning(message)
+            if on_step:
+                on_step(message)
+            return "cpu", "int8"
         return "cuda", "float16"
     return "cpu", "int8"
 
@@ -60,7 +81,7 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None, 
     if model_name not in WHISPER_MODELS:
         raise ValueError(f"Unsupported Whisper model: {model_name}")
     step = on_step or (lambda message: None)
-    device, compute_type = get_whisper_device_config()
+    device, compute_type = get_whisper_device_config(on_step=step)
     print(f"Whisper model: {model_name}")
     print(f"Whisper device: {device}")
     print(f"Whisper compute type: {compute_type}")
