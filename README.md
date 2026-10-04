@@ -20,6 +20,9 @@
 - **Scene Detection**: Adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, content-cut mode, and optional transcript chapter boundaries
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
+- **Gemini Transcript Formatting**: Structured JSON output with one visible retry
+  per audio part if the response is unreadable; malformed output is not saved
+  as a partial transcript.
 - **Batched Translation**: Translate transcripts and chapter titles with an explicit Gemini/OpenAI model choice and visible provider/timing details
 - **Semantic Embeddings**: Sentence-BERT based semantic similarity for transcript-OCR alignment
 - **YOLO Object Detection**: Custom-trained YOLOv8 model for slide content detection (`slidevqa_best.pt`)

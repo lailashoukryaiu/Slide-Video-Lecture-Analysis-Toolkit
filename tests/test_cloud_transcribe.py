@@ -1,5 +1,8 @@
 import os
+import sys
 import unittest
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 import cloud_transcribe
@@ -34,6 +37,50 @@ class GeminiParsingTests(unittest.TestCase):
         # Out-of-order starts are kept monotonic and ends are clamped to the clip.
         self.assertEqual(segments[1], {"start": 5.0, "end": 600, "text": "Later"})
         self.assertEqual(len(segments), 2)
+
+    def _gemini_modules(self, responses):
+        client = mock.Mock()
+        client.models.generate_content.side_effect = [
+            SimpleNamespace(text=text) for text in responses
+        ]
+        google = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = mock.Mock(return_value=client)
+        types = ModuleType("google.genai.types")
+        types.Part = SimpleNamespace(from_bytes=mock.Mock(return_value="audio"))
+        types.GenerateContentConfig = mock.Mock(side_effect=lambda **kwargs: kwargs)
+        google.genai = genai
+        genai.types = types
+        return client, {
+            "google": google, "google.genai": genai, "google.genai.types": types,
+        }
+
+    def test_schema_and_retry_recover_malformed_json(self):
+        client, modules = self._gemini_modules([
+            '{"segments": [{bad}',
+            '{"segments": [{"start": 0, "end": 2, "text": "Hello"}]}',
+        ])
+        steps = []
+        with mock.patch.dict(sys.modules, modules), \
+                mock.patch.object(Path, "read_bytes", return_value=b"audio"):
+            result = cloud_transcribe._transcribe_gemini_chunk(
+                "audio.mp3", "gemini-test", "key", 10, on_step=steps.append
+            )
+        self.assertEqual(result, [{"start": 0.0, "end": 2.0, "text": "Hello"}])
+        self.assertEqual(client.models.generate_content.call_count, 2)
+        config = client.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(config["response_schema"], cloud_transcribe.GEMINI_TRANSCRIPT_SCHEMA)
+        self.assertIn("retrying", steps[0])
+
+    def test_invalid_json_after_retry_fails_without_partial_transcript(self):
+        client, modules = self._gemini_modules(["{bad", "{bad"])
+        with mock.patch.dict(sys.modules, modules), \
+                mock.patch.object(Path, "read_bytes", return_value=b"audio"):
+            with self.assertRaisesRegex(RuntimeError, "unreadable transcript after retry"):
+                cloud_transcribe._transcribe_gemini_chunk(
+                    "audio.mp3", "gemini-test", "key", 10
+                )
+        self.assertEqual(client.models.generate_content.call_count, 2)
 
 
 class CloudTranscriptionTests(unittest.TestCase):

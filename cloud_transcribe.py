@@ -190,6 +190,25 @@ GEMINI_PROMPT = (
     'If there is no speech, return {"segments": []}.'
 )
 
+GEMINI_TRANSCRIPT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "number"},
+                    "end": {"type": "number"},
+                    "text": {"type": "string"},
+                },
+                "required": ["start", "end", "text"],
+            },
+        },
+    },
+    "required": ["segments"],
+}
+
 
 def _parse_seconds(value):
     if isinstance(value, (int, float)):
@@ -255,14 +274,23 @@ def _transcribe_gemini_chunk(
             config=types.GenerateContentConfig(
                 temperature=0,
                 response_mime_type="application/json",
+                response_schema=GEMINI_TRANSCRIPT_SCHEMA,
             ),
         )
 
-    response = _with_retries(call, "Gemini transcription", on_step)
-    try:
-        return parse_gemini_segments(response.text, clip_duration)
-    except (json.JSONDecodeError, TypeError, AttributeError) as error:
-        raise RuntimeError(f"Gemini returned an unreadable transcript: {error}") from error
+    for attempt in range(2):
+        response = _with_retries(call, "Gemini transcription", on_step)
+        try:
+            return parse_gemini_segments(response.text, clip_duration)
+        except (json.JSONDecodeError, TypeError, AttributeError) as error:
+            if attempt == 1:
+                raise RuntimeError(
+                    f"Gemini returned an unreadable transcript after retry: {error}"
+                ) from error
+            message = "Gemini returned invalid transcript JSON; retrying this audio part once"
+            print(message)
+            if on_step:
+                on_step(message)
 
 
 def transcribe_audio_cloud(video_path, model, prompt=None, on_step=None):
