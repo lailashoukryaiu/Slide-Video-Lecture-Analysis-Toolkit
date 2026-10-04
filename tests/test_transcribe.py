@@ -3,6 +3,9 @@ import sys
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest import mock
+
+import numpy as np
 
 
 torch_module = ModuleType("torch")
@@ -30,6 +33,8 @@ class FakeWhisperModel:
         self.__class__.model_name = args[0]
 
     def transcribe(self, file_path, **options):
+        if not isinstance(file_path, np.ndarray):
+            raise TypeError("open() got an unexpected keyword argument 'metadata_errors'")
         self.__class__.options = options
         return transcript_result()
 
@@ -41,6 +46,8 @@ class FakePipeline:
         pass
 
     def transcribe(self, file_path, **options):
+        if not isinstance(file_path, np.ndarray):
+            raise TypeError("open() got an unexpected keyword argument 'metadata_errors'")
         self.__class__.options = options
         return transcript_result()
 
@@ -64,6 +71,12 @@ def transcript_result():
 
 class TranscribeAudioTests(unittest.TestCase):
     def setUp(self):
+        self.audio = np.zeros(16000, dtype=np.float32)
+        self.decoder = mock.patch.object(
+            transcribe, "decode_audio_samples", return_value=self.audio
+        )
+        self.mock_decoder = self.decoder.start()
+        self.addCleanup(self.decoder.stop)
         self.original_model = transcribe.WhisperModel
         self.original_pipeline = transcribe.BatchedInferencePipeline
         FakeWhisperModel.options = None
@@ -85,6 +98,7 @@ class TranscribeAudioTests(unittest.TestCase):
         self.assertIn("00:00:01,250 --> 00:00:03,500", result[0][0])
         self.assertIn("Segment text", result[0][0])
         self.assertEqual(result[0][1], 70)
+        self.mock_decoder.assert_called_once_with("video.mp4")
 
     def test_gpu_keeps_batch_size_sixteen(self):
         original_device_config = transcribe.get_whisper_device_config
@@ -97,6 +111,7 @@ class TranscribeAudioTests(unittest.TestCase):
         self.assertTrue(FakePipeline.options["word_timestamps"])
         self.assertEqual(FakePipeline.options["batch_size"], 16)
         self.assertNotIn("initial_prompt", FakePipeline.options)
+        self.mock_decoder.assert_called_once_with("video.mp4")
 
     def test_prompt_is_passed_as_initial_prompt(self):
         list(transcribe.transcribe_audio("video.mp4", prompt="SAP Fiori lecture"))

@@ -1,6 +1,5 @@
 import os
 import json
-import subprocess
 import time
 import asyncio
 import threading
@@ -22,6 +21,7 @@ from cloud_transcribe import (
     transcribe_audio_cloud,
 )
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
+from audio_decoder import decode_audio_samples
 
 TRANSCRIPTION_MODELS = tuple(WHISPER_MODELS) + tuple(CLOUD_TRANSCRIPTION_MODELS)
 
@@ -772,20 +772,9 @@ class TranscriptProcessor:
     @staticmethod
     def _load_audio_waveform(video_path):
         """Decode mono 16 kHz audio with ffmpeg so pyannote does not need a video decoder."""
-        import numpy as np
         import torch
 
-        result = subprocess.run(
-            [
-                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-                "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
-                "-f", "f32le", "pipe:1",
-            ],
-            capture_output=True, check=True,
-        )
-        samples = np.frombuffer(result.stdout, dtype=np.float32).copy()
-        if not samples.size:
-            raise RuntimeError("The video has no audio track to identify speakers in.")
+        samples = decode_audio_samples(video_path)
         return {"waveform": torch.from_numpy(samples).unsqueeze(0), "sample_rate": 16000}
 
     def _run_pyannote(self, Pipeline, token, video_path, on_step=None):

@@ -2,6 +2,7 @@ import time
 
 import torch
 from faster_whisper import WhisperModel, BatchedInferencePipeline
+from audio_decoder import decode_audio_samples
 
 
 def get_whisper_device_config():
@@ -71,12 +72,14 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None, 
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
     step(f"Whisper model loaded in {time.monotonic() - started:.0f}s")
     prompt_options = {"initial_prompt": prompt} if prompt else {}
-    step("Decoding the audio and detecting the spoken language")
+    step("Decoding the audio with FFmpeg (without PyAV)")
     started = time.monotonic()
+    audio = decode_audio_samples(file_path)
+    step(f"Audio decoded in {time.monotonic() - started:.0f}s; detecting the spoken language")
     if device == "cuda":
         inference_model = BatchedInferencePipeline(model=model)
         segments, info = inference_model.transcribe(
-            file_path,
+            audio,
             batch_size=batch_size,
             word_timestamps=True,
             log_progress=True,
@@ -84,7 +87,7 @@ def transcribe_audio(file_path, batch_size=16, model_name="turbo", prompt=None, 
         )
     else:
         segments, info = model.transcribe(
-            file_path,
+            audio,
             word_timestamps=True,
             log_progress=True,
             vad_filter=True,

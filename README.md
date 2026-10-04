@@ -106,7 +106,11 @@ brew install tesseract ffmpeg
    pip install -r requirements.txt
    ```
 
-   Local Whisper transcription requires `av>=11,<19`: PyAV 19 removed the
+   Local Whisper and speaker identification decode audio with system FFmpeg
+   and pass 16 kHz mono samples directly to their models, bypassing PyAV's file
+   decoder. FFmpeg must be installed and available on `PATH`.
+
+   Dependencies also constrain `av>=11,<19`: PyAV 19 removed the
    `metadata_errors` argument used by faster-whisper 1.2.1. If an existing
    environment reports `open() got an unexpected keyword argument
    'metadata_errors'`, reinstall the requirements and restart the application
