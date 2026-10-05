@@ -126,6 +126,32 @@ brew install tesseract ffmpeg
    before retrying transcription. Updating the repository alone does not update
    installed packages.
 
+### Windows local launch
+
+Create an isolated Conda environment, install the Python requirements, and
+install FFmpeg (including ffprobe) and Tesseract:
+
+```powershell
+conda create -n lecture-toolkit python=3.11 pip -y
+conda run -n lecture-toolkit python -m pip install -r requirements.txt
+conda install -n lecture-toolkit -c conda-forge tesseract -y
+winget install --id Gyan.FFmpeg --exact
+```
+
+Copy `.env.example` to `.env` if it does not already exist, and enter
+`GROQ_API_KEY` locally. Colab Secrets are not automatically available on your PC.
+The `.env` file is ignored by Git but may still be synced by cloud storage if
+your checkout is in OneDrive.
+
+```powershell
+conda run --no-capture-output -n lecture-toolkit python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000`. This binds only to your PC, uses the
+`lecture-toolkit` environment, and loads `.env` through the application.
+Open a new terminal after installing FFmpeg so its updated `PATH` is available.
+Groq does not require local CUDA; audio is sent to Groq when selected.
+
 ### Configuration
 
 Local Whisper GPU inference needs CUDA 12 cuBLAS and cuDNN 9 in addition to
