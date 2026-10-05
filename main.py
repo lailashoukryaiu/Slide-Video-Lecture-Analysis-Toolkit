@@ -314,14 +314,16 @@ executor = ThreadPoolExecutor(max_workers=2)
 sse_clients = {}
 
 async def send_sse_update(video_id, event_data):
-    """Send an SSE update to all clients for a specific video."""
-    if video_id in sse_clients:
-        data_str = json.dumps(event_data)
-        for queue in sse_clients[video_id]:
-            try:
-                await queue.put(data_str)
-            except Exception as e:
-                print(f"Error sending SSE update: {str(e)}")
+    """Send an SSE update to all clients for a specific video.
+
+    OCR runs in worker threads, so each queue is fed through its own event loop.
+    """
+    data_str = json.dumps(event_data)
+    for queue, loop in list(sse_clients.get(video_id, [])):
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, data_str)
+        except Exception as e:
+            print(f"Error sending SSE update: {str(e)}")
 
 # Initialize OCR processor with SSE update function
 ocr_processor = OCRProcessor(send_sse_update=send_sse_update)
@@ -683,7 +685,8 @@ async def ocr_progress(video_id: str):
             sse_clients[video_id] = []
         
         queue = asyncio.Queue()
-        sse_clients[video_id].append(queue)
+        client = (queue, asyncio.get_running_loop())
+        sse_clients[video_id].append(client)
         
         try:
             await queue.put(json.dumps({
@@ -692,13 +695,17 @@ async def ocr_progress(video_id: str):
             }))
             
             while True:
-                data = await queue.get()
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
                 yield f"data: {data}\n\n"
         except asyncio.CancelledError:
             pass
         finally:
-            if video_id in sse_clients and queue in sse_clients[video_id]:
-                sse_clients[video_id].remove(queue)
+            if video_id in sse_clients and client in sse_clients[video_id]:
+                sse_clients[video_id].remove(client)
                 if not sse_clients[video_id]:
                     del sse_clients[video_id]
     

@@ -8,7 +8,7 @@ import { setupVideoPlayer } from './video.js';
 import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { checkSceneDetection, updateScenes, stopDetectionPolling } from './scenes.js';
-import { fetchOcrResults } from './ocr.js';
+import { fetchOcrResults, resetOcrStatus } from './ocr.js';
 
 export async function regenerateTranscript() {
     const videoId = getActiveVideoId();
@@ -672,7 +672,8 @@ function resetVideoStates() {
     state.ocrResults = [];
     state.ocrProcessing = false;
     
-    // Remove any existing progress containers
+    // Remove any existing progress containers and stop the elapsed timer
+    resetOcrStatus();
     const progressContainer = document.getElementById('ocrProgressContainer');
     if (progressContainer) {
         progressContainer.remove();

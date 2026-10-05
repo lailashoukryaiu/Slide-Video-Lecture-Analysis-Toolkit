@@ -57,144 +57,167 @@ function connectToSSE(videoId) {
  * @param {string} videoId - The YouTube video ID
  */
 function handleSSEEvent(data, videoId) {
-    const slideContentContainer = elements.slideContentContainer;
-    
-    // Handle different event types
+    if (videoId !== state.currentVideoId) return;
     switch (data.event) {
         case 'connected':
-            console.log('SSE connection established:', data.data.message);
             break;
-            
+
         case 'ocr_progress':
             state.ocrProcessing = true;
-            // Update progress display
-            updateProgressDisplay(data.data);
-            
-            // If we have partial OCR results, update the slide content
+            renderOcrStatus(data.data);
             if (data.data.partial_results) {
                 updatePartialOcrResults(data.data.partial_results, videoId);
             }
             break;
-            
+
+        case 'ocr_stopping':
+            renderOcrStatus({ ...data.data, status: 'stopping' });
+            break;
+
         case 'ocr_complete':
+        case 'ocr_cancelled':
             state.ocrProcessing = false;
-            console.log('OCR processing complete:', data.data.message);
-            
-            // If we have final results in the event, update immediately
+            renderOcrStatus({ ...data.data, status: data.event === 'ocr_complete' ? 'complete' : 'stopped' });
             if (data.data.final_results) {
                 updatePartialOcrResults(data.data.final_results, videoId, true);
             } else {
-                // Otherwise fetch the updated OCR results
                 fetchOcrResults(videoId);
             }
             break;
 
         case 'ocr_error':
             state.ocrProcessing = false;
-            console.error('OCR processing error:', data.data.error);
-            // Show error notification
-            showNotification('Error during OCR processing: ' + data.data.error, 'error');
+            renderOcrStatus({ ...data.data, status: 'error' });
             break;
-            
+
         default:
             console.log('Unknown SSE event:', data);
     }
 }
 
+function formatElapsed(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+let ocrStatusSnapshot = null;
+let ocrStatusTimer = null;
+
+function ensureOcrStatusElement() {
+    const container = elements.slideContentContainer;
+    let panel = document.getElementById('ocrProgressContainer');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'ocrProgressContainer';
+        panel.className = 'ocr-progress-container';
+        panel.setAttribute('role', 'status');
+        panel.setAttribute('aria-live', 'polite');
+        panel.innerHTML = `
+            <div class="ocr-progress">
+                <div class="ocr-progress-header">
+                    <i class="fas fa-spinner fa-spin" aria-hidden="true"></i>
+                    <span class="ocr-progress-title"></span>
+                    <span class="ocr-progress-elapsed"></span>
+                    <button type="button" id="stopOcrBtn" class="btn btn-secondary">Stop OCR</button>
+                </div>
+                <div class="ocr-progress-bar"><div class="ocr-progress-fill"></div></div>
+                <div class="ocr-progress-text"></div>
+                <div class="ocr-progress-detail"></div>
+            </div>`;
+        panel.querySelector('#stopOcrBtn').addEventListener('click', () => stopOcrProcessing(state.currentVideoId));
+        container.prepend(panel);
+    }
+    return panel;
+}
+
+function refreshOcrElapsed() {
+    const panel = document.getElementById('ocrProgressContainer');
+    if (!panel || !ocrStatusSnapshot) return;
+    const live = ['queued', 'running', 'stopping'].includes(ocrStatusSnapshot.status);
+    const elapsed = ocrStatusSnapshot.elapsed + (live ? (Date.now() - ocrStatusSnapshot.receivedAt) / 1000 : 0);
+    const quiet = live ? (Date.now() - ocrStatusSnapshot.receivedAt) / 1000 : 0;
+    panel.querySelector('.ocr-progress-elapsed').textContent = formatElapsed(elapsed);
+    const detail = panel.querySelector('.ocr-progress-detail');
+    if (live && quiet >= 20) {
+        detail.textContent = `No update for ${Math.round(quiet)}s. The current slide may be large or the server may be busy; use Stop OCR to cancel.`;
+        detail.classList.add('ocr-progress-warning');
+    } else if (detail.classList.contains('ocr-progress-warning')) {
+        detail.textContent = ocrStatusSnapshot.detail || '';
+        detail.classList.remove('ocr-progress-warning');
+    }
+}
+
 /**
- * Updates the progress display based on SSE updates
- * @param {Object} progressData - The progress data
+ * Shows the current OCR step, replacing the previous one.
+ * @param {Object} progressData - Latest OCR status from the server
  */
-function updateProgressDisplay(progressData) {
-    const slideContentContainer = elements.slideContentContainer;
-    
-    // Find or create progress container
-    let progressContainer = document.getElementById('ocrProgressContainer');
-    if (!progressContainer) {
-        // Create progress container if it doesn't exist
-        progressContainer = document.createElement('div');
-        progressContainer.id = 'ocrProgressContainer';
-        progressContainer.className = 'ocr-progress-container';
-        
-        // Add to the slide content container at the top
-        if (slideContentContainer.firstChild) {
-            slideContentContainer.insertBefore(progressContainer, slideContentContainer.firstChild);
-        } else {
-            slideContentContainer.appendChild(progressContainer);
-        }
+export function renderOcrStatus(progressData) {
+    if (!progressData) return;
+    const panel = ensureOcrStatusElement();
+    const status = progressData.status || 'running';
+    const engine = progressData.type === 'surya' ? 'Surya' : 'Tesseract';
+    const live = ['queued', 'running', 'stopping'].includes(status);
+    const titles = {
+        queued: `${engine} OCR queued`,
+        running: `${engine} OCR running`,
+        stopping: 'Stopping OCR',
+        complete: `${engine} OCR complete`,
+        stopped: 'OCR stopped',
+        error: 'OCR failed',
+    };
+    const icons = {
+        complete: 'fa-check-circle',
+        stopped: 'fa-stop-circle',
+        error: 'fa-exclamation-circle',
+    };
+
+    panel.dataset.status = status;
+    panel.querySelector('.ocr-progress-header i').className = `fas ${live ? 'fa-spinner fa-spin' : icons[status] || 'fa-info-circle'}`;
+    panel.querySelector('.ocr-progress-title').textContent = titles[status] || 'OCR';
+
+    const percent = Number(progressData.percent);
+    if (Number.isFinite(percent)) {
+        panel.querySelector('.ocr-progress-fill').style.width = `${Math.max(0, Math.min(100, percent))}%`;
     }
-    if (!document.getElementById('stopOcrBtn')) {
-        const stopButton = document.createElement('button');
-        stopButton.id = 'stopOcrBtn';
-        stopButton.type = 'button';
-        stopButton.className = 'btn btn-secondary';
-        stopButton.textContent = 'Stop OCR';
-        stopButton.addEventListener('click', () => stopOcrProcessing(state.currentVideoId));
-        progressContainer.appendChild(stopButton);
-    }
-    
-    // Find or create progress bar for this type
-    const progressId = `ocrProgress_${progressData.type}`;
-    let progressElement = document.getElementById(progressId);
-    
-    if (!progressElement) {
-        // Create progress element if it doesn't exist
-        progressElement = document.createElement('div');
-        progressElement.id = progressId;
-        progressElement.className = 'ocr-progress';
-        
-        // Create header with type
-        const header = document.createElement('div');
-        header.className = 'ocr-progress-header';
-        header.innerHTML = `
-            <i class="fas fa-spinner fa-spin"></i>
-            <span>${progressData.type === 'tesseract' ? 'Tesseract' : 'Surya'} OCR Progress</span>
-        `;
-        
-        // Create progress bar
-        const progressBar = document.createElement('div');
-        progressBar.className = 'ocr-progress-bar';
-        
-        // Create progress fill
-        const progressFill = document.createElement('div');
-        progressFill.className = 'ocr-progress-fill';
-        progressBar.appendChild(progressFill);
-        
-        // Create progress text
-        const progressText = document.createElement('div');
-        progressText.className = 'ocr-progress-text';
-        
-        // Add all elements to the progress element
-        progressElement.appendChild(header);
-        progressElement.appendChild(progressBar);
-        progressElement.appendChild(progressText);
-        
-        // Add to the progress container
-        progressContainer.appendChild(progressElement);
+    if (progressData.message || progressData.error) {
+        panel.querySelector('.ocr-progress-text').textContent = progressData.message || progressData.error;
     }
 
-    // Update progress bar
-    const progressFill = progressElement.querySelector('.ocr-progress-fill');
-    if (progressFill) {
-        progressFill.style.width = `${progressData.percent}%`;
+    const parts = [];
+    if (Number.isFinite(Number(progressData.total)) && Number(progressData.total) > 0) {
+        parts.push(`${progressData.completed || 0}/${progressData.total} done`);
     }
-    
-    // Update progress text
-    const progressText = progressElement.querySelector('.ocr-progress-text');
-    if (progressText) {
-        progressText.textContent = progressData.message;
-    }
-    
-    // If progress is 100%, update the header to show completion
-    if (progressData.percent === 100) {
-        const header = progressElement.querySelector('.ocr-progress-header');
-        if (header) {
-            header.innerHTML = `
-                <i class="fas fa-check-circle"></i>
-                <span>${progressData.type === 'tesseract' ? 'Tesseract' : 'Surya'} OCR Complete</span>
-            `;
-        }
-    }
+    if (Number(progressData.failed) > 0) parts.push(`${progressData.failed} unreadable`);
+    if (progressData.last_error && Number(progressData.failed) > 0) parts.push(`last problem: ${progressData.last_error}`);
+    const detail = parts.join(' \u00b7 ');
+    const detailElement = panel.querySelector('.ocr-progress-detail');
+    detailElement.textContent = detail;
+    detailElement.classList.remove('ocr-progress-warning');
+
+    const stopButton = panel.querySelector('#stopOcrBtn');
+    stopButton.hidden = !live;
+    stopButton.disabled = status === 'stopping';
+    stopButton.textContent = status === 'stopping' ? 'Stopping...' : 'Stop OCR';
+
+    ocrStatusSnapshot = {
+        status,
+        detail,
+        elapsed: Number(progressData.elapsed_seconds) || (ocrStatusSnapshot?.status === status || live ? ocrStatusSnapshot?.elapsed || 0 : 0),
+        receivedAt: Date.now(),
+    };
+    clearInterval(ocrStatusTimer);
+    ocrStatusTimer = live ? setInterval(refreshOcrElapsed, 1000) : null;
+    refreshOcrElapsed();
+
+    const startButton = document.getElementById('startOcrBtn');
+    if (startButton) startButton.hidden = live;
+}
+
+export function resetOcrStatus() {
+    clearInterval(ocrStatusTimer);
+    ocrStatusTimer = null;
+    ocrStatusSnapshot = null;
+    document.getElementById('ocrProgressContainer')?.remove();
 }
 
 export async function stopOcrProcessing(videoId) {
@@ -202,7 +225,7 @@ export async function stopOcrProcessing(videoId) {
     const button = document.getElementById('stopOcrBtn');
     if (button) {
         button.disabled = true;
-        button.textContent = 'Stopping OCR...';
+        button.textContent = 'Stopping...';
     }
     try {
         const response = await fetch(`/stop_ocr/${encodeURIComponent(videoId)}`, { method: 'POST' });
@@ -210,20 +233,16 @@ export async function stopOcrProcessing(videoId) {
         if (!response.ok || !data.success) {
             throw new Error(data.error || 'Could not stop OCR processing');
         }
-        if (window.sseConnection) {
-            window.sseConnection.close();
-            window.sseConnection = null;
+        if (!data.active) {
+            state.ocrProcessing = false;
+            renderOcrStatus({ status: 'stopped', message: 'OCR is stopped.' });
         }
-        state.ocrProcessing = false;
-        if (button) button.remove();
-        const progressText = document.querySelector('.ocr-progress-text');
-        if (progressText) progressText.textContent = 'OCR processing stopped.';
     } catch (error) {
         if (button) {
             button.disabled = false;
             button.textContent = 'Stop OCR';
         }
-        console.error('Error stopping OCR:', error);
+        showNotification(`Could not stop OCR: ${error.message}`, 'error');
     }
 }
 
@@ -287,8 +306,9 @@ export async function fetchOcrResults(videoId) {
         const data = await response.json();
         
         if (data.success) {
-            console.log(`Fetched ${data.ocr_count} OCR results, ${data.pending_ocr_count} pending OCR tasks`);
+            if (state.currentVideoId && state.currentVideoId !== videoId) return;
             state.ocrResults = data.ocr_results || [];
+            state.ocrProcessing = Boolean(data.ocr_running);
             
             // Enable slide search if we have OCR results
             if (state.ocrResults.length > 0) {
@@ -297,15 +317,22 @@ export async function fetchOcrResults(videoId) {
             
             // Update the slide content display
             updateSlideContentDisplay(data.pending_ocr_count);
+            if (data.ocr_status) {
+                renderOcrStatus(data.ocr_status);
+            }
             
-            // If OCR processing is not complete, we'll get updates via SSE
-            // No need to poll anymore
-            
-            if (data.detections_complete && !document.getElementById('startOcrBtn')) {
+            const needsOcr = (data.pending_ocr_count || 0) + (data.failed_ocr_count || 0) > 0;
+            if (data.detections_complete && needsOcr && !document.getElementById('startOcrBtn')) {
                 const startButton = document.createElement('button');
                 startButton.id = 'startOcrBtn';
                 startButton.className = 'btn btn-accent';
-                startButton.textContent = 'Start Slide OCR';
+                const remaining = (data.pending_ocr_count || 0) + (data.failed_ocr_count || 0);
+                startButton.textContent = `Start Slide OCR (${remaining} text elements on ${data.pending_slide_count} slides)`;
+                startButton.hidden = Boolean(data.ocr_running);
+                if (data.tesseract_available === false) {
+                    startButton.disabled = true;
+                    startButton.title = 'Tesseract OCR is not installed on the server.';
+                }
                 startButton.addEventListener('click', async () => {
                     startButton.disabled = true;
                     startButton.textContent = 'Starting OCR...';
@@ -317,14 +344,21 @@ export async function fetchOcrResults(videoId) {
                             throw new Error(startData.error || 'Could not start OCR');
                         }
                         startButton.remove();
-                        fetchOcrResults(videoId);
+                        if (startData.ocr_status) renderOcrStatus(startData.ocr_status);
                     } catch (error) {
+                        state.ocrProcessing = false;
                         startButton.disabled = false;
                         startButton.textContent = 'Start Slide OCR';
-                        console.error('Error starting OCR:', error);
+                        renderOcrStatus({ status: 'error', message: error.message });
                     }
                 });
                 slideContentContainer.prepend(startButton);
+            }
+            if (data.tesseract_available === false && needsOcr && !data.ocr_status) {
+                renderOcrStatus({
+                    status: 'error',
+                    message: 'Tesseract OCR is not installed on the server, so slide text cannot be read. Install it and restart the app.',
+                });
             }
 
             // Add a button to trigger Surya OCR if we have no unmatched results yet
@@ -423,29 +457,7 @@ export function updateSlideContentDisplay(pendingOcrCount = null) {
         slideContentContainer.appendChild(progressContainer);
     }
     
-    // If pendingOcrCount is null, don't change the pending notice
-    // This is used for partial updates where we don't know the current pending count
-    if (pendingOcrCount !== null) {
-        // Remove any existing pending notice
-        const existingNotice = document.getElementById('pendingOcrNotice');
-        if (existingNotice) {
-            existingNotice.remove();
-        }
-        
-        // If we have pending OCR tasks, show a notice
-        if (state.ocrProcessing && pendingOcrCount > 0) {
-            const pendingNotice = document.createElement('div');
-            pendingNotice.id = 'pendingOcrNotice';
-            pendingNotice.className = 'alert alert-info';
-            pendingNotice.style.display = 'block';
-            pendingNotice.innerHTML = `
-                <i class="fas fa-spinner fa-spin"></i>
-                OCR processing in progress: ${pendingOcrCount} more text elements are being processed.
-            `;
-            slideContentContainer.appendChild(pendingNotice);
-        }
-    }
-    
+    // Live progress is shown only in the single #ocrProgressContainer status panel.
     if (!state.ocrResults || state.ocrResults.length === 0) {
         // Show the "coming soon" message if no OCR results
         if (state.ocrProcessing && pendingOcrCount > 0) {
@@ -624,48 +636,74 @@ export function updateSlideContentDisplay(pendingOcrCount = null) {
 const style = document.createElement('style');
 style.textContent = `
 .ocr-progress-container {
-    margin-bottom: 20px;
+    margin-bottom: 10px;
     width: 100%;
 }
 
 .ocr-progress {
-    margin-bottom: 15px;
-    background: #f5f5f5;
-    border-radius: 8px;
-    padding: 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    background: var(--surface-2, #f5f5f5);
+    border: 1px solid var(--border, rgba(0,0,0,0.1));
+    border-radius: 10px;
+    padding: 8px 10px;
 }
 
 .ocr-progress-header {
     display: flex;
     align-items: center;
-    margin-bottom: 8px;
-    font-weight: bold;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-weight: 600;
+    font-size: 0.9em;
 }
 
 .ocr-progress-header i {
-    margin-right: 8px;
-    color: #4a6cf7;
+    color: var(--brand, #4a6cf7);
+}
+
+.ocr-progress-title {
+    flex: 1;
+}
+
+.ocr-progress-elapsed {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2, #666);
+    font-weight: 500;
+}
+
+.ocr-progress-header .btn {
+    padding: 2px 8px;
+    font-size: 0.8em;
 }
 
 .ocr-progress-bar {
-    height: 10px;
-    background: #e0e0e0;
-    border-radius: 5px;
+    height: 6px;
+    background: var(--border, #e0e0e0);
+    border-radius: 999px;
     overflow: hidden;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .ocr-progress-fill {
     height: 100%;
-    background: #4a6cf7;
+    background: var(--brand, #4a6cf7);
     width: 0%;
     transition: width 0.3s ease;
 }
 
-.ocr-progress-text {
-    font-size: 0.9em;
-    color: #666;
+.ocr-progress-text,
+.ocr-progress-detail {
+    font-size: 0.82em;
+    color: var(--text-2, #666);
+    overflow-wrap: anywhere;
+}
+
+.ocr-progress-detail:empty {
+    display: none;
+}
+
+.ocr-progress-warning {
+    color: var(--warning-color, #b45309);
+    font-weight: 600;
 }
 
 /* Animation for new OCR items */

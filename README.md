@@ -249,10 +249,10 @@ request, rather than treating it as proof of a CUDA or memory error.
    Get your API key from: https://makersuite.google.com/app/apikey
 
 2. **Configure Tesseract (if not in PATH):**
-   ```python
-   # In main.py, uncomment and modify:
-   # pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
-   ```
+   The app finds Tesseract on PATH, inside the active Conda/Python environment
+   (even when the environment is not activated), or in the standard Windows install
+   folders. To use another copy, set `TESSERACT_CMD` to the full path of the
+   `tesseract` executable before starting the server.
 
 ### Model Files
 
@@ -335,6 +335,7 @@ ocr_text = requests.get("http://localhost:8000/find_ocr_for_transcript/video_id/
 #### OCR Text Extraction
 - **Dual OCR Support**: Tesseract and Surya OCR engines
 - **Preference System**: User-configurable OCR method selection
+- **Live Progress**: Tesseract reads up to four text elements at once; one status line shows the slides being read now, elements done, elapsed time, and a warning if no update arrives for 20 seconds. **Stop OCR** cancels the remaining work, and starting again only reads elements that are still missing.
 - **Bounding Box Detection**: Precise text location mapping
 - **Quality Filtering**: Confidence-based text filtering
 
@@ -455,8 +456,8 @@ python -c "import torch; print(torch.cuda.is_available())"
 # Ubuntu/Debian
 sudo apt-get install tesseract-ocr tesseract-ocr-eng
 
-# Set explicit path in code if needed
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+# Or point the app at a specific binary
+export TESSERACT_CMD=/usr/bin/tesseract
 ```
 
 **YouTube Download Errors:**

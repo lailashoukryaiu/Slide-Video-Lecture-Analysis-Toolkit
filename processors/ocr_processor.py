@@ -1,5 +1,9 @@
 import os
+import sys
 import json
+import shutil
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi.responses import JSONResponse
 from PIL import Image
 import pytesseract
@@ -9,6 +13,47 @@ from ultralytics import YOLO
 import asyncio
 
 from project_paths import resolve_model_path, FULLSIZE_IMAGES_DIR, SCENES_DIR
+
+TESSERACT_TIMEOUT_SECONDS = 30
+TESSERACT_MISSING_MESSAGE = (
+    "Tesseract OCR was not found. Install it (conda install -c conda-forge tesseract, "
+    "or apt-get install tesseract-ocr on Colab/Linux) or set TESSERACT_CMD to tesseract's full path."
+)
+
+
+def configure_tesseract():
+    """Point pytesseract at a Tesseract binary even when the environment is not activated."""
+    env_prefix = os.path.abspath(sys.prefix)
+    candidates = [
+        os.environ.get("TESSERACT_CMD"),
+        shutil.which("tesseract"),
+        os.path.join(env_prefix, "Library", "bin", "tesseract.exe"),
+        os.path.join(env_prefix, "bin", "tesseract"),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+    ]
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        command = os.path.abspath(candidate)
+        pytesseract.pytesseract.tesseract_cmd = command
+        # Conda's Tesseract only finds its language data when the env is activated.
+        env_tessdata = os.path.join(env_prefix, "share", "tessdata")
+        if (
+            not os.environ.get("TESSDATA_PREFIX")
+            and command.lower().startswith(env_prefix.lower())
+            and os.path.isdir(env_tessdata)
+        ):
+            os.environ["TESSDATA_PREFIX"] = env_tessdata
+        return command
+    return None
+
+
+TESSERACT_CMD = configure_tesseract()
+
+
+def tesseract_available():
+    return TESSERACT_CMD is not None
 
 # Import Surya for OCR
 try:
@@ -69,6 +114,8 @@ class OCRProcessor:
         self.ocr_tasks_total = 0
         self.ocr_tasks_completed = 0
         self.cancelled_videos = set()
+        self.ocr_status = {}
+        self.active_ocr_batches = {}
         self.task_lock = threading.Lock()
         
         # Initialize shared models
@@ -254,59 +301,85 @@ class OCRProcessor:
         except Exception as e:
             print(f"Error updating scene with YOLO results: {str(e)}")
 
-    def queue_ocr_tasks(self, scenes, scene_index, scene_path):
-        """Queue OCR tasks for text detections."""
-        video_id = os.path.splitext(os.path.basename(scene_path))[0]
-        scene = scenes[scene_index]
+    def collect_scene_ocr_tasks(self, video_id, scene, scene_index):
+        """Return Tesseract tasks for unread text detections and whether the scene has text."""
         image_path = str(FULLSIZE_IMAGES_DIR / video_id / f"{scene_index}.jpg")
-
+        tasks = []
         has_text_detections = False
-        for detection_index, detection in enumerate(scene["yolo_detections"]["detections"]):
-            if detection.get("needs_ocr"):
-                has_text_detections = True
-                if self.ocr_preference in ["tesseract", "both"]:
-                    if video_id not in self.video_ocr_tasks:
-                        self.video_ocr_tasks[video_id] = {}
-                    if scene_index not in self.video_ocr_tasks[video_id]:
-                        self.video_ocr_tasks[video_id][scene_index] = []
-                    
-                    self.video_ocr_tasks[video_id][scene_index].append(
-                        (detection_index, detection["bbox"], image_path)
-                    )
-        
-        if has_text_detections and self.ocr_preference in ["surya", "both"]:
-            if video_id not in self.video_surya_tasks:
-                self.video_surya_tasks[video_id] = []
-            self.video_surya_tasks[video_id].append((scene_index, image_path))
-        
-        # Check if this is the last scene and queue all tasks
-        if all("yolo_detections" in s for s in scenes):
-            if video_id in self.video_ocr_tasks:
-                with self.task_lock:
-                    # Count all OCR tasks for this video
-                    for scene_tasks in self.video_ocr_tasks[video_id].values():
-                        self.ocr_tasks_total += len(scene_tasks)
-                self.ocr_queue.put((video_id, self.video_ocr_tasks[video_id], scene_path))
-                del self.video_ocr_tasks[video_id]
-            
-            if video_id in self.video_surya_tasks:
-                with self.task_lock:
-                    self.ocr_tasks_total += len(self.video_surya_tasks[video_id])
-                self.ocr_queue.put((video_id, self.video_surya_tasks[video_id], scene_path, "surya_batch"))
-                del self.video_surya_tasks[video_id]
+        detections = scene.get("yolo_detections", {}).get("detections", [])
+        for detection_index, detection in enumerate(detections):
+            if not detection.get("needs_ocr"):
+                continue
+            has_text_detections = True
+            if "ocr_text" not in detection:
+                tasks.append((detection_index, detection["bbox"], image_path))
+        return tasks, has_text_detections, image_path
+
+    def is_ocr_running(self, video_id):
+        with self.task_lock:
+            return self.active_ocr_batches.get(video_id, 0) > 0
+
+    def get_ocr_status(self, video_id):
+        with self.task_lock:
+            status = self.ocr_status.get(video_id)
+            if not status:
+                return None
+            status = dict(status)
+        if status.get("started_at"):
+            end = status.get("finished_at") or time.time()
+            status["elapsed_seconds"] = round(end - status["started_at"], 1)
+        if status.get("updated_at"):
+            status["seconds_since_update"] = round(time.time() - status["updated_at"], 1)
+        return status
+
+    def publish_ocr_event(self, video_id, event, data, status=None):
+        """Record the latest OCR state and push it to connected browsers."""
+        now = time.time()
+        with self.task_lock:
+            current = dict(self.ocr_status.get(video_id) or {})
+            if status in ("queued", "running") and current.get("status") not in ("queued", "running", "stopping"):
+                current = {"started_at": now}
+            current.update({k: v for k, v in data.items() if k not in ("partial_results", "final_results")})
+            if status:
+                current["status"] = status
+            current.setdefault("started_at", now)
+            current["updated_at"] = now
+            if status in ("complete", "stopped", "error"):
+                current["finished_at"] = now
+            else:
+                current.pop("finished_at", None)
+            self.ocr_status[video_id] = current
+        payload = dict(data)
+        payload["status"] = current.get("status")
+        payload["elapsed_seconds"] = round(now - current["started_at"], 1)
+        coro = self.send_progress_update(video_id, {"event": event, "data": payload})
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop:
+            running_loop.create_task(coro)
+        else:
+            asyncio.run(coro)
 
     def ocr_worker(self):
         """Background thread to process OCR tasks."""
         while True:
+            item = self.ocr_queue.get()
+            if item is None:
+                self.ocr_queue.task_done()
+                break
+            video_id = item[0]
             try:
-                item = self.ocr_queue.get()
-                if item is None:
-                    break
-                
                 if len(item) == 3:  # Tesseract OCR task
                     video_id, scenes_tasks, scene_path = item
                     task_count = sum(len(tasks) for tasks in scenes_tasks.values())
-                    if video_id not in self.cancelled_videos:
+                    if video_id in self.cancelled_videos:
+                        self.publish_ocr_event(video_id, "ocr_cancelled", {
+                            "type": "tesseract",
+                            "message": "OCR stopped before it started."
+                        }, status="stopped")
+                    else:
                         self.process_tesseract_tasks(video_id, scenes_tasks, scene_path)
                     with self.task_lock:
                         self.ocr_tasks_completed += task_count
@@ -317,10 +390,15 @@ class OCRProcessor:
                         self.process_surya_tasks(video_id, surya_tasks, scene_path)
                     with self.task_lock:
                         self.ocr_tasks_completed += task_count
-                
             except Exception as e:
                 print(f"Error in OCR worker thread: {str(e)}")
             finally:
+                with self.task_lock:
+                    remaining = self.active_ocr_batches.get(video_id, 0) - 1
+                    if remaining > 0:
+                        self.active_ocr_batches[video_id] = remaining
+                    else:
+                        self.active_ocr_batches.pop(video_id, None)
                 self.ocr_queue.task_done()
 
     async def send_progress_update(self, video_id, data):
@@ -328,103 +406,180 @@ class OCRProcessor:
         if self.send_sse_update:
             await self.send_sse_update(video_id, data)
 
+    @staticmethod
+    def tesseract_worker_count(total_tasks):
+        return max(1, min(4, os.cpu_count() or 1, total_tasks))
+
+    @staticmethod
+    def write_scenes(scene_path, scenes):
+        with open(scene_path, "w") as f:
+            json.dump(scenes, f)
+
     def process_tesseract_tasks(self, video_id, scenes_tasks, scene_path):
-        """Process Tesseract OCR tasks for a video."""
+        """Read every queued text element with Tesseract, a few at a time."""
         try:
-            with open(scene_path, 'r') as f:
+            with open(scene_path, "r") as f:
                 scenes = json.load(f)
-            
-            total_tasks = sum(len(tasks) for tasks in scenes_tasks.values())
-            completed_tasks = 0
-            
-            # Send initial progress update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_progress",
-                "data": {
-                    "type": "tesseract",
-                    "total": total_tasks,
-                    "completed": completed_tasks,
-                    "percent": 0,
-                    "message": f"Starting Tesseract OCR processing for {total_tasks} text elements"
-                }
-            }))
-            
-            for scene_index, tasks in scenes_tasks.items():
-                if video_id in self.cancelled_videos:
-                    break
+
+            jobs = []
+            for scene_index, tasks in sorted(scenes_tasks.items(), key=lambda item: int(item[0])):
                 scene_index = int(scene_index)
                 if scene_index >= len(scenes):
                     continue
-                
                 for detection_index, bbox, image_path in tasks:
-                    if video_id in self.cancelled_videos:
-                        break
-                    result = self.perform_tesseract_ocr(image_path, bbox)
-                    if result["success"] and "text" in result:
-                        if "yolo_detections" in scenes[scene_index]:
-                            detections = scenes[scene_index]["yolo_detections"].get("detections", [])
-                            if detection_index < len(detections):
-                                detections[detection_index]["ocr_text"] = result["text"]
-                                detections[detection_index]["ocr_source"] = "tesseract"
-                                
-                                # Save scenes after each successful OCR to avoid losing progress
-                                with open(scene_path, 'w') as f:
-                                    json.dump(scenes, f)
-                    
-                    # Update progress
+                    jobs.append((scene_index, detection_index, bbox, image_path))
+
+            total_tasks = len(jobs)
+            slide_total = len({job[0] for job in jobs})
+            worker_count = self.tesseract_worker_count(total_tasks)
+            completed_tasks = 0
+            failed_tasks = 0
+            first_error = None
+            stopped = False
+
+            self.publish_ocr_event(video_id, "ocr_progress", {
+                "type": "tesseract",
+                "total": total_tasks,
+                "completed": 0,
+                "failed": 0,
+                "percent": 0,
+                "slide_total": slide_total,
+                "active_slides": sorted({job[0] + 1 for job in jobs})[:worker_count],
+                "message": f"Reading {total_tasks} text elements on {slide_total} slides ({worker_count} at a time)"
+            }, status="running")
+
+            last_save = time.monotonic()
+            unsaved = False
+            executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="tesseract")
+            futures = {
+                executor.submit(self.perform_tesseract_ocr, image_path, bbox): (scene_index, detection_index)
+                for scene_index, detection_index, bbox, image_path in jobs
+            }
+            try:
+                for future in as_completed(futures):
+                    scene_index, detection_index = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as error:
+                        result = {"success": False, "error": str(error)}
+
+                    detections = scenes[scene_index].get("yolo_detections", {}).get("detections", [])
+                    text = ""
+                    if detection_index < len(detections):
+                        detection = detections[detection_index]
+                        if result.get("success"):
+                            text = result.get("text", "")
+                            detection["ocr_text"] = text
+                            detection["ocr_source"] = "tesseract"
+                            detection.pop("ocr_error", None)
+                        else:
+                            detection["ocr_error"] = result.get("error", "Unknown Tesseract error")
+                        unsaved = True
+                    if not result.get("success"):
+                        failed_tasks += 1
+                        first_error = first_error or result.get("error")
+
                     completed_tasks += 1
-                    percent_complete = int((completed_tasks / total_tasks) * 100)
-                    
-                    # Send progress update
-                    self.run_async(self.send_progress_update(video_id, {
-                        "event": "ocr_progress",
-                        "data": {
-                            "type": "tesseract",
-                            "total": total_tasks,
-                            "completed": completed_tasks,
-                            "percent": percent_complete,
-                            "scene_index": scene_index,
-                            "message": f"Processed {completed_tasks} of {total_tasks} text elements ({percent_complete}%)",
-                            "partial_results": self.extract_ocr_results_for_scene(scenes, scene_index)
-                        }
-                    }))
-            
-            # Send completion update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_complete",
-                "data": {
+                    if unsaved and (time.monotonic() - last_save > 2 or completed_tasks == total_tasks):
+                        self.write_scenes(scene_path, scenes)
+                        last_save = time.monotonic()
+                        unsaved = False
+
+                    active_slides = sorted({futures[f][0] + 1 for f in futures if not f.done()})[:worker_count]
+                    percent_complete = int((completed_tasks / total_tasks) * 100) if total_tasks else 100
+                    if active_slides:
+                        step = f"Now reading slide {', '.join(str(n) for n in active_slides)}"
+                    else:
+                        step = "Finishing up"
+                    snippet = f' Last: "{text[:60]}"' if text else ""
+                    self.publish_ocr_event(video_id, "ocr_progress", {
+                        "type": "tesseract",
+                        "total": total_tasks,
+                        "completed": completed_tasks,
+                        "failed": failed_tasks,
+                        "percent": percent_complete,
+                        "scene_index": scene_index,
+                        "slide_number": scene_index + 1,
+                        "slide_total": slide_total,
+                        "active_slides": active_slides,
+                        "last_error": first_error,
+                        "message": f"{step} \u2014 {completed_tasks} of {total_tasks} text elements read.{snippet}",
+                        "partial_results": self.extract_ocr_results_for_scene(scenes, scene_index)
+                    }, status="running")
+
+                    if video_id in self.cancelled_videos:
+                        stopped = True
+                        for pending in futures:
+                            pending.cancel()
+                        break
+            finally:
+                executor.shutdown(wait=True, cancel_futures=True)
+
+            if unsaved:
+                self.write_scenes(scene_path, scenes)
+
+            if stopped:
+                self.publish_ocr_event(video_id, "ocr_cancelled", {
                     "type": "tesseract",
                     "total": total_tasks,
                     "completed": completed_tasks,
-                    "message": f"Completed Tesseract OCR processing for {total_tasks} text elements",
+                    "failed": failed_tasks,
+                    "percent": int((completed_tasks / total_tasks) * 100) if total_tasks else 0,
+                    "message": f"OCR stopped after {completed_tasks} of {total_tasks} text elements.",
                     "final_results": self.extract_ocr_results(scenes)
-                }
-            }))
-            
+                }, status="stopped")
+                return
+
+            if total_tasks and failed_tasks == total_tasks:
+                self.publish_ocr_event(video_id, "ocr_error", {
+                    "type": "tesseract",
+                    "total": total_tasks,
+                    "completed": completed_tasks,
+                    "failed": failed_tasks,
+                    "error": f"Tesseract could not read any text element: {first_error}",
+                    "message": f"Tesseract could not read any text element: {first_error}"
+                }, status="error")
+                return
+
+            failed_note = f" ({failed_tasks} could not be read)" if failed_tasks else ""
+            self.publish_ocr_event(video_id, "ocr_complete", {
+                "type": "tesseract",
+                "total": total_tasks,
+                "completed": completed_tasks,
+                "failed": failed_tasks,
+                "percent": 100,
+                "last_error": first_error,
+                "message": f"Read {total_tasks} text elements on {slide_total} slides{failed_note}.",
+                "final_results": self.extract_ocr_results(scenes)
+            }, status="complete")
+
         except Exception as e:
             print(f"Error processing Tesseract OCR tasks: {str(e)}")
-            # Send error update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_error",
-                "data": {
-                    "type": "tesseract",
-                    "error": str(e)
-                }
-            }))
+            self.publish_ocr_event(video_id, "ocr_error", {
+                "type": "tesseract",
+                "error": str(e),
+                "message": f"OCR failed: {e}"
+            }, status="error")
 
     def perform_tesseract_ocr(self, image_path, bbox):
         """Perform OCR on a specific region of an image."""
         try:
-            image = Image.open(image_path)
-            x1, y1, x2, y2 = bbox
-            cropped = image.crop((x1, y1, x2, y2))
-            text = pytesseract.image_to_string(cropped)
+            with Image.open(image_path) as image:
+                x1, y1, x2, y2 = bbox
+                cropped = image.crop((x1, y1, x2, y2))
+                cropped.load()
+            text = pytesseract.image_to_string(cropped, timeout=TESSERACT_TIMEOUT_SECONDS)
             text = ' '.join(text.split())
-            
+
             return {
                 "success": True,
                 "text": text
             }
+        except RuntimeError as e:
+            message = str(e)
+            if "timeout" in message.lower():
+                message = f"Tesseract took longer than {TESSERACT_TIMEOUT_SECONDS}s on this element"
+            return {"success": False, "error": message}
         except Exception as e:
             return {
                 "success": False,
@@ -435,77 +590,71 @@ class OCRProcessor:
         """Process Surya OCR tasks for a video."""
         if not SURYA_AVAILABLE:
             return
-        
+
         try:
             with open(scene_path, 'r') as f:
                 scenes = json.load(f)
-            
+
             total_tasks = len(surya_tasks)
             completed_tasks = 0
-            
-            # Send initial progress update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_progress",
-                "data": {
-                    "type": "surya",
-                    "total": total_tasks,
-                    "completed": completed_tasks,
-                    "percent": 0,
-                    "message": f"Starting Surya OCR processing for {total_tasks} scenes"
-                }
-            }))
-            
+
+            self.publish_ocr_event(video_id, "ocr_progress", {
+                "type": "surya",
+                "total": total_tasks,
+                "completed": 0,
+                "failed": 0,
+                "percent": 0,
+                "slide_total": total_tasks,
+                "message": f"Starting Surya OCR on {total_tasks} slides"
+            }, status="running")
+
             for scene_index, image_path in surya_tasks:
                 if video_id in self.cancelled_videos:
-                    break
+                    self.publish_ocr_event(video_id, "ocr_cancelled", {
+                        "type": "surya",
+                        "message": f"Surya OCR stopped after {completed_tasks} of {total_tasks} slides.",
+                        "final_results": self.extract_ocr_results(scenes)
+                    }, status="stopped")
+                    return
+                self.publish_ocr_event(video_id, "ocr_progress", {
+                    "type": "surya",
+                    "active_slides": [scene_index + 1],
+                    "message": f"Now reading slide {scene_index + 1} with Surya \u2014 {completed_tasks} of {total_tasks} slides done."
+                }, status="running")
                 result = self.process_image_with_surya(image_path)
                 if result["success"] and "results" in result:
                     self.update_scene_with_surya_results(scenes, scene_index, result["results"])
-                    
-                    # Save scenes after each successful OCR to avoid losing progress
-                    with open(scene_path, 'w') as f:
-                        json.dump(scenes, f)
-                
-                # Update progress
+                    self.write_scenes(scene_path, scenes)
+
                 completed_tasks += 1
                 percent_complete = int((completed_tasks / total_tasks) * 100)
-                
-                # Send progress update
-                self.run_async(self.send_progress_update(video_id, {
-                    "event": "ocr_progress",
-                    "data": {
-                        "type": "surya",
-                        "total": total_tasks,
-                        "completed": completed_tasks,
-                        "percent": percent_complete,
-                        "scene_index": scene_index,
-                        "message": f"Processed {completed_tasks} of {total_tasks} scenes ({percent_complete}%)",
-                        "partial_results": self.extract_ocr_results_for_scene(scenes, scene_index)
-                    }
-                }))
-
-            # Send completion update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_complete",
-                "data": {
+                self.publish_ocr_event(video_id, "ocr_progress", {
                     "type": "surya",
                     "total": total_tasks,
                     "completed": completed_tasks,
-                    "message": f"Completed Surya OCR processing for {total_tasks} scenes",
-                    "final_results": self.extract_ocr_results(scenes)
-                }
-            }))
-            
+                    "percent": percent_complete,
+                    "scene_index": scene_index,
+                    "slide_number": scene_index + 1,
+                    "message": f"Read slide {scene_index + 1} with Surya \u2014 {completed_tasks} of {total_tasks} slides done.",
+                    "partial_results": self.extract_ocr_results_for_scene(scenes, scene_index)
+                }, status="running")
+
+            self.publish_ocr_event(video_id, "ocr_complete", {
+                "type": "surya",
+                "total": total_tasks,
+                "completed": completed_tasks,
+                "percent": 100,
+                "message": f"Surya read {total_tasks} slides.",
+                "final_results": self.extract_ocr_results(scenes)
+            }, status="complete")
+
         except Exception as e:
             print(f"Error processing Surya OCR tasks: {str(e)}")
-            # Send error update
-            self.run_async(self.send_progress_update(video_id, {
-                "event": "ocr_error",
-                "data": {
-                    "type": "surya",
-                    "error": str(e)
-                }
-            }))
+            self.publish_ocr_event(video_id, "ocr_error", {
+                "type": "surya",
+                "error": str(e),
+                "message": f"Surya OCR failed: {e}"
+            }, status="error")
 
     async def stop_ocr(self, video_id: str):
         """Cancel queued and active OCR work for a video."""
@@ -513,25 +662,84 @@ class OCRProcessor:
             self.cancelled_videos.add(video_id)
             self.video_ocr_tasks.pop(video_id, None)
             self.video_surya_tasks.pop(video_id, None)
-        await self.send_progress_update(video_id, {
-            "event": "ocr_cancelled",
-            "data": {"message": "OCR processing stopped by the user."}
-        })
-        return JSONResponse({"success": True, "message": "OCR processing stopped"})
+            active = self.active_ocr_batches.get(video_id, 0) > 0
+        if active:
+            self.publish_ocr_event(video_id, "ocr_stopping", {
+                "message": "Stopping OCR after the text elements already being read..."
+            }, status="stopping")
+        else:
+            self.publish_ocr_event(video_id, "ocr_cancelled", {
+                "message": "OCR is stopped."
+            }, status="stopped")
+        return JSONResponse({"success": True, "active": active, "message": "OCR processing stopping" if active else "OCR processing stopped"})
 
     async def start_ocr(self, video_id: str):
         """Queue OCR work for completed scene detections."""
         scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
             return JSONResponse({"success": False, "error": "Scene data not found"})
+        use_tesseract = self.ocr_preference in ("tesseract", "both")
+        use_surya = self.ocr_preference in ("surya", "both") and SURYA_AVAILABLE
+        if use_tesseract and not tesseract_available():
+            self.publish_ocr_event(video_id, "ocr_error", {
+                "type": "tesseract", "error": TESSERACT_MISSING_MESSAGE, "message": TESSERACT_MISSING_MESSAGE
+            }, status="error")
+            return JSONResponse({"success": False, "error": TESSERACT_MISSING_MESSAGE})
+        if self.is_ocr_running(video_id):
+            return JSONResponse({
+                "success": True,
+                "already_running": True,
+                "message": "OCR is already running",
+                "ocr_status": self.get_ocr_status(video_id)
+            })
         with open(scene_path, "r", encoding="utf-8") as file:
             scenes = json.load(file)
+
+        tesseract_tasks = {}
+        surya_tasks = []
+        for scene_index, scene in enumerate(scenes):
+            if not scene.get("yolo_detections", {}).get("success"):
+                continue
+            tasks, has_text, image_path = self.collect_scene_ocr_tasks(video_id, scene, scene_index)
+            if use_tesseract and tasks:
+                tesseract_tasks[scene_index] = tasks
+            if use_surya and has_text and "surya_ocr" not in scene:
+                surya_tasks.append((scene_index, image_path))
+
+        total = sum(len(tasks) for tasks in tesseract_tasks.values())
+        if not total and not surya_tasks:
+            self.publish_ocr_event(video_id, "ocr_complete", {
+                "type": "tesseract", "total": 0, "completed": 0, "failed": 0, "percent": 100,
+                "message": "All detected text elements have already been read."
+            }, status="complete")
+            return JSONResponse({"success": True, "queued": 0, "message": "Nothing left to read"})
+
         with self.task_lock:
             self.cancelled_videos.discard(video_id)
-        for scene_index, scene in enumerate(scenes):
-            if scene.get("yolo_detections", {}).get("success"):
-                self.queue_ocr_tasks(scenes, scene_index, scene_path)
-        return JSONResponse({"success": True, "message": "OCR processing started"})
+            batches = (1 if total else 0) + (1 if surya_tasks else 0)
+            self.active_ocr_batches[video_id] = self.active_ocr_batches.get(video_id, 0) + batches
+            self.ocr_tasks_total += total + len(surya_tasks)
+        slide_total = len(tesseract_tasks) or len(surya_tasks)
+        self.publish_ocr_event(video_id, "ocr_progress", {
+            "type": "tesseract" if total else "surya",
+            "total": total or len(surya_tasks),
+            "completed": 0,
+            "failed": 0,
+            "percent": 0,
+            "slide_total": slide_total,
+            "message": f"Queued {total or len(surya_tasks)} {'text elements' if total else 'slides'} on {slide_total} slides..."
+        }, status="queued")
+        if total:
+            self.ocr_queue.put((video_id, tesseract_tasks, scene_path))
+        if surya_tasks:
+            self.ocr_queue.put((video_id, surya_tasks, scene_path, "surya_batch"))
+        return JSONResponse({
+            "success": True,
+            "queued": total,
+            "surya_queued": len(surya_tasks),
+            "message": "OCR processing started",
+            "ocr_status": self.get_ocr_status(video_id)
+        })
 
     def process_image_with_surya(self, image_path):
         """Process an image with Surya OCR."""
@@ -650,6 +858,9 @@ class OCRProcessor:
             
             ocr_results = []
             pending_ocr_count = 0
+            failed_ocr_count = 0
+            text_element_count = 0
+            pending_slides = set()
             detections_complete = bool(scenes) and all(
                 "yolo_detections" in scene for scene in scenes
             )
@@ -661,8 +872,14 @@ class OCRProcessor:
                     detections = scene["yolo_detections"].get("detections", [])
                     
                     for detection_index, detection in enumerate(detections):
-                        if detection.get("needs_ocr", False) and "ocr_text" not in detection:
-                            pending_ocr_count += 1
+                        if detection.get("needs_ocr", False):
+                            text_element_count += 1
+                            if "ocr_text" not in detection:
+                                pending_slides.add(scene_index)
+                                if detection.get("ocr_error"):
+                                    failed_ocr_count += 1
+                                else:
+                                    pending_ocr_count += 1
                         
                         if "ocr_text" in detection and detection["ocr_text"].strip():
                             if detection.get("ocr_source", "") == "tesseract" or "match_iou" not in detection:
@@ -681,6 +898,12 @@ class OCRProcessor:
                 "ocr_count": len(ocr_results),
                 "ocr_results": ocr_results,
                 "pending_ocr_count": pending_ocr_count,
+                "failed_ocr_count": failed_ocr_count,
+                "text_element_count": text_element_count,
+                "pending_slide_count": len(pending_slides),
+                "ocr_running": self.is_ocr_running(video_id),
+                "ocr_status": self.get_ocr_status(video_id),
+                "tesseract_available": tesseract_available(),
                 "detections_complete": detections_complete,
                 "processing_complete": detections_complete
             })
@@ -759,6 +982,8 @@ class OCRProcessor:
                 })
 
             with self.task_lock:
+                self.cancelled_videos.discard(video_id)
+                self.active_ocr_batches[video_id] = self.active_ocr_batches.get(video_id, 0) + 1
                 self.ocr_tasks_total += len(surya_tasks)
             self.ocr_queue.put((video_id, surya_tasks, scene_path, "surya_batch"))
             
