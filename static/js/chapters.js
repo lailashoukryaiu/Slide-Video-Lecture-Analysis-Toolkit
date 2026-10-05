@@ -75,7 +75,7 @@ export function updateExportAvailability() {
             elements.exportAvailabilityNote.textContent = 'Load a video before exporting.';
         } else if (!hasParts && !useIntervals) {
             elements.exportAvailabilityNote.textContent =
-                'Without chapters or slides, the full video is one part; transcript-based subparts are still available.';
+                'Without chapters or slides, the full video is one part; transcript-based sections are still available.';
         } else if (!hasTranscript) {
             elements.exportAvailabilityNote.textContent =
                 'Transcript-dependent exports are disabled until a transcript is available.';
@@ -94,15 +94,16 @@ function renderExportSteps(status) {
     container.appendChild(heading);
     const list = document.createElement('ol');
     const steps = status.steps || [];
-    steps.forEach((step, index) => {
+    // Show only the latest step; each new step replaces the previous one.
+    const index = steps.length - 1;
+    if (index >= 0) {
+        const step = steps[index];
         const item = document.createElement('li');
-        const duration = index + 1 < steps.length
-            ? steps[index + 1].elapsed - step.elapsed
-            : Math.max(0, (status.elapsed || step.elapsed) - step.elapsed);
-        const running = index === steps.length - 1 && status.status === 'running';
+        const duration = Math.max(0, (status.elapsed || step.elapsed) - step.elapsed);
+        const running = status.status === 'running';
         item.textContent = `${Math.floor(step.elapsed / 60)}:${String(Math.floor(step.elapsed % 60)).padStart(2, '0')} — ${step.message} (${running ? 'running for' : 'took'} ${Math.round(duration)}s)`;
         list.appendChild(item);
-    });
+    }
     container.appendChild(list);
     if (status.error) {
         const message = document.createElement('p');

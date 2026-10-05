@@ -33,7 +33,9 @@ context.renderExportSteps({
     status: 'running', elapsed: 31,
     steps: [{elapsed: 0, message: 'Starting'}, {elapsed: 10, message: 'Encoding clip'}],
 });
-assert(progress.children[1].children[1].textContent.includes('running for 21s'));
+assert.equal(progress.children[1].children.length, 1, 'Only the current export step is shown');
+assert(progress.children[1].children[0].textContent.includes('Encoding clip'));
+assert(progress.children[1].children[0].textContent.includes('running for 21s'));
 (async () => {
     await context.refreshSavedExports();
     assert.equal(errors.length, 0);

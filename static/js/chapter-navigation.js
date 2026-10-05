@@ -7,7 +7,7 @@ export function chapterStart(chapter) {
     return parts.reduce((seconds, part) => seconds * 60 + part, 0);
 }
 
-export function conciseTitle(title, limit = 48) {
+export function conciseTitle(title, limit = 36) {
     const text = String(title || '').replace(/\s+/g, ' ').trim();
     if (text.length <= limit) return text;
     const prefix = text.slice(0, limit - 3);

@@ -26,8 +26,10 @@ export function updateChapterCaptions() {
             item.appendChild(title);
         }
         const text = activePart(parts, Number(image.dataset.time))?.title || 'No chapter title available.';
+        // The numbered badge already identifies the slide, so show only the topic beneath it.
+        const shown = conciseTitle(text.replace(/^\d+:\s*/, '').replace(/^\d+$/, ''));
         title.title = text;
-        if (title.textContent !== conciseTitle(text)) title.textContent = conciseTitle(text);
+        if (title.textContent !== shown) title.textContent = shown;
     });
 }
 

@@ -28,6 +28,20 @@ class ExportJobTests(unittest.TestCase):
             time.sleep(0.02)
         self.fail("Export job did not finish")
 
+    def test_locked_state_file_does_not_abort_export(self):
+        async def generate(video_id, options, step, artifacts, workspace):
+            step("Encoding a clip")
+            download = workspace / "lecture.zip"
+            download.write_bytes(b"archive")
+            return SimpleNamespace(path=str(download))
+
+        locked = PermissionError(5, "Access is denied")
+        with patch.object(Path, "replace", side_effect=locked), patch("export_jobs._STATE_RETRY_DELAY", 0):
+            job_id = self.store.start("video", {}, generate)
+            state = self.wait_for_job(job_id)
+        self.assertEqual(state["status"], "complete")
+        self.assertIn("Encoding a clip", [step["message"] for step in state["steps"]])
+
     def test_steps_and_html_survive_restart_with_isolated_download(self):
         async def generate(video_id, options, step, artifacts, workspace):
             step("Encoding a clip")
@@ -87,7 +101,7 @@ class ExportJobTests(unittest.TestCase):
             if len(calls) == 1:
                 raise PermissionError("File temporarily locked")
             remove(path)
-        with patch("export_jobs.shutil.rmtree", side_effect=locked_once), patch("export_jobs.time.sleep"):
+        with patch("export_jobs.shutil.rmtree", side_effect=locked_once), patch("export_jobs._STATE_RETRY_DELAY", 0):
             cleanup_export_workspace(workspace)
         self.assertEqual(len(calls), 2)
         self.assertFalse(workspace.exists())
@@ -101,7 +115,7 @@ class ExportJobTests(unittest.TestCase):
             return SimpleNamespace(path=path)
         try:
             with patch("export_jobs.shutil.rmtree", side_effect=PermissionError("Access denied")), \
-                    patch("export_jobs.time.sleep"), self.assertLogs("export_jobs", level="WARNING"):
+                    patch("export_jobs._STATE_RETRY_DELAY", 0), self.assertLogs("export_jobs", level="WARNING"):
                 state = self.wait_for_job(self.store.start("video", {}, generate))
             self.assertEqual(state["status"], "complete")
             self.assertTrue(any("Cleanup warning:" in step["message"] for step in state["steps"]))

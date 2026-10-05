@@ -28,7 +28,7 @@ vm.runInContext(read('chapter-navigation.js') + '\n' + read('video.js'), context
 context.updateChapterCaptions();
 assert.equal(caption.textContent, '<Learning>');
 assert.equal(items[0].caption.textContent, 'Introduction');
-assert.equal(items[1].caption.textContent, '2: <Learning>');
+assert.equal(items[1].caption.textContent, '<Learning>', 'Timeline titles omit the number already shown in the badge');
 assert.equal(context.navigationParts(state.videoChapters, state.videoScenes).length, 3);
 state.chapterGrouping = 'topic';
 context.updateChapterCaptions();
@@ -41,7 +41,7 @@ context.updateChapterCaptions();
 assert.equal(caption.textContent, '2: <Learning>');
 state.videoChapters[1].title = 'A very long chapter title describing many different concepts and examples';
 context.updateChapterCaptions();
-assert(caption.textContent.length <= 48);
+assert(caption.textContent.length <= 36);
 assert(caption.textContent.endsWith('...'));
 assert(caption.title.includes('many different concepts'));
 state.videoChapters = [];

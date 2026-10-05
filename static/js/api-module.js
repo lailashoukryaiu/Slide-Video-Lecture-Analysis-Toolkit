@@ -114,14 +114,13 @@ export function renderTranscriptSteps(status, { running = true } = {}) {
     const steps = Array.isArray(status?.steps) ? status.steps : [];
     if (!steps.length) return '';
     const now = Number(status.steps_elapsed);
-    const items = steps.map((step, index) => {
-        const isCurrent = running && index === steps.length - 1;
-        const isFailure = !running && index === steps.length - 1;
+    // Show only the latest step; each new step replaces the previous one.
+    const index = steps.length - 1;
+    const items = [steps[index]].map((step) => {
+        const isCurrent = running;
+        const isFailure = !running;
         const icon = isCurrent ? 'fa-spinner fa-spin' : isFailure ? 'fa-times' : 'fa-check';
-        const next = steps[index + 1];
-        const duration = next
-            ? Number(next.elapsed) - Number(step.elapsed)
-            : Number.isFinite(now) ? now - Number(step.elapsed) : null;
+        const duration = Number.isFinite(now) ? now - Number(step.elapsed) : null;
         const durationText = duration !== null && duration >= 1
             ? ` <span class="transcript-step-duration">${isCurrent ? 'running for ' : 'took '}${formatStepTime(duration)}</span>`
             : '';

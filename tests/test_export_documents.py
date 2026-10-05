@@ -280,7 +280,7 @@ class ExportDocumentTests(unittest.TestCase):
         with zipfile.ZipFile(response.path) as archive:
             webpage = archive.read("index.html").decode()
         self.assertIn(f'title="{title}"', webpage)
-        self.assertLessEqual(len(self.functions["concise_export_title"](title)), 48)
+        self.assertLessEqual(len(self.functions["concise_export_title"](title)), 36)
         self.assertIn('class="chapter-heading"', webpage)
         self.assertIn('class="subpart-heading"', webpage)
         self.assertIn('.export-thumbnail img{width:120px;height:68px', webpage)

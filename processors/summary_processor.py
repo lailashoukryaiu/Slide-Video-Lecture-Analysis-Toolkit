@@ -216,12 +216,12 @@ class SummaryProcessor:
 Based on the following transcript with timestamps, create chapters that outline the main topics.
 For each chapter, provide:
 The timestamp where the chapter starts (in MM:SS format)
-A title
+A concise title of at most 5 words: a specific noun phrase naming the topic, not a sentence, with no trailing punctuation and no filler such as "Introduction to" or "Discussion of"
 Format each chapter exactly like this example:
 [
-{{"timestamp": "00:00", "title": "Introduction to the topic"}},
-{{"timestamp": "02:30", "title": "Key concept explained"}},
-{{"timestamp": "05:45", "title": "Practical examples"}}
+{{"timestamp": "00:00", "title": "Course overview"}},
+{{"timestamp": "02:30", "title": "Gradient descent"}},
+{{"timestamp": "05:45", "title": "Worked examples"}}
 ]
 {full_text}"""
 
@@ -577,7 +577,7 @@ Format each chapter exactly like this example:
             if not text:
                 continue
             if last_start is None or start - last_start >= 180:
-                title = " ".join(text.split()[:8]).strip(".,!?")
+                title = " ".join(text.split()[:6]).strip(".,!?")
                 chapters.append({
                     "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
                     "title": title or f"Chapter {len(chapters) + 1}"
@@ -617,7 +617,7 @@ Format each chapter exactly like this example:
                     ),
                     f"Chapter {index + 1}",
                 )
-                raw_title = " ".join(matching_text.split()[:8]).strip(".,!?") or f"Chapter {index + 1}"
+                raw_title = " ".join(matching_text.split()[:6]).strip(".,!?") or f"Chapter {index + 1}"
 
             normalized.append({
                 "timestamp": f"{total_seconds // 60:02d}:{total_seconds % 60:02d}",

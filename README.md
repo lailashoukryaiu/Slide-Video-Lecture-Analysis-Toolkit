@@ -32,9 +32,9 @@
 - **Summary Language**: Chapter options default to the transcript's language,
   with English, German, French, Spanish and Arabic overrides.
 - **Export Options**: Export Chapters opens the full options dialog immediately:
-  grouping, fixed intervals, timestamps, subparts, filenames and document formats.
+  grouping, fixed intervals, timestamps, sections, filenames and document formats.
   The default structure combines content chapters with meaningful key-point and
-  slide-change subparts, timestamped at each part/subpart. Caption fragments are
+  slide-change sections, numbered 1.1, 1.2 and timestamped at each part/section. Caption fragments are
   reassembled into sentences; internal part boundaries move to the next sentence
   start so no transcript words are lost or duplicated. These times are estimated
   from caption timing, while slide links retain the actual detected slide time.
@@ -48,10 +48,12 @@
   Each chapter also includes a concise summary in the transcript's language.
   The app's **Navigate by** selector chooses content chapters, slide changes,
   or both for Previous/Next navigation and synchronizes with export grouping.
-  Titles appear beneath timeline screenshots and the playing video; HTML
+  Titles appear directly beneath timeline screenshots (with the timestamp
+  beside them) and beneath the playing video; HTML
   exports repeat chapter titles beneath each screenshot and chapter clip.
-  Display titles are capped at 48 characters with full titles on hover. HTML
-  screenshots are small clickable thumbnails beside chapter/subpart headings;
+  New AI chapter titles are short noun phrases (at most five words); display
+  titles are capped at 36 characters with full titles on hover. HTML
+  screenshots are small clickable thumbnails beside chapter/section headings;
   clicking opens the image at full size. Slide labels use numbers only.
   Exports reuse saved full-size slide screenshots at matching timestamps, at
   their saved resolution. New captures are made only for missing images or
@@ -69,13 +71,15 @@
   Narrow screens stack the panels and retain normal page scrolling.
   The interface uses a modern light theme that follows the operating system's
   dark-mode setting automatically, with visible keyboard focus and reduced
-  motion when the system requests it.
-  In HTML, the chapter's subparts and transcript are grouped in indented,
+  motion when the system requests it. The right panel is narrow, and option
+  dialogs and Settings open over it so the video stays visible. Detection
+  buttons stay on the playback toolbar row, becoming icon-only on smaller screens.
+  In HTML, the chapter's sections and transcript are grouped in indented,
   collapsible sections beneath the chapter. Word, PDF, HTML and outline exports
   share this hierarchy. Without configured AI,
   points are explicitly labelled extractive full sentences; configured AI failures
   are reported instead of silently substituting fabricated summaries. Select
-  slide-only subparts to omit AI key-point sections; chapter summaries are still
+  slide-only sections to omit AI key-point sections; chapter summaries are still
   generated when AI is configured. HTML downloads as a ZIP
   containing `index.html` and its required media: extract the complete package and
   open `index.html` locally. TXT/Markdown/JSON transcript files are packaged only
@@ -180,7 +184,9 @@ Chapter exports default to the HTML webpage package. Word, PDF and other
 formats are optional selections in the export dialog.
 
 Exports run in a background job with timestamped steps (clip encoding, images,
-AI summaries, document building, packaging and saving). Saved exports include
+AI summaries, document building, packaging and saving). Export and
+transcription progress show only the current step, replacing the previous one.
+Saved exports include
 an **Open HTML in browser** link and a download link in the Chapters tab.
 HTML pages and their media remain under `static/exports/jobs` across app
 restarts. Keep this directory to retain previous exports. In Colab, files
@@ -192,6 +198,8 @@ Intermediate export files use the operating system's temporary directory,
 outside the saved exports folder, to avoid cloud-sync locks on Windows.
 Temporary-file cleanup retries briefly; persistent cleanup failures are logged
 and shown as warnings in export progress without invalidating saved output.
+Progress-file updates retry when Windows briefly locks them (for example during
+OneDrive sync), so a locked progress file no longer aborts an export.
 
 Create an isolated Conda environment, install the Python requirements, and
 install FFmpeg (including ffprobe) and Tesseract:

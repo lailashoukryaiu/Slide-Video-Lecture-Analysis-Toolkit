@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 _STATE_LOCK = threading.Lock()
+_STATE_RETRY_DELAY = 0.05
 logger = logging.getLogger(__name__)
 
 
@@ -55,13 +56,38 @@ class ExportJobStore:
         directory = self._directory(job_id)
         directory.mkdir(parents=True, exist_ok=True)
         temporary = directory / "state.tmp"
+        target = directory / "state.json"
+        text = json.dumps(state, ensure_ascii=False)
         with _STATE_LOCK:
-            temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(directory / "state.json")
+            # Cloud sync or antivirus can briefly lock state.json on Windows; retry, then write in place.
+            error = None
+            for attempt in range(6):
+                try:
+                    temporary.write_text(text, encoding="utf-8")
+                    temporary.replace(target)
+                    return
+                except OSError as exc:
+                    error = exc
+                    time.sleep(_STATE_RETRY_DELAY * (attempt + 1))
+            try:
+                target.write_text(text, encoding="utf-8")
+                return
+            except OSError as exc:
+                error = exc
+        # A missed progress update must not abort the export; the next update retries.
+        logger.warning("Could not save export progress for %s: %s", job_id, error)
 
     def read(self, job_id):
-        with _STATE_LOCK:
-            state = json.loads((self._directory(job_id) / "state.json").read_text(encoding="utf-8"))
+        path = self._directory(job_id) / "state.json"
+        for attempt in range(6):
+            try:
+                with _STATE_LOCK:
+                    state = json.loads(path.read_text(encoding="utf-8"))
+                break
+            except (PermissionError, json.JSONDecodeError):
+                if attempt == 5:
+                    raise
+                time.sleep(_STATE_RETRY_DELAY * (attempt + 1))
         if state["status"] in {"queued", "running"} and state["instance"] != self.instance:
             state["status"] = "error"
             state["error"] = "Export interrupted by a server restart. Start a new export."

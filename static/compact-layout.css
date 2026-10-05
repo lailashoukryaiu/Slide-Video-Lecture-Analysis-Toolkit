@@ -52,7 +52,7 @@ select,
 }
 
 .main-content {
-    grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 30vw, 420px);
     gap: 10px;
     margin-top: 8px;
     min-height: 0;
@@ -111,10 +111,46 @@ select,
 
 .timeline {
     min-height: 0;
-    max-height: 105px;
+    max-height: 118px;
     padding: 0 0 4px;
     overflow-y: auto;
     overscroll-behavior: contain;
+}
+
+/* Title directly under each screenshot, timestamp beside it. */
+.timeline-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "thumb thumb"
+        "title time";
+    column-gap: 4px;
+    align-items: start;
+}
+
+.timeline-item .timeline-thumbnail {
+    grid-area: thumb;
+}
+
+.timeline-item .chapter-caption {
+    grid-area: title;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.25;
+    text-align: left;
+}
+
+.timeline-item .timeline-timestamp {
+    grid-area: time;
+    width: auto;
+    margin-top: 3px;
+    font-size: 10px;
+    line-height: 1.25;
 }
 
 .content-tabs {
@@ -268,6 +304,104 @@ input:checked + .toggle-slider:before {
 .alert {
     padding: 6px 8px;
     margin: 4px 0;
+}
+
+@media (min-width: 851px) {
+    /* Keep playback, navigation and detection buttons on one row. */
+    .video-controls,
+    .detection-video-controls {
+        flex-wrap: nowrap;
+    }
+
+    .video-controls {
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+    .video-controls > * {
+        flex-shrink: 0;
+    }
+
+    /*
+     * Popups sit over the right panel so the video stays visible.
+     * popup-placement.js keeps the --panel-* variables in sync with the panel.
+     */
+    html .options-dialog {
+        box-sizing: border-box;
+        position: fixed;
+        inset: auto;
+        left: var(--panel-left, calc(100vw - 432px));
+        top: var(--panel-top, 52px);
+        width: var(--panel-width, 420px);
+        max-width: var(--panel-width, 420px);
+        max-height: var(--panel-height, calc(100dvh - 64px));
+        margin: 0;
+    }
+
+    html .options-dialog form {
+        max-height: var(--panel-height, calc(100dvh - 64px));
+        padding: 14px;
+    }
+
+    html .options-dialog::backdrop {
+        background: transparent;
+        backdrop-filter: none;
+    }
+
+    html .modal {
+        background: transparent;
+        backdrop-filter: none;
+        pointer-events: none;
+    }
+
+    html .modal-content {
+        box-sizing: border-box;
+        position: fixed;
+        left: var(--panel-left, calc(100vw - 432px));
+        top: var(--panel-top, 52px);
+        width: var(--panel-width, 420px);
+        max-width: none;
+        max-height: var(--panel-height, calc(100dvh - 64px));
+        padding: 16px;
+        pointer-events: auto;
+    }
+}
+
+@media (min-width: 851px) and (max-width: 1499px) {
+    .video-controls .detection-toggle-btn {
+        font-size: 0;
+        padding: 4px 8px;
+    }
+
+    .video-controls .detection-toggle-btn i {
+        font-size: 13px;
+    }
+}
+
+@media (min-width: 851px) and (max-width: 1199px) {
+    .video-controls > label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .content-tabs .tabs-header {
+        padding-left: 2px;
+        padding-right: 2px;
+    }
+
+    .tabs-header .tab-btn {
+        padding-left: 5px;
+        padding-right: 5px;
+        font-size: 12px;
+    }
+
+    .tabs-header .tab-btn i {
+        display: none;
+    }
 }
 
 @media (max-width: 850px) {

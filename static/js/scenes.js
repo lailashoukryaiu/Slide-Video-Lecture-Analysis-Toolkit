@@ -2474,6 +2474,7 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleBtn.id = 'toggleVideoDetectionsBtn';
         toggleBtn.className = 'btn btn-secondary detection-toggle-btn';
         toggleBtn.innerHTML = '<i class="fas fa-eye"></i> Show Detections';
+        toggleBtn.title = 'Show or hide object detections on the video';
         toggleBtn.onclick = function() {
             const isCurrentlyShown = this.classList.contains('active');
             console.log('Toggle button clicked, current state:', isCurrentlyShown);
@@ -2668,6 +2669,7 @@ export function createVideoDetectionOverlay() {
         toggleBtn.id = 'toggleVideoDetectionsBtn';
         toggleBtn.className = 'btn btn-secondary detection-toggle-btn';
         toggleBtn.innerHTML = '<i class="fas fa-eye"></i> Show Detections';
+        toggleBtn.title = 'Show or hide object detections on the video';
         toggleBtn.onclick = function() {
             const isCurrentlyShown = this.classList.contains('active');
             console.log('Toggle button clicked, current state:', isCurrentlyShown);

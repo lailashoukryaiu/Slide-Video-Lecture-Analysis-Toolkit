@@ -188,7 +188,7 @@ def build_outline_points(transcript, max_points=4):
             sentence = sentence.strip()
             words = re.findall(r"[A-Za-zÀ-ÿ\u0600-\u06ff]{3,}", sentence.lower())
             if sentence and words:
-                title_words = sentence.split()[:8]
+                title_words = sentence.split()[:6]
                 candidates.append({
                     "start": float(item.get("start", 0)),
                     "text": sentence,
@@ -1022,7 +1022,7 @@ def export_slide_start(scene):
     return float(scene.get("time_seconds", parse_chapter_timestamp(scene["timestamp"])))
 
 
-def concise_export_title(title, limit=48):
+def concise_export_title(title, limit=36):
     text = " ".join(str(title).split())
     if len(text) <= limit:
         return text
@@ -1193,8 +1193,8 @@ async def summarize_export_batch(sentences):
         "Summarize this lecture chapter in its original language in one or two concise sentences. "
         "Also select 1 to 4 important key points from the chapter. "
         "Return a JSON object with a summary string and a points array. "
-        "Each point must contain sentence_id (an input id), title (a meaningful specific topic, "
-        "not 'Key point'), and text (a concise complete-sentence summary with terminal punctuation, "
+        "Each point must contain sentence_id (an input id), title (a specific topic noun phrase of at most "
+        "5 words, not a sentence and not 'Key point'), and text (a concise complete-sentence summary with terminal punctuation, "
         "grounded only in this transcript). Do not invent facts. Input:\n"
         + json.dumps(prompt_sentences, ensure_ascii=False)
     )
@@ -1263,7 +1263,7 @@ def build_export_subparts(chapter, sentences, points, scenes, mode):
         ]
         subpart["title"] = (
             subpart["points"][0]["title"] if subpart["points"] else
-            " ".join(subpart["sentences"][0]["text"].split()[:10]).rstrip(".,!?")
+            " ".join(subpart["sentences"][0]["text"].split()[:6]).rstrip(".,!?")
             if subpart["sentences"] else chapter["title"]
         )
     return subparts
@@ -1348,9 +1348,9 @@ def create_combined_chapter_documents(
                 Spacer(1, 0.15 * inch),
             ])
         if pdf_story is not None and pdf_text:
-            for subpart in files.get("subparts", []):
+            for subpart_index, subpart in enumerate(files.get("subparts", []), start=1):
                 pdf_story.append(Paragraph(
-                    html.escape(subpart["title"] + (
+                    html.escape(f"{index + 1}.{subpart_index} " + subpart["title"] + (
                         f" ({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else ""
                     )),
                     styles["Heading2"],
@@ -1390,9 +1390,9 @@ def create_combined_chapter_documents(
             except UnrecognizedImageError:
                 pass
         if word_document and word_text:
-            for subpart in files.get("subparts", []):
+            for subpart_index, subpart in enumerate(files.get("subparts", []), start=1):
                 word_document.add_heading(
-                    subpart["title"] + (
+                    f"{index + 1}.{subpart_index} " + subpart["title"] + (
                         f" ({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else ""
                     ), level=2
                 )
@@ -1838,7 +1838,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         f"{html.escape(concise_export_title(chapter['title']))}</p>",
                         f"<p class=\"subtitle\">Clip starts at {format_chapter_timestamp(chapter['clip_start'])}; "
                         "later clips include up to 1 second of overlap to protect sentence beginnings.</p>",
-                        "<details class=\"chapter-subparts\"><summary>Subparts and transcript</summary>",
+                        "<details class=\"chapter-subparts\"><summary>Sections and transcript</summary>",
                     ])
                     for subpart_index, subpart in enumerate(files["subparts"], start=1):
                         subpart_title = html.escape(concise_export_title(subpart["title"]))
@@ -1847,7 +1847,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                             if timestamp_mode != "part" else ""
                         )
                         webpage_parts.append(
-                            f"<details class=\"subpart\"><summary title=\"{html.escape(subpart['title'], quote=True)}\">Subpart {subpart_index}: "
+                            f"<details class=\"subpart\"><summary title=\"{html.escape(subpart['title'], quote=True)}\">{chapter['index']}.{subpart_index} "
                             f"{subpart_title}{subpart_timestamp}</summary>"
                             "<div class=\"subpart-heading\">"
                         )
@@ -1894,9 +1894,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         )
                         outline_document.add_paragraph(files["point_method"])
                         if files["subparts"]:
-                            for subpart in files["subparts"]:
+                            for subpart_index, subpart in enumerate(files["subparts"], start=1):
                                 outline_document.add_heading(
-                                    f"{subpart['title']} ({format_chapter_timestamp(subpart['start'])})",
+                                    f"{chapter['index']}.{subpart_index} {subpart['title']} "
+                                    f"({format_chapter_timestamp(subpart['start'])})",
                                     level=3,
                                 )
                                 for point in subpart["points"]:
