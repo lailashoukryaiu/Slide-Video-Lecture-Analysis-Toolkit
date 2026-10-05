@@ -226,7 +226,7 @@ Format each chapter exactly like this example:
 {full_text}"""
 
             # dump prompt into a debug file
-            with open('debug.txt', 'w') as f:
+            with open('debug.txt', 'w', encoding='utf-8') as f:
                 f.write(prompt)
             response_text = None
             failures = []
@@ -668,7 +668,7 @@ Format each chapter exactly like this example:
         summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
         if os.path.exists(summary_path):
             try:
-                with open(summary_path, 'r') as f:
+                with open(summary_path, 'r', encoding='utf-8') as f:
                     chapters = json.load(f)
                 if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
                     chapters = [item for sublist in chapters for item in sublist]

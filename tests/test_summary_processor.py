@@ -2,6 +2,9 @@ import asyncio
 import json
 import sys
 import unittest
+import tempfile
+from pathlib import Path
+from unittest import mock
 from types import ModuleType
 from types import SimpleNamespace
 
@@ -258,6 +261,27 @@ class SummaryProviderFallbackTests(unittest.TestCase):
                 ))
                 self.assertTrue(response.content["success"], response.content)
                 self.assertIn(expected, prompts[0])
+
+    def test_unicode_summary_prompt_uses_utf8_on_windows_and_colab(self):
+        processor = self._processor(None, None, None)
+        processor._complete = lambda *args: '[{"timestamp": "00:00", "title": "Introduction"}]'
+        real_open = open
+        with tempfile.TemporaryDirectory() as directory:
+            prompt_path = Path(directory) / "debug.txt"
+
+            def windows_open(filename, mode="r", **kwargs):
+                if filename == "debug.txt":
+                    self.assertEqual(kwargs.get("encoding"), "utf-8")
+                    return real_open(prompt_path, mode, **kwargs)
+                return real_open(filename, mode, **kwargs)
+
+            text = "Arabic: \u0645\u0631\u062d\u0628\u0627; Chinese: \u4f60\u597d; emoji: \U0001f600"
+            with mock.patch("builtins.open", side_effect=windows_open):
+                response = asyncio.run(processor.generate_summary(
+                    [{"start": 0, "text": text}]
+                ))
+            self.assertTrue(response.content["success"], response.content)
+            self.assertIn(text, prompt_path.read_text(encoding="utf-8"))
 
     def test_chain_tries_other_gemini_models_then_groq_before_paid_openai(self):
         processor = self._processor(None, None, None)
