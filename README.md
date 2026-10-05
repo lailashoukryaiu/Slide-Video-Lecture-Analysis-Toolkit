@@ -38,7 +38,7 @@
   reassembled into sentences; internal part boundaries move to the next sentence
   start so no transcript words are lost or duplicated. These times are estimated
   from caption timing, while slide links retain the actual detected slide time.
-  Each exported clip after the first starts up to one second early (clamped
+  By default (option "Start each clip 1 second early"), each exported clip after the first starts up to one second early (clamped
   at the video's beginning), overlapping the previous clip to protect speech
   from small caption-timing errors. Logical chapter/transcript timestamps stay
   unchanged, and slide links account for the clip's earlier start.
@@ -46,6 +46,9 @@
   turn; if neither timing nor punctuation identifies a safe break, the utterance
   remains intact rather than introducing arbitrary mid-sentence cuts.
   Each chapter also includes a concise summary in the transcript's language.
+  The HTML export reads like a course outline: a linked outline at the top, AI-written
+  part and section headings, direct summaries (no "the lecture explains that" filler),
+  "Play from" links that seek the part's video, and collapsible transcripts.
   The app's **Navigate by** selector chooses content chapters, slide changes,
   or both for Previous/Next navigation and synchronizes with export grouping.
   Titles appear directly beneath timeline screenshots (with the timestamp

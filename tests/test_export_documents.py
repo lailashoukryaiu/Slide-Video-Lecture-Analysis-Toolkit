@@ -44,7 +44,7 @@ def load_export_functions():
         "chapter_boundaries_from_topics", "chapter_boundaries_from_scenes", "export_slide_start",
         "export_sentences", "align_export_chapters", "export_key_points", "summarize_export_batch",
         "build_export_subparts", "export_archive_paths", "prepare_export_image",
-        "concise_export_title", "export_thumbnail", "build_slides_pdf",
+        "concise_export_title", "export_thumbnail", "strip_narration", "clean_outline_title", "build_slides_pdf",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
     }
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -172,7 +172,14 @@ class ExportDocumentTests(unittest.TestCase):
             chapters = json.loads(archive.read("chapters.json"))
             self.assertAlmostEqual(chapters[1]["start"], 5.6)
             self.assertAlmostEqual(chapters[1]["clip_start"], 4.6)
-            self.assertIn("1 second of overlap", archive.read("index.html").decode())
+            webpage = archive.read("index.html").decode()
+            self.assertNotIn("overlap", webpage)
+            self.assertNotIn("Clip starts", webpage)
+
+    def test_clip_overlap_can_be_disabled(self):
+        self.run_export(include_webpage=True, clip_overlap=False)
+        clips = [command for command in self.media_commands if command[-1].endswith(".mp4")]
+        self.assertAlmostEqual(float(clips[1][clips[1].index("-ss") + 1]), 5.6)
 
     def test_clip_overlap_is_clamped_at_video_start(self):
         self.functions["TRANSCRIPTS_DIR"].joinpath("lecture.json").write_text(json.dumps([
@@ -197,16 +204,17 @@ class ExportDocumentTests(unittest.TestCase):
             webpage = archive.read("index.html").decode()
             self.assertIn('<h2 title="Neural networks">Part 1: Neural networks</h2>', webpage)
             self.assertGreaterEqual(webpage.count("<h3 "), 3)
-            self.assertIn('<details class="chapter-subparts">', webpage)
-            self.assertIn('<details class="subpart">', webpage)
-            self.assertIn("No AI-generated summary available.", webpage)
+            self.assertIn('<details class="chapter-subparts"', webpage)
+            self.assertIn('<details class="subpart"', webpage)
+            self.assertNotIn("AI-generated", webpage)
+            self.assertNotIn("AI not configured", webpage)
+            self.assertIn('<nav class="outline"', webpage)
+            self.assertIn('href="#part-2"', webpage)
             self.assertRegex(webpage, r'<figcaption title="Neural networks">1: Neural networks</figcaption>')
-            self.assertRegex(webpage, r'</video>\s*<p class="media-caption" title="Neural networks">Neural networks</p>')
             self.assertNotIn("<summary>Key point", webpage)
-            self.assertIn("Extractive key sentences (AI not configured)", webpage)
             self.assertIn("2: 00:00:09", webpage)
             self.assertRegex(webpage, r"<h3[^>]*>[^<]+\(00:00:\d\d\)</h3>")
-            for reference in re.findall(r'(?:src|href)="([^"]+)"', webpage):
+            for reference in re.findall(r'(?:src|href)="([^"#][^"]*)"', webpage):
                 self.assertIn(html.unescape(reference).split("#")[0], names)
             transcript_blocks = re.findall(r"<pre>(.*?)</pre>", webpage, re.DOTALL)
             self.assertEqual(" ".join(html.unescape(block).replace("\n", " ") for block in transcript_blocks),
@@ -383,6 +391,40 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 502)
         self.assertIn("generic", raised.exception.detail)
 
+    def test_narration_fillers_are_removed_and_ai_titles_are_used(self):
+        strip = self.functions["strip_narration"]
+        self.assertEqual(strip("The lecture explains that gradient descent minimizes the loss."),
+                         "Gradient descent minimizes the loss.")
+        self.assertEqual(strip("The speaker points out that grades are weighted."), "Grades are weighted.")
+        self.assertEqual(strip("In this section, the instructor discusses regularization methods for deep networks."),
+                         "Regularization methods for deep networks.")
+        self.assertEqual(strip("Validation measures generalization."), "Validation measures generalization.")
+        self.assertEqual(self.functions["clean_outline_title"]("Navigating to assignments and ..."),
+                         "Navigating to assignments and")
+        processor = self.functions["summary_processor"]
+        processor._provider_chain = lambda: [("gemini", "test-model")]
+        prompts = []
+
+        def complete(provider, model, prompt, temperature):
+            prompts.append(prompt)
+            return json.dumps({
+                "title": "Learning From Examples",
+                "summary": "The lecture explains that networks learn from examples.",
+                "points": [{"sentence_id": 0, "title": "Learning", "text": "The speaker notes that data matters."}],
+                "section_titles": {"2": "Validation Diagram"},
+            })
+
+        processor._complete = complete
+        response = self.run_export(include_webpage=True)
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+        self.assertIn("Never mention the lecture, speaker", prompts[0])
+        self.assertIn("Part 1: Learning From Examples</h2>", webpage)
+        self.assertIn("Networks learn from examples.", webpage)
+        self.assertIn("Data matters.", webpage)
+        self.assertNotIn("The lecture explains", webpage)
+        self.assertIn("Validation Diagram", webpage)
+
     def test_long_chapters_keep_bounded_batches_and_short_combined_summary(self):
         processor = self.functions["summary_processor"]
         processor._provider_chain = lambda: [("groq", "test-model")]
@@ -431,7 +473,7 @@ class ExportDocumentTests(unittest.TestCase):
             document = Document(BytesIO(archive.read("chapter_document.docx")))
         self.assertEqual(len(calls), 2)
         self.assertEqual(webpage.count("This chapter teaches neural network fundamentals."), 2)
-        self.assertEqual(webpage.count('<details class="chapter-subparts">'), 2)
+        self.assertEqual(webpage.count('<details class="chapter-subparts"'), 2)
         document_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
         self.assertEqual(
             document_text.count(

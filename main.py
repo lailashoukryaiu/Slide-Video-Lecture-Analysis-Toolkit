@@ -1193,7 +1193,38 @@ def align_export_chapters(chapters, sentences):
     return result
 
 
-async def export_key_points(sentences):
+def strip_narration(text):
+    """Turn 'The lecture explains that X' into the direct statement 'X'."""
+    narration = re.compile(
+        r"^\s*(?:(?:in|throughout)\s+this\s+(?:part|chapter|section|segment|lecture|video|session|lesson)\s*,?\s*)?"
+        r"(?:(?:the|this|our)\s+)?(?:lecture|lecturer|speaker|instructor|professor|presenter|teacher|"
+        r"video|chapter|section|segment|session|lesson|course|talk|author|narrator|host)\s+"
+        r"(?:also\s+|then\s+|further\s+|briefly\s+|first\s+|now\s+)?"
+        r"(?:explains|points\s+out|notes|mentions|discusses|describes|says|states|emphasi[sz]es|highlights|"
+        r"introduces|shows|demonstrates|covers|talks\s+about|stresses|reminds\s+(?:students|learners|the\s+audience|viewers)|"
+        r"tells\s+(?:students|learners|the\s+audience|viewers)|clarifies|outlines|presents|reviews|walks\s+through|"
+        r"illustrates|argues|suggests|notes|addresses|explores|focuses\s+on|begins\s+(?:by|with)|concludes\s+(?:by|with)|"
+        r"goes\s+over|is\s+about|deals\s+with)\s*(?:that\s+)?",
+        re.IGNORECASE,
+    )
+    text = " ".join(str(text or "").split())
+    stripped = narration.sub("", text, count=1)
+    if stripped == text or len(stripped.split()) < 2:
+        return text
+    return stripped[0].upper() + stripped[1:]
+
+
+def clean_outline_title(title, limit=60):
+    title = " ".join(str(title or "").split()).strip(" .,:;-–—\"'")
+    title = re.sub(r"(?:\.\.\.|…)$", "", title).strip()
+    if not title or len(title) > limit or title.lower() in {"key point", "important point", "topic", "summary"}:
+        return ""
+    return title
+
+
+async def export_key_points(sentences, section_starts=None, extras=None):
+    """Return (points, method, summary); chapter/section titles go into extras."""
+    extras = extras if extras is not None else {}
     batches, batch, characters = [], [], 0
     for sentence in sentences:
         if batch and characters + len(sentence["text"]) > 10000:
@@ -1204,22 +1235,27 @@ async def export_key_points(sentences):
     if batch:
         batches.append(batch)
     if len(batches) <= 1:
-        return await summarize_export_batch(sentences)
+        return await summarize_export_batch(sentences, section_starts, extras)
     points, summaries, source = [], [], ""
+    section_titles = {}
     for batch in batches:
-        batch_points, source, summary = await summarize_export_batch(batch)
+        batch_extras = {}
+        batch_points, source, summary = await summarize_export_batch(batch, section_starts, batch_extras)
         points.extend(batch_points)
+        section_titles.update(batch_extras.get("section_titles", {}))
         if summary:
             summaries.append({"start": batch[0]["start"], "text": summary})
     if summaries:
-        _, _, summary = await export_key_points(summaries)
+        _, _, summary = await export_key_points(summaries, None, extras)
     else:
         summary = None
+    extras["section_titles"] = section_titles
     return sorted(points, key=lambda point: point["start"]), source, summary
 
 
-async def summarize_export_batch(sentences):
-    """Generate a chapter summary and key points in one provider request."""
+async def summarize_export_batch(sentences, section_starts=None, extras=None):
+    """Generate a chapter title, summary, key points and section titles in one request."""
+    extras = extras if extras is not None else {}
     if not sentences:
         return [], "No spoken content", None
     summary_processor._refresh_clients()
@@ -1235,13 +1271,30 @@ async def summarize_export_batch(sentences):
         {"id": index, "text": sentence["text"]}
         for index, sentence in enumerate(sentences)
     ]
+    section_ids = sorted({
+        next((index for index, sentence in enumerate(sentences) if sentence["start"] >= start), len(sentences) - 1)
+        for start in (section_starts or [])
+        if sentences[0]["start"] <= start <= sentences[-1]["start"]
+    })
+    section_request = (
+        " Also return section_titles: an object mapping each of these sentence ids "
+        f"{json.dumps(section_ids)} (as strings) to a heading of 2 to 6 words for the section that starts there."
+        if section_ids else ""
+    )
     prompt = (
-        "Summarize this lecture chapter in its original language in one or two concise sentences. "
-        "Also select 1 to 4 important key points from the chapter. "
-        "Return a JSON object with a summary string and a points array. "
+        "You are writing a course outline that helps learners study this lecture chapter. "
+        "Write everything in the transcript's original language. Return a JSON object with: "
+        "title (a clear chapter heading of 2 to 6 words, a specific topic noun phrase in title case, "
+        "not a sentence, no trailing punctuation or ellipsis); "
+        "summary (one or two concise sentences stating what the learner will learn); "
+        "points (1 to 4 important key points). "
         "Each point must contain sentence_id (an input id), title (a specific topic noun phrase of at most "
-        "5 words, not a sentence and not 'Key point'), and text (a concise complete-sentence summary with terminal punctuation, "
-        "grounded only in this transcript). Do not invent facts. Input:\n"
+        "5 words, not a sentence and not 'Key point'), and text (a concise complete sentence with terminal "
+        "punctuation, grounded only in this transcript)."
+        + section_request
+        + " State the content directly. Never mention the lecture, speaker, instructor, video or chapter: "
+        "write 'Gradient descent minimizes the loss.' instead of 'The lecture explains that gradient descent "
+        "minimizes the loss.' or 'The speaker points out that...'. Do not invent facts. Input:\n"
         + json.dumps(prompt_sentences, ensure_ascii=False)
     )
     for provider, model in chain:
@@ -1253,7 +1306,7 @@ async def summarize_export_batch(sentences):
             data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()))
             if not isinstance(data.get("summary"), str):
                 raise ValueError("AI returned an invalid chapter summary")
-            summary = " ".join(data["summary"].split()).strip()
+            summary = strip_narration(data["summary"])
             if not summary:
                 raise ValueError("AI returned no chapter summary")
             validated = []
@@ -1267,9 +1320,26 @@ async def summarize_export_batch(sentences):
                     raise ValueError("AI returned generic key-point titles")
                 if not re.search(r'[.!?。！？]["\'”’)\]]*$', text):
                     raise ValueError("AI returned an incomplete key-point sentence")
-                validated.append({"start": sentences[sentence_id]["start"], "title": title, "text": text})
+                validated.append({
+                    "start": sentences[sentence_id]["start"], "title": title, "text": strip_narration(text),
+                })
             if not validated:
                 raise ValueError("AI returned no key points")
+            chapter_title = clean_outline_title(data.get("title"))
+            if chapter_title:
+                extras["title"] = chapter_title
+            section_titles = {}
+            raw_sections = data.get("section_titles")
+            if isinstance(raw_sections, dict):
+                for key, value in raw_sections.items():
+                    try:
+                        sentence_id = int(key)
+                    except (TypeError, ValueError):
+                        continue
+                    heading = clean_outline_title(value)
+                    if sentence_id in allowed and heading:
+                        section_titles[sentences[sentence_id]["start"]] = heading
+            extras["section_titles"] = section_titles
             return (
                 sorted(validated, key=lambda point: point["start"]),
                 "AI-summarized key points",
@@ -1283,7 +1353,8 @@ async def summarize_export_batch(sentences):
     )
 
 
-def build_export_subparts(chapter, sentences, points, scenes, mode):
+def build_export_subparts(chapter, sentences, points, scenes, mode, section_titles=None):
+    section_titles = section_titles or {}
     boundaries = {}
     for kind, entries in (
         ("point", points if mode in {"points", "both"} else []),
@@ -1309,8 +1380,9 @@ def build_export_subparts(chapter, sentences, points, scenes, mode):
         ]
         subpart["title"] = (
             subpart["points"][0]["title"] if subpart["points"] else
-            " ".join(subpart["sentences"][0]["text"].split()[:6]).rstrip(".,!?")
-            if subpart["sentences"] else chapter["title"]
+            section_titles.get(subpart["start"])
+            or (" ".join(subpart["sentences"][0]["text"].split()[:6]).rstrip(".,!?")
+                if subpart["sentences"] else chapter["title"])
         )
     return subparts
 
@@ -1381,10 +1453,9 @@ def create_combined_chapter_documents(
             Paragraph(f"Starts at {timestamp}", styles["Normal"]),
             Spacer(1, 0.15 * inch),
             ])
-            if pdf_text:
-                summary_text = chapter_summary or "No AI summary available."
+            if pdf_text and chapter_summary:
                 pdf_story.append(Paragraph(
-                    f"<b>Summary:</b> {html.escape(summary_text)}",
+                    f"<b>Summary:</b> {html.escape(chapter_summary)}",
                     styles["BodyText"],
                 ))
                 pdf_story.append(Spacer(1, 0.1 * inch))
@@ -1422,14 +1493,8 @@ def create_combined_chapter_documents(
         if word_document:
             word_document.add_heading(heading, level=1)
             word_document.add_paragraph(f"Starts at {timestamp}")
-            if word_text:
-                word_document.add_paragraph(
-                    f"Summary: {chapter_summary or 'No AI summary available.'}"
-                )
-            if files.get("point_method"):
-                word_document.add_paragraph(files["point_method"], style="Caption")
-        if pdf_story is not None and files.get("point_method"):
-            pdf_story.append(Paragraph(html.escape(files["point_method"]), styles["Italic"]))
+            if word_text and chapter_summary:
+                word_document.add_paragraph(f"Summary: {chapter_summary}")
         if word_document and word_images and image_path is not None:
             try:
                 word_document.add_picture(str(image_path), width=Inches(6.5))
@@ -1712,9 +1777,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             chaptered_lines = [f"# {document_title}", ""]
             chapter_files = []
             image_cache = {}
+            overlap_seconds = 1.0 if options.get("clip_overlap", True) else 0.0
             for chapter in chapter_data:
                 number = chapter["index"]
-                chapter["clip_start"] = max(0.0, chapter["start"] - (1.0 if number > 1 else 0.0))
+                chapter["clip_start"] = max(0.0, chapter["start"] - (overlap_seconds if number > 1 else 0.0))
                 step(f"Part {number}/{len(chapter_data)}: preparing {chapter['title']}")
                 safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", chapter["title"]).strip("_") or f"chapter_{number}"
                 base_name = f"{number:02d}_{safe_title}"
@@ -1790,14 +1856,24 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
                 ))
                 if needs_structure:
-                    step(f"Part {number}/{len(chapter_data)}: generating summary and transcript key points")
-                    points, point_method, chapter["summary"] = await export_key_points(chapter_transcript)
+                    step(f"Part {number}/{len(chapter_data)}: generating title, summary and key points")
+                    chapter_slides = [
+                        export_slide_start(scene) for scene in files["slide_subparts"]
+                    ] if subpart_mode in {"slides", "both"} else []
+                    ai_extras = {}
+                    points, point_method, chapter["summary"] = await export_key_points(
+                        chapter_transcript, [chapter["start"], *chapter_slides], ai_extras,
+                    )
+                    if ai_extras.get("title"):
+                        chapter["original_title"] = chapter["title"]
+                        chapter["title"] = ai_extras["title"]
                     if subpart_mode in {"points", "both"}:
                         files["outline_points"], files["point_method"] = points, point_method
                     else:
                         files["point_method"] = "Slide-based sections"
                     files["subparts"] = build_export_subparts(
-                        chapter, chapter_transcript, files["outline_points"], scene_chapters, subpart_mode
+                        chapter, chapter_transcript, files["outline_points"], scene_chapters, subpart_mode,
+                        ai_extras.get("section_titles"),
                     )
                     for subpart in files["subparts"]:
                         subpart["transcript"] = "\n".join(
@@ -1841,84 +1917,128 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             )
             if export_flags["include_webpage"] or export_flags["include_scorm"]:
                 step("Building HTML webpage")
+                show_section_times = timestamp_mode != "part"
+
+                def seek_link(clip_index, clip_start, seconds, label, css_class="seek"):
+                    offset = max(0.0, seconds - clip_start)
+                    clip = html.escape(chapter_files[clip_index - 1]["clip"].name, quote=True)
+                    return (
+                        f"<a class=\"{css_class}\" href=\"{clip}#t={offset:.3f}\" "
+                        f"data-video=\"video-{clip_index}\" data-t=\"{offset:.3f}\">{label}</a>"
+                    )
+
                 webpage_parts = [
                     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
                     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
                     f"<title>{html.escape(document_title)}</title>",
-                    "<style>body{font-family:Arial,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}"
-                    "section{border-top:1px solid #ccc;padding:2rem 0}img,video{max-width:100%;display:block;margin:1rem 0}"
-                    "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}"
-                    ".chapter-summary{font-size:1.05rem;line-height:1.5}"
-                    "figure{margin:1rem 0}figcaption,.media-caption{font-weight:bold;margin:.5rem 0 1.5rem}"
-                    ".chapter-heading,.subpart-heading{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}"
+                    "<style>:root{--brand:#4f46e5;--text:#1f2330;--muted:#5d6475;--line:#e3e6ee;--soft:#f5f6fb}"
+                    "*{box-sizing:border-box}body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;"
+                    "max-width:1000px;margin:0 auto;padding:2rem 1rem 4rem;color:var(--text);line-height:1.55}"
+                    "h1{font-size:1.9rem;margin:0 0 .25rem}h2{font-size:1.35rem;margin:0}h3{font-size:1rem;margin:0;display:inline}"
+                    ".subtitle{color:var(--muted);margin:0 0 1.5rem}"
+                    ".outline{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:1rem 1.25rem;margin:1.5rem 0 2rem}"
+                    ".outline h2{font-size:1.05rem;margin-bottom:.5rem}.outline ol{margin:0;padding-left:1.4rem}"
+                    ".outline li{margin:.2rem 0}.outline ol ol{list-style:none;padding-left:1rem;font-size:.92rem}"
+                    ".outline a{color:var(--text);text-decoration:none}.outline a:hover{color:var(--brand);text-decoration:underline}"
+                    ".time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.85em;white-space:nowrap}"
+                    "section.chapter{border-top:1px solid var(--line);padding:2rem 0;scroll-margin-top:1rem}"
+                    "img,video{max-width:100%;display:block}video{width:100%;border-radius:10px;background:#000;margin:1rem 0}"
+                    ".chapter-summary{font-size:1.05rem;margin:.75rem 0}"
+                    "figure{margin:0}.chapter-heading,.subpart-heading{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}"
                     ".export-thumbnail{margin:.5rem 0;width:120px;flex-shrink:0}"
-                    ".export-thumbnail img{width:120px;height:68px;object-fit:contain;margin:0;cursor:zoom-in}"
-                    ".export-thumbnail figcaption{font-size:.8rem;overflow-wrap:anywhere;margin:.3rem 0}"
-                    ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid #ddd}"
-                    ".subpart{margin-left:1rem;padding:.5rem 0}.subpart>summary{font-weight:bold}</style></head><body>",
+                    ".export-thumbnail img{width:120px;height:68px;object-fit:contain;margin:0;cursor:zoom-in;border-radius:6px;border:1px solid var(--line)}"
+                    ".export-thumbnail figcaption{font-size:.78rem;color:var(--muted);overflow-wrap:anywhere;margin:.25rem 0}"
+                    ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid var(--line)}"
+                    ".chapter-subparts>summary{font-weight:600;cursor:pointer;color:var(--brand)}"
+                    ".subpart{margin:.35rem 0 .35rem 1rem;padding:.35rem 0}.subpart>summary{cursor:pointer}"
+                    ".subpart ul{margin:.5rem 0}.seek{color:var(--brand);text-decoration:none;font-size:.9rem;margin-right:.75rem}"
+                    ".seek:hover{text-decoration:underline}.transcript>summary{cursor:pointer;color:var(--muted);font-size:.9rem}"
+                    "pre{white-space:pre-wrap;font-family:inherit;background:var(--soft);padding:.75rem 1rem;border-radius:8px;margin:.5rem 0}"
+                    "@media print{details{display:block}video{display:none}}</style></head><body>",
                     f"<h1>{html.escape(document_title)}</h1>",
                 ]
                 if export_flags["include_scorm"]:
                     webpage_parts.insert(1, "<script src=\"scorm_api.js\"></script>")
                 if document_subtitle:
                     webpage_parts.append(f"<p class=\"subtitle\">{html.escape(document_subtitle)}</p>")
+                outline = ["<nav class=\"outline\" aria-label=\"Course outline\"><h2>Course outline</h2><ol>"]
+                for chapter, files in zip(chapter_data, chapter_files):
+                    outline.append(
+                        f"<li><a href=\"#part-{chapter['index']}\">{html.escape(chapter['title'])}</a> "
+                        f"<span class=\"time\">{format_chapter_timestamp(chapter['start'])}</span>"
+                    )
+                    if len(files.get("subparts", [])) > 1:
+                        outline.append("<ol>" + "".join(
+                            f"<li><a href=\"#part-{chapter['index']}-{subpart_index}\">"
+                            f"{chapter['index']}.{subpart_index} {html.escape(subpart['title'])}</a></li>"
+                            for subpart_index, subpart in enumerate(files["subparts"], start=1)
+                        ) + "</ol>")
+                    outline.append("</li>")
+                outline.append("</ol></nav>")
+                webpage_parts.extend(outline)
                 for chapter, files in zip(chapter_data, chapter_files):
                     image_name = files["image"].name
                     clip_name = files["clip"].name
                     summary = chapter.get("summary")
-                    summary_text = (
-                        html.escape(summary) if summary else
-                        "No AI-generated summary available. "
-                        + html.escape(files["point_method"])
-                    )
                     webpage_parts.extend([
-                        "<section class=\"chapter\"><div class=\"chapter-heading\">",
+                        f"<section class=\"chapter\" id=\"part-{chapter['index']}\"><div class=\"chapter-heading\">",
                         export_thumbnail(image_name, chapter["title"], f"{chapter['index']}: "),
-                        f"<h2 title=\"{html.escape(chapter['title'], quote=True)}\">Part {chapter['index']}: "
-                        f"{html.escape(concise_export_title(chapter['title']))}</h2></div>",
-                        f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
-                        f"<p class=\"chapter-summary\"><strong>Summary:</strong> {summary_text}</p>",
-                        f"<p class=\"subtitle\">{html.escape(files['point_method'])}</p>",
-                        f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
-                        f"<p class=\"media-caption\" title=\"{html.escape(chapter['title'], quote=True)}\">"
-                        f"{html.escape(concise_export_title(chapter['title']))}</p>",
-                        f"<p class=\"subtitle\">Clip starts at {format_chapter_timestamp(chapter['clip_start'])}; "
-                        "later clips include up to 1 second of overlap to protect sentence beginnings.</p>",
-                        "<details class=\"chapter-subparts\"><summary>Sections and transcript</summary>",
+                        f"<div><h2 title=\"{html.escape(chapter['title'], quote=True)}\">Part {chapter['index']}: "
+                        f"{html.escape(chapter['title'])}</h2>"
+                        f"<span class=\"time\">{format_chapter_timestamp(chapter['start'])}</span></div></div>",
+                    ])
+                    if summary:
+                        webpage_parts.append(f"<p class=\"chapter-summary\">{html.escape(summary)}</p>")
+                    webpage_parts.extend([
+                        f"<video id=\"video-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
+                        "<details class=\"chapter-subparts\" open><summary>Sections</summary>",
                     ])
                     for subpart_index, subpart in enumerate(files["subparts"], start=1):
-                        subpart_title = html.escape(concise_export_title(subpart["title"]))
                         subpart_timestamp = (
                             f" ({format_chapter_timestamp(subpart['start'])})"
-                            if timestamp_mode != "part" else ""
+                            if show_section_times else ""
                         )
                         webpage_parts.append(
-                            f"<details class=\"subpart\"><summary title=\"{html.escape(subpart['title'], quote=True)}\">{chapter['index']}.{subpart_index} "
-                            f"{subpart_title}{subpart_timestamp}</summary>"
-                            "<div class=\"subpart-heading\">"
+                            f"<details class=\"subpart\" id=\"part-{chapter['index']}-{subpart_index}\">"
+                            f"<summary><h3 title=\"{html.escape(subpart['title'], quote=True)}\">"
+                            f"{chapter['index']}.{subpart_index} {html.escape(subpart['title'])}"
+                            f"{subpart_timestamp}</h3></summary>"
                         )
+                        if subpart["points"]:
+                            webpage_parts.append("<ul>" + "".join(
+                                f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]
+                            ) + "</ul>")
+                        webpage_parts.append("<div class=\"subpart-heading\">")
                         for scene in subpart["slides"]:
                             webpage_parts.append(export_thumbnail(
                                 scene["image"].name, subpart["title"], f"{scene['image_index'] + 1}: ",
                             ))
                         if not subpart["slides"]:
                             webpage_parts.append(export_thumbnail(image_name, subpart["title"]))
-                        webpage_parts.append(
-                            f"<h3 title=\"{html.escape(subpart['title'], quote=True)}\">"
-                            f"{subpart_title}{subpart_timestamp}</h3></div>"
-                        )
+                        webpage_parts.append("</div><p>")
+                        webpage_parts.append(seek_link(
+                            chapter["index"], chapter["clip_start"], subpart["start"],
+                            f"&#9654; Play from {format_chapter_timestamp(subpart['start'])}",
+                        ))
                         for scene in subpart["slides"]:
                             slide_start = export_slide_start(scene)
-                            offset = max(0, slide_start - chapter["clip_start"])
-                            webpage_parts.extend([
-                                f"<a href=\"{html.escape(clip_name)}#t={offset:.3f}\">"
-                                f"{scene['image_index'] + 1}: {format_chapter_timestamp(slide_start)}</a>",
-                            ])
-                        webpage_parts.append("<ul>" + "".join(
-                            f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]
-                        ) + "</ul>")
-                        webpage_parts.append(f"<pre>{html.escape(subpart['transcript'])}</pre></details>")
+                            webpage_parts.append(seek_link(
+                                chapter["index"], chapter["clip_start"], slide_start,
+                                f"Slide {scene['image_index'] + 1}: {format_chapter_timestamp(slide_start)}",
+                            ))
+                        webpage_parts.append("</p>")
+                        webpage_parts.append(
+                            "<details class=\"transcript\"><summary>Transcript</summary>"
+                            f"<pre>{html.escape(subpart['transcript'])}</pre></details></details>"
+                        )
                     webpage_parts.append("</details></section>")
+                webpage_parts.append(
+                    "<script>document.addEventListener('click',function(event){"
+                    "var link=event.target.closest('a[data-video]');if(!link)return;"
+                    "var video=document.getElementById(link.dataset.video);if(!video)return;"
+                    "event.preventDefault();video.currentTime=parseFloat(link.dataset.t)||0;"
+                    "video.scrollIntoView({behavior:'smooth',block:'center'});video.play();});</script>"
+                )
                 webpage_parts.append("</body></html>")
                 (temp_dir / "index.html").write_text("\n".join(webpage_parts), encoding="utf-8")
             if export_flags["include_outline"]:
@@ -1934,11 +2054,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         outline_document.add_paragraph(
                             f"Timestamp: {format_chapter_timestamp(chapter['start'])}"
                         )
-                        outline_document.add_paragraph(
-                            "Key points",
-                            style="Intense Quote",
-                        )
-                        outline_document.add_paragraph(files["point_method"])
+                        if chapter.get("summary"):
+                            outline_document.add_paragraph(chapter["summary"], style="Intense Quote")
                         if files["subparts"]:
                             for subpart_index, subpart in enumerate(files["subparts"], start=1):
                                 outline_document.add_heading(

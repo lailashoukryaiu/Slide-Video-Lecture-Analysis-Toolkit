@@ -101,4 +101,12 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
         console.error('Video selector initialization failed:', error);
     }
+    // Size the player to the real video shape so no black bars surround it.
+    const player = document.getElementById('videoPlayer');
+    player?.addEventListener('loadedmetadata', () => {
+        if (player.videoWidth && player.videoHeight) {
+            player.closest('.video-container')?.style.setProperty(
+                '--video-aspect', String(player.videoWidth / player.videoHeight));
+        }
+    });
 });

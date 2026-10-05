@@ -52,7 +52,7 @@ select,
 }
 
 .main-content {
-    grid-template-columns: minmax(0, 1fr) clamp(300px, 30vw, 420px);
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 400px);
     gap: 10px;
     margin-top: 8px;
     min-height: 0;
@@ -60,6 +60,7 @@ select,
 
 .video-container {
     --video-height: clamp(180px, calc(100dvh - 250px), 760px);
+    --video-aspect: 1.7778;
     min-width: 0;
     padding: 8px;
     gap: 4px;
@@ -80,6 +81,7 @@ select,
 #videoPlayer {
     min-height: 0;
     max-height: var(--video-height);
+    aspect-ratio: var(--video-aspect);
 }
 
 .chapter-caption {
@@ -322,7 +324,7 @@ input:checked + .toggle-slider:before {
      */
     .video-container {
         display: grid;
-        grid-template-columns: minmax(0, calc(var(--video-height) * 16 / 9)) minmax(230px, 1fr);
+        grid-template-columns: minmax(0, calc(var(--video-height) * var(--video-aspect))) minmax(200px, 1fr);
         grid-template-rows: minmax(0, 1fr);
         align-items: stretch;
         column-gap: 8px;

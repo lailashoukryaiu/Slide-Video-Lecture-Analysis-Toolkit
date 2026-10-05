@@ -218,6 +218,7 @@ export async function exportChapters() {
             chapter_grouping: elements.chapterGrouping?.value || 'combined',
             timestamp_mode: elements.timestampMode?.value || 'subpart',
             subpart_mode: elements.subpartMode?.value || 'both',
+            clip_overlap: document.getElementById('exportClipOverlap')?.checked ?? true,
             document_title: elements.exportTitle?.value.trim() || '',
             export_filename: elements.exportFilename?.value.trim() || '',
             transcript_language: state.currentTranslationLanguage || '',
