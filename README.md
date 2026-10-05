@@ -31,6 +31,9 @@
   Groq, then Gemini and OpenAI; explicit model choices remain available.
 - **Summary Language**: Chapter options default to the transcript's language,
   with English, German, French, Spanish and Arabic overrides.
+- **Saved Transcript Versions**: Every generated or uploaded transcript and every
+  translation is kept. Pick one from the list below the Transcript options button to use it again
+  (summaries and exports follow the chosen version), or delete versions you no longer need.
 - **Resizable Layout**: Drag the handles between the video, visual timeline and side
   panel to resize them; sizes are remembered and a double-click resets them.
 - **Export Options**: Export Chapters opens the full options dialog immediately:

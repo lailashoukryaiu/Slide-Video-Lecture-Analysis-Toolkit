@@ -45,6 +45,7 @@ from cloud_transcribe import cloud_provider_status, recommended_transcription_mo
 from transcribe import get_whisper_device_config
 from processors.embedding_processor import EmbeddingProcessor
 from processors.summary_processor import SummaryProcessor
+from processors import transcript_versions
 
 load_dotenv()
 
@@ -217,8 +218,10 @@ async def upload_transcript(video_id: str, transcript: UploadFile = File(...)):
     transcript_data = parse_uploaded_transcript(text, Path(transcript.filename or "").suffix.lower())
     if not transcript_data:
         raise HTTPException(status_code=400, detail="No transcript segments found")
+    transcript_versions.sync_existing(video_id)
     output_path = TRANSCRIPTS_DIR / f"{video_id}_uploaded.json"
     output_path.write_text(json.dumps(transcript_data, ensure_ascii=False), encoding="utf-8")
+    transcript_versions.save_version(video_id, "transcript", transcript_data, source="uploaded")
     return {"success": True, "transcript": transcript_data, "source_language": detect_transcript_language(transcript_data)}
 
 translation_progress = {}
@@ -315,6 +318,7 @@ async def translate_transcript(video_id: str, request: Request):
     }
     translated = translation["transcript"][:len(transcript)]
     translated_title_segments = translation["transcript"][len(transcript):]
+    transcript_versions.sync_existing(video_id)
     (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
         json.dumps(translated, ensure_ascii=False), encoding="utf-8"
     )
@@ -335,6 +339,11 @@ async def translate_transcript(video_id: str, request: Request):
         (SUMMARIES_DIR / f"{video_id}_summary_{target}.json").write_text(
             json.dumps(translated_chapters, ensure_ascii=False), encoding="utf-8"
         )
+    transcript_versions.save_version(
+        video_id, "translation", translated, language=target,
+        model=translation["model"], chapters=translated_chapters,
+        based_on=transcript_versions.find_transcript_label(video_id, transcript),
+    )
     return {
         "success": True,
         "transcript": translated,
@@ -345,6 +354,34 @@ async def translate_transcript(video_id: str, request: Request):
         "batch_count": translation["batch_count"],
         "elapsed_seconds": translation["elapsed_seconds"],
     }
+
+@app.get("/transcript_versions/{video_id}")
+async def get_transcript_versions(video_id: str):
+    try:
+        return {"versions": await asyncio.to_thread(transcript_versions.list_versions, video_id)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/transcript_versions/{video_id}/{version_id}/activate")
+async def activate_transcript_version(video_id: str, version_id: str):
+    try:
+        return await asyncio.to_thread(transcript_versions.activate_version, video_id, version_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Transcript version not found") from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete("/transcript_versions/{video_id}/{version_id}")
+async def delete_transcript_version(video_id: str, version_id: str):
+    try:
+        await asyncio.to_thread(transcript_versions.delete_version, video_id, version_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Transcript version not found") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"success": True}
 
 # Create thread pool for background tasks
 executor = ThreadPoolExecutor(max_workers=2)

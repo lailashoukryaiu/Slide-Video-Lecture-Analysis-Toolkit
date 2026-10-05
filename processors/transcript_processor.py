@@ -21,6 +21,7 @@ from cloud_transcribe import (
     transcribe_audio_cloud,
 )
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR
+from processors import transcript_versions
 from audio_decoder import decode_audio_samples
 
 TRANSCRIPTION_MODELS = tuple(WHISPER_MODELS) + tuple(CLOUD_TRANSCRIPTION_MODELS)
@@ -471,6 +472,10 @@ class TranscriptProcessor:
             log_transcript_step(video_id, message)
 
         try:
+            try:
+                transcript_versions.sync_existing(video_id)
+            except Exception as error:
+                print(f"Could not store the previous transcript version: {error}")
             transcript = [dict(item) for item in original_transcript]
             if transcript:
                 step("Reusing the existing transcript; only speakers will be identified")
@@ -574,6 +579,10 @@ class TranscriptProcessor:
                     "speaker_names": speaker_names,
                     "generated_at": generated_at,
                 }, f)
+            try:
+                transcript_versions.sync_existing(video_id)
+            except Exception as error:
+                print(f"Could not store the transcript version: {error}")
 
             progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             heartbeat_stop.set()

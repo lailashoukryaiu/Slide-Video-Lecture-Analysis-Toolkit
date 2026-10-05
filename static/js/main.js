@@ -11,6 +11,7 @@ import { setupTabs, showError, showLoading, showNotification, openSettingsModal,
 import { processVideo, checkYoloStatus, processVideoUpload, loadUploadedVideo, detectScenes, regenerateTranscript, uploadTranscriptFile, translateTranscript, updateTranslationModelStatus, updateTranscriptionModelOptions, updateTranscriptModelHelp } from './api-module.js';
 import { elements } from './elements.js';
 import { initInteractiveLayer } from './interactive-layer.js';
+import { initTranscriptVersions } from './transcript-versions.js';
 
 // Global state
 export const state = {
@@ -38,6 +39,7 @@ export const state = {
     currentSlideSearchIndex: -1,
     currentTranscriptSource: 'youtube',  // Default transcript source
     currentTranslationLanguage: null,
+    currentTranscriptVersionId: null,
     interactiveLayerActive: false,
     showTranscriptHighlighting: true,  // Default to showing transcript highlighting
     // Transcript-OCR relationship data
@@ -340,6 +342,7 @@ function initApp() {
         void exportChapters();
     });
     document.addEventListener('transcriptUpdated', () => void refreshSavedExports());
+    initTranscriptVersions();
     document.addEventListener('chaptersUpdated', () => void refreshSavedExports());
     bind(document.getElementById('refreshSavedExportsBtn'), 'click', refreshSavedExports);
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);

@@ -12,6 +12,7 @@
         root.style.setProperty('--panel-left', `${Math.round(rect.left)}px`);
         root.style.setProperty('--panel-top', `${Math.round(top)}px`);
         root.style.setProperty('--panel-width', `${Math.round(rect.width)}px`);
+        root.style.setProperty('--panel-right', `${Math.round(rect.right)}px`);
         root.style.setProperty('--panel-height', `${Math.max(240, Math.round(bottom - top))}px`);
     }
 

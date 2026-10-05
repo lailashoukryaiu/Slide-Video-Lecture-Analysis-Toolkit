@@ -11,7 +11,7 @@
         panelSplitter: {
             variable: '--side-panel-width', min: 240, max: 640,
             target: () => document.querySelector('.main-content'),
-            size: (target, x) => target.getBoundingClientRect().right - x - 5,
+            size: (target, x) => target.getBoundingClientRect().right - x - 6,
         },
     };
 
