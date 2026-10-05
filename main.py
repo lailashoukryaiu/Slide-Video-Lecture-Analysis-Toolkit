@@ -1311,7 +1311,7 @@ async def export_chapters(video_id: str, request: Request):
     if subpart_mode not in {"points", "slides", "both"}:
         raise HTTPException(status_code=400, detail="Invalid subpart mode")
     format_selected = any(name.startswith("include_") for name in options)
-    export_flags = {name: bool(options.get(name, not format_selected and name == "include_word")) for name in (
+    export_flags = {name: bool(options.get(name, not format_selected and name == "include_webpage")) for name in (
         "include_images", "include_transcripts", "include_clips",
         "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
     )}

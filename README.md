@@ -144,6 +144,9 @@ brew install tesseract ffmpeg
 
 ### Windows local launch
 
+Chapter exports default to the HTML webpage package. Word, PDF and other
+formats are optional selections in the export dialog.
+
 Create an isolated Conda environment, install the Python requirements, and
 install FFmpeg (including ffprobe) and Tesseract:
 

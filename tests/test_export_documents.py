@@ -187,8 +187,15 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertFalse(any(name.endswith(".png") for name in names))
         print("Mixed-format ZIP preserves explicitly selected documents and transcript files.")
 
-    def test_word_default_has_subpart_headings_and_full_sentences(self):
+    def test_no_format_selected_defaults_to_html(self):
         response = self.run_export()
+        self.assertEqual(response.path.suffix, ".zip")
+        with zipfile.ZipFile(response.path) as archive:
+            self.assertIn("index.html", archive.namelist())
+            self.assertFalse(any(name.endswith((".docx", ".txt", ".pdf")) for name in archive.namelist()))
+
+    def test_selected_word_has_subpart_headings_and_full_sentences(self):
+        response = self.run_export(include_word=True)
         self.assertEqual(response.path.suffix, ".docx")
         document = Document(response.path)
         headings = [paragraph.text for paragraph in document.paragraphs

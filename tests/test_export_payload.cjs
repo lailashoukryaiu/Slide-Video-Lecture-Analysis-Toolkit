@@ -3,6 +3,10 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 
+const template = fs.readFileSync(path.join(__dirname, '..', 'templates', 'index.html'), 'utf8');
+assert.match(template, /id="exportWebpage" checked/);
+assert.doesNotMatch(template, /id="exportWord" checked/);
+
 const source = fs.readFileSync(path.join(__dirname, '..', 'static', 'js', 'chapters.js'), 'utf8')
     .replace(/^import .*;\r?$/gm, '')
     .replace(/^export /gm, '');
@@ -63,6 +67,11 @@ assert.equal(elements.exportWebpage.disabled, false);
     for (const field of ['include_images', 'include_transcripts', 'include_clips', 'include_word', 'include_pdf']) {
         assert.equal(payload[field], false, `${field} must not be implicitly enabled by HTML`);
     }
+    delete elements.exportWord;
+    delete elements.exportWebpage;
+    await context.exportChapters();
+    assert.equal(payload.include_word, false);
+    assert.equal(payload.include_webpage, true);
     elements.intervalExportToggle.checked = true;
     elements.intervalDuration.value = 0.5;
     grouping.value = 'slides';
