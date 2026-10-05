@@ -1,12 +1,44 @@
 import asyncio
 import json
+import logging
 import shutil
+import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 _STATE_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
+
+
+def cleanup_export_workspace(path, on_step=None):
+    for attempt in range(4):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            if not path.exists():
+                return
+            error_message = f"Temporary files disappeared during cleanup: {path}"
+        except OSError as error:
+            error_message = f"Temporary export cleanup failed at {path}: {error}"
+        if attempt < 3:
+            time.sleep(0.1 * (attempt + 1))
+    logger.warning(error_message)
+    if on_step:
+        on_step(f"Cleanup warning: {error_message}. Exported files were kept.")
+
+
+@contextmanager
+def export_workspace(on_step=None):
+    # Keep intermediate media outside cloud-synced export directories.
+    path = Path(tempfile.mkdtemp(prefix="lecture-export-"))
+    try:
+        yield path
+    finally:
+        cleanup_export_workspace(path, on_step)
 
 
 class ExportJobStore:
@@ -72,9 +104,9 @@ class ExportJobStore:
                 step("HTML webpage saved with its media for future sessions")
 
         async def work():
-            workspace = self._directory(job_id) / "work"
+            workspace = None
             try:
-                workspace.mkdir(parents=True, exist_ok=True)
+                workspace = Path(tempfile.mkdtemp(prefix="lecture-export-job-"))
                 state["status"] = "running"
                 step("Export worker started")
                 response = await generate(video_id, options, step, artifacts, workspace)
@@ -85,7 +117,7 @@ class ExportJobStore:
                 state["filename"] = source.name
                 state["download_file"] = target.name
                 state["download_url"] = f"/export_jobs/{job_id}/download"
-                shutil.rmtree(workspace)
+                cleanup_export_workspace(workspace, step)
                 state["status"] = "complete"
                 state["finished_at"] = time.time()
                 step("Export complete")
@@ -93,11 +125,8 @@ class ExportJobStore:
                 state["status"] = "error"
                 state["finished_at"] = time.time()
                 state["error"] = str(getattr(error, "detail", error))
-                if workspace.exists():
-                    try:
-                        shutil.rmtree(workspace)
-                    except OSError as cleanup_error:
-                        state["error"] += f" Temporary export cleanup also failed: {cleanup_error}"
+                if workspace is not None:
+                    cleanup_export_workspace(workspace, step)
                 step(f"Export failed: {state['error']}")
 
         self._write(job_id, state)

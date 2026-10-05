@@ -1,4 +1,5 @@
 import ast
+import shutil
 import tempfile
 import threading
 import time
@@ -7,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from export_jobs import ExportJobStore
+from export_jobs import ExportJobStore, cleanup_export_workspace, export_workspace
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.testclient import TestClient
@@ -59,6 +60,55 @@ class ExportJobTests(unittest.TestCase):
         state = self.wait_for_job(self.store.start("video", {}, generate))
         self.assertEqual(state["status"], "error")
         self.assertIn("FFmpeg failed", state["error"])
+
+    def test_temporary_work_is_outside_saved_exports(self):
+        workspaces = []
+        async def generate(video_id, options, step, artifacts, workspace):
+            workspaces.append(workspace)
+            self.assertNotIn(self.store.root, workspace.parents)
+            with export_workspace(step) as media:
+                self.assertNotIn(self.store.root, media.parents)
+                (media / "image.jpg").write_bytes(b"image")
+            self.assertFalse(media.exists())
+            path = workspace / "lecture.zip"
+            path.write_bytes(b"zip")
+            return SimpleNamespace(path=path)
+        state = self.wait_for_job(self.store.start("video", {}, generate))
+        self.assertEqual(state["status"], "complete")
+        self.assertFalse(workspaces[0].exists())
+
+    def test_cleanup_retries_a_transient_windows_lock(self):
+        workspace = Path(tempfile.mkdtemp())
+        (workspace / "clip.mp4").write_bytes(b"clip")
+        remove = shutil.rmtree
+        calls = []
+        def locked_once(path):
+            calls.append(path)
+            if len(calls) == 1:
+                raise PermissionError("File temporarily locked")
+            remove(path)
+        with patch("export_jobs.shutil.rmtree", side_effect=locked_once), patch("export_jobs.time.sleep"):
+            cleanup_export_workspace(workspace)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(workspace.exists())
+
+    def test_cleanup_failure_keeps_completed_export_with_visible_warning(self):
+        workspaces = []
+        async def generate(video_id, options, step, artifacts, workspace):
+            workspaces.append(workspace)
+            path = workspace / "lecture.zip"
+            path.write_bytes(b"zip")
+            return SimpleNamespace(path=path)
+        try:
+            with patch("export_jobs.shutil.rmtree", side_effect=PermissionError("Access denied")), \
+                    patch("export_jobs.time.sleep"), self.assertLogs("export_jobs", level="WARNING"):
+                state = self.wait_for_job(self.store.start("video", {}, generate))
+            self.assertEqual(state["status"], "complete")
+            self.assertTrue(any("Cleanup warning:" in step["message"] for step in state["steps"]))
+            self.assertEqual(self.store.file(state["id"], state["download_file"]).read_bytes(), b"zip")
+        finally:
+            for workspace in workspaces:
+                shutil.rmtree(workspace)
 
     def test_same_filename_exports_are_retained_separately(self):
         async def generate(video_id, options, step, artifacts, workspace):

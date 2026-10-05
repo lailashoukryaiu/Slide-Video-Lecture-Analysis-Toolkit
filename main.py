@@ -30,7 +30,7 @@ import html
 from collections import Counter
 from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
-from export_jobs import ExportJobStore
+from export_jobs import ExportJobStore, export_workspace
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
@@ -1547,7 +1547,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
         requested_title = str(options.get("document_title", "")).strip()
         if requested_title:
             document_title = requested_title
-        with tempfile.TemporaryDirectory(dir=export_root) as temp_dir_name:
+        with export_workspace(step) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             generic_name = (
                 bool(re.fullmatch(r"[0-9a-f]{32,64}", document_title, re.IGNORECASE))

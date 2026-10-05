@@ -159,6 +159,11 @@ under `/content` still disappear when the runtime resets; download the package
 or persist the exports directory in Drive. Older downloads created before
 saved-export support are not automatically imported.
 
+Intermediate export files use the operating system's temporary directory,
+outside the saved exports folder, to avoid cloud-sync locks on Windows.
+Temporary-file cleanup retries briefly; persistent cleanup failures are logged
+and shown as warnings in export progress without invalidating saved output.
+
 Create an isolated Conda environment, install the Python requirements, and
 install FFmpeg (including ffprobe) and Tesseract:
 

@@ -25,6 +25,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
+from export_jobs import export_workspace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -218,6 +219,22 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertGreater(response.path.stat().st_size, 1000)
         self.assertTrue(any(call.args[1].name == "Heading2" for call in paragraphs))
         print("PDF: built", response.path.stat().st_size, "bytes with timestamped Heading2 subparts.")
+
+    def test_packaged_export_survives_locked_intermediate_files(self):
+        paths = set()
+        def locked(path):
+            paths.add(Path(path))
+            raise OSError(145, "The directory is not empty")
+        try:
+            with mock.patch("export_jobs.shutil.rmtree", side_effect=locked), \
+                    mock.patch("export_jobs.time.sleep"), self.assertLogs("export_jobs", level="WARNING"):
+                response = self.run_export(include_webpage=True)
+            with zipfile.ZipFile(response.path) as archive:
+                self.assertIn("index.html", archive.namelist())
+                self.assertIsNone(archive.testzip())
+        finally:
+            for path in paths:
+                shutil.rmtree(path)
 
     def test_ai_points_use_specific_titles_and_errors_are_not_hidden(self):
         processor = self.functions["summary_processor"]
