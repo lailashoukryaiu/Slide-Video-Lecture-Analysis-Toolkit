@@ -326,7 +326,7 @@ export function addSearchResultMarkersToTimeline() {
     });
     
     // Add indicators to timeline thumbnails
-    const thumbnails = document.querySelectorAll('.timeline-item');
+    const thumbnails = document.querySelectorAll('.timeline-item:not(.chapter-card)');
     
     thumbnails.forEach((item, index) => {
         if (index < state.videoScenes.length) {
@@ -666,7 +666,7 @@ export function addSlideSearchResultMarkersToTimeline() {
     });
     
     // Add indicators to timeline thumbnails
-    const thumbnails = document.querySelectorAll('.timeline-item');
+    const thumbnails = document.querySelectorAll('.timeline-item:not(.chapter-card)');
     
     thumbnails.forEach((item, index) => {
         if (index < state.videoScenes.length) {

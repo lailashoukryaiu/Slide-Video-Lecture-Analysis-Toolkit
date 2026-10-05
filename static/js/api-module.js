@@ -1211,9 +1211,9 @@ export async function loadUploadedVideo(videoId) {
 
 // Mirrored by PRESET_LIMITS in tests/test_scene_processor.py.
 const DETAIL_LEVEL_LIMITS = {
-    more: { label: 'More slides', minimumDuration: 5, maximumSlidesPerHour: 0 },
-    balanced: { label: 'Balanced', minimumDuration: 10, maximumSlidesPerHour: 0 },
-    fewer: { label: 'Fewer slides', minimumDuration: 20, maximumSlidesPerHour: 60 },
+    more: { label: 'More slides', minimumDurationPercent: 0.25, maximumSlidesPerHour: 0 },
+    balanced: { label: 'Balanced', minimumDurationPercent: 0.5, maximumSlidesPerHour: 0 },
+    fewer: { label: 'Fewer slides', minimumDurationPercent: 1, maximumSlidesPerHour: 60 },
 };
 
 function resolveSlideLimits(mode, detail) {
@@ -1222,7 +1222,7 @@ function resolveSlideLimits(mode, detail) {
     const durationValue = elements.minimumSlideDuration.value;
     const limitValue = elements.maximumSlidesPerHour.value;
     return {
-        minimumDuration: durationValue === 'auto' ? preset.minimumDuration : Number(durationValue),
+        minimumDurationPercent: durationValue === 'auto' ? preset.minimumDurationPercent : Number(durationValue),
         maximumSlidesPerHour: limitValue === 'auto' ? preset.maximumSlidesPerHour : Number(limitValue),
         durationSource: durationValue === 'auto' ? 'detail level' : 'custom',
         limitSource: limitValue === 'auto' ? 'detail level' : 'custom',
@@ -1237,7 +1237,7 @@ function describeAppliedSlideSettings(mode, detail, contentThreshold, limits) {
     const limit = limits.maximumSlidesPerHour
         ? `${limits.maximumSlidesPerHour} slides/hour`
         : 'no slide limit';
-    return `Method: ${method} ? minimum ${limits.minimumDuration} s (${limits.durationSource}) ? ${limit} (${limits.limitSource}) ? similar-slide merging ${elements.mergeSimilarSlides.checked ? 'on' : 'off'}.`;
+    return `Method: ${method} ? minimum ${limits.minimumDurationPercent}% of video (${limits.durationSource}) ? ${limit} (${limits.limitSource}) ? similar-slide merging ${elements.mergeSimilarSlides.checked ? 'on' : 'off'}.`;
 }
 
 export async function detectScenes() {
@@ -1253,11 +1253,11 @@ export async function detectScenes() {
     const contentThreshold = Number(elements.sceneDetectionThreshold.value);
     const detail = elements.adaptiveDetail.value;
     const limits = resolveSlideLimits(mode, detail);
-    const { minimumDuration, maximumSlidesPerHour } = limits;
+    const { minimumDurationPercent, maximumSlidesPerHour } = limits;
     const screenshotHeight = Number(elements.slideImageQuality.value);
     if (
         !Number.isFinite(contentThreshold)
-        || !Number.isFinite(minimumDuration)
+        || !Number.isFinite(minimumDurationPercent)
         || !Number.isFinite(maximumSlidesPerHour)
         || !Number.isFinite(screenshotHeight)
     ) {
@@ -1278,7 +1278,7 @@ export async function detectScenes() {
                 mode,
                 adaptive_detail: detail,
                 content_threshold: contentThreshold,
-                minimum_slide_duration: minimumDuration,
+                minimum_slide_duration_percent: minimumDurationPercent,
                 maximum_slides_per_hour: maximumSlidesPerHour,
                 merge_similar_slides: elements.mergeSimilarSlides.checked,
                 include_chapter_boundaries: hasChapters && elements.includeChapterBoundaries.checked,

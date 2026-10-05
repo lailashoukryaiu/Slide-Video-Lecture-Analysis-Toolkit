@@ -27,6 +27,8 @@ MODEL_UNAVAILABLE_MARKERS = (
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}
 # Concurrent translation requests for Gemini/OpenAI; Groq stays at one.
+# A model that ran out of quota is skipped by automatic selection for a while.
+QUOTA_COOLDOWN_SECONDS = max(60, int(os.getenv("AI_QUOTA_COOLDOWN_SECONDS", "3600")))
 TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 
 class SummaryProcessor:
@@ -45,6 +47,7 @@ class SummaryProcessor:
         self.model = None
         self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         self.unavailable_models = set()
+        self.quota_exhausted_until = {}
         self.openai_client = None
         self.openai_model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         self.groq_client = None
@@ -118,16 +121,28 @@ class SummaryProcessor:
         }
         chain = []
         unavailable = getattr(self, "unavailable_models", set())
+        now = time.time()
+        exhausted = {
+            pair for pair, until in getattr(self, "quota_exhausted_until", {}).items()
+            if until > now
+        }
+        cooling = []
 
         def add(provider, model):
             if (
                 model and configured[provider] and (provider, model) not in chain
                 and (provider, model) not in unavailable
             ):
-                chain.append((provider, model))
+                if (provider, model) in exhausted:
+                    cooling.append((provider, model))
+                else:
+                    chain.append((provider, model))
 
         if requested_model:
-            add(*self._provider_chain_entry(requested_model))
+            requested = self._provider_chain_entry(requested_model)
+            if requested not in unavailable and configured.get(requested[0]) and requested[1]:
+                # An explicitly chosen model is always tried first.
+                chain.append(requested)
         if prefer_groq and not requested_model:
             add("groq", getattr(self, "groq_model_name", None))
         add("gemini", self.model_name)
@@ -135,7 +150,17 @@ class SummaryProcessor:
             add("gemini", model)
         add("groq", getattr(self, "groq_model_name", None))
         add("openai", getattr(self, "openai_model_name", None))
-        return chain
+        # Out-of-quota models stay as a last resort in case their quota has reset.
+        return chain + [pair for pair in cooling if pair not in chain]
+
+    def _mark_quota_exhausted(self, provider, model):
+        if not hasattr(self, "quota_exhausted_until"):
+            self.quota_exhausted_until = {}
+        self.quota_exhausted_until[(provider, model)] = time.time() + QUOTA_COOLDOWN_SECONDS
+        print(
+            f"{PROVIDER_LABELS[provider]} {model} is out of quota; automatic selection "
+            f"skips it for {QUOTA_COOLDOWN_SECONDS // 60} minutes"
+        )
 
     @staticmethod
     def _fast_thinking_config(model):
@@ -293,6 +318,8 @@ Format each chapter exactly like this example:
                     if self._is_model_unavailable(error):
                         self._mark_unavailable(candidate, model)
                         continue
+                    if "resource_exhausted" in str(error).lower():
+                        self._mark_quota_exhausted(candidate, model)
                     if not self._is_quota_error(error):
                         return JSONResponse({
                             "success": False,
@@ -351,7 +378,7 @@ Format each chapter exactly like this example:
         """
         if _chain is None:
             self._refresh_clients()
-            _chain = self._provider_chain(requested_model)
+            _chain = self._provider_chain(requested_model, prefer_groq=True)
             requested_pair = self._provider_chain_entry(requested_model)
             if (
                 requested_model
@@ -565,6 +592,8 @@ Format each chapter exactly like this example:
             unavailable = self._is_model_unavailable(error)
             if unavailable:
                 self._mark_unavailable(provider, selected_model)
+            elif self._is_quota_error(error) and "resource_exhausted" in str(error).lower():
+                self._mark_quota_exhausted(provider, selected_model)
             if len(_chain) < 2 or not (unavailable or self._is_quota_error(error)):
                 raise error
             next_provider, next_model = _chain[1]

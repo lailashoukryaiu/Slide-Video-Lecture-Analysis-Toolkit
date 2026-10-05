@@ -386,7 +386,7 @@ function initApp() {
             ? 'Adds topic boundaries that are not already close to a detected slide.'
             : 'Generate transcript chapters first to enable this option.';
         if (mode === 'chapters' && !hasChapters) {
-            elements.sceneDetectionMode.value = 'adaptive';
+            elements.sceneDetectionMode.value = 'content';
             return updateDetectionOptions();
         }
         elements.adaptiveDetectionOptions.hidden = mode !== 'adaptive';
@@ -399,9 +399,9 @@ function initApp() {
                 ? 'Content cuts detect abrupt visual transitions using the separate PySceneDetect threshold above.'
                 : 'Uses existing transcript chapter timestamps without scanning the complete video.';
     };
-    elements.sceneDetectionMode.value = localStorage.getItem('sceneDetectionModeV1') || 'adaptive';
+    elements.sceneDetectionMode.value = localStorage.getItem('sceneDetectionModeV2') || 'content';
     elements.adaptiveDetail.value = localStorage.getItem('adaptiveDetailV1') || 'balanced';
-    elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationV1') || 'auto';
+    elements.minimumSlideDuration.value = localStorage.getItem('minimumSlideDurationPercentV1') || 'auto';
     elements.maximumSlidesPerHour.value = localStorage.getItem('maximumSlidesPerHourV1') || 'auto';
     elements.slideImageQuality.value = localStorage.getItem('slideImageQualityV1') || '720';
     if (elements.transcriptModel) {
@@ -415,14 +415,14 @@ function initApp() {
     elements.mergeSimilarSlides.checked = localStorage.getItem('mergeSimilarSlidesV1') !== 'false';
     elements.includeChapterBoundaries.checked = localStorage.getItem('includeChapterBoundariesV1') !== 'false';
     bind(elements.sceneDetectionMode, 'change', (event) => {
-        localStorage.setItem('sceneDetectionModeV1', event.target.value);
+        localStorage.setItem('sceneDetectionModeV2', event.target.value);
         updateDetectionOptions();
     });
     bind(elements.adaptiveDetail, 'change', (event) => {
         localStorage.setItem('adaptiveDetailV1', event.target.value);
     });
     bind(elements.minimumSlideDuration, 'change', (event) => {
-        localStorage.setItem('minimumSlideDurationV1', event.target.value);
+        localStorage.setItem('minimumSlideDurationPercentV1', event.target.value);
     });
     bind(elements.maximumSlidesPerHour, 'change', (event) => {
         localStorage.setItem('maximumSlidesPerHourV1', event.target.value);

@@ -9,9 +9,9 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=versions-20261005">
-    <link rel="stylesheet" href="/static/compact-layout.css?v=versions-20261005">
-    <link rel="stylesheet" href="/static/theme.css?v=versions-20261005">
+    <link rel="stylesheet" href="/static/styles.css?v=grouping-20261006">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=grouping-20261006">
+    <link rel="stylesheet" href="/static/theme.css?v=grouping-20261006">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -106,6 +106,13 @@
                         <option value="1.5">1.5x</option>
                         <option value="2">2x</option>
                     </select>
+                    <div class="toggle-container timeline-marker-toggle" title="Show slide changes as marks on the timeline below">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="sceneToggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <label for="sceneToggle">Slide marks</label>
+                    </div>
                 </div>
                 
                 <div id="videoProgress" class="video-progress-container">
@@ -118,13 +125,6 @@
                 <div class="timeline-container">
                     <div class="timeline-header">
                         <h3><i class="fas fa-film"></i> Visual Timeline</h3>
-                        <div class="toggle-container">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="sceneToggle" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span>Show Slide Changes</span>
-                        </div>
                     </div>
                     <div class="timeline" id="thumbnailTimeline">
                         <!-- Thumbnails will be added here -->
@@ -388,8 +388,8 @@
                                 <div class="scene-threshold-control">
                                 <label for="sceneDetectionMode">Detection method</label>
                                 <select id="sceneDetectionMode">
-                                    <option value="adaptive" selected>Adaptive slides (recommended)</option>
-                                    <option value="content">Content cuts</option>
+                                    <option value="content" selected>Content cuts (recommended)</option>
+                                    <option value="adaptive">Adaptive slides</option>
                                     <option value="chapters">Transcript chapters only</option>
                                 </select>
                                 <div id="adaptiveDetectionOptions">
@@ -410,14 +410,15 @@
                                     <small>Lower values detect more hard cuts. Higher values detect fewer cuts.</small>
                                 </div>
                                 <div id="visualDetectionOptions">
-                                    <label for="minimumSlideDuration">Minimum slide duration</label>
+                                    <label for="minimumSlideDuration">Minimum slide duration (% of video length)</label>
                                     <select id="minimumSlideDuration">
-                                        <option value="auto" selected>Match detail level (More 5 s, Balanced 10 s, Fewer 20 s)</option>
-                                        <option value="5">5 seconds</option>
-                                        <option value="10">10 seconds</option>
-                                        <option value="20">20 seconds</option>
-                                        <option value="30">30 seconds</option>
+                                        <option value="auto" selected>Match detail level (More 0.25%, Balanced 0.5%, Fewer 1%)</option>
+                                        <option value="0.25">0.25% (9 s per hour of video)</option>
+                                        <option value="0.5">0.5% (18 s per hour of video)</option>
+                                        <option value="1">1% (36 s per hour of video)</option>
+                                        <option value="2">2% (72 s per hour of video)</option>
                                     </select>
+                                    <small>Scales with the video, with a 2 s floor for short clips.</small>
                                     <label for="maximumSlidesPerHour">Maximum slides per hour</label>
                                     <select id="maximumSlidesPerHour">
                                         <option value="auto" selected>Match detail level (More/Balanced unlimited, Fewer 60)</option>
@@ -602,9 +603,9 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/popup-placement.js?v=versions-20261005"></script>
-    <script src="/static/js/layout-resize.js?v=versions-20261005"></script>
-    <script type="module" src="/static/js/index.js?v=versions-20261005"></script>
+    <script src="/static/js/popup-placement.js?v=grouping-20261006"></script>
+    <script src="/static/js/layout-resize.js?v=grouping-20261006"></script>
+    <script type="module" src="/static/js/index.js?v=grouping-20261006"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

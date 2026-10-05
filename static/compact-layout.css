@@ -624,3 +624,20 @@ input:checked + .toggle-slider:before {
     flex: 0 0 auto;
     padding: 4px 8px;
 }
+
+.video-controls .timeline-marker-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.video-controls .timeline-marker-toggle label[for] {
+    cursor: pointer;
+}
+
+/* Thumbnails follow the navigation grouping (slides, content chapters, or both). */
+#thumbnailTimeline .timeline-item.grouping-hidden { display: none !important; }
+.timeline-item.chapter-card .chapter-badge { background: var(--accent, #4f46e5); color: #fff; }

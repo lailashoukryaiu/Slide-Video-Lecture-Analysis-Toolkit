@@ -33,7 +33,11 @@ function describeSlideLimits(diagnostics) {
     const limit = diagnostics.maximum_slides_per_hour
         ? `${diagnostics.maximum_slides_per_hour} slides/hour${diagnostics.slide_limit ? ` (${diagnostics.slide_limit} for this video)` : ''}`
         : 'no slide limit';
-    return `minimum ${diagnostics.minimum_slide_duration_seconds} s, ${limit}`;
+    const percent = diagnostics.minimum_slide_duration_percent;
+    const minimum = percent != null
+        ? `minimum ${percent}% of video (${diagnostics.minimum_slide_duration_seconds} s)`
+        : `minimum ${diagnostics.minimum_slide_duration_seconds} s`;
+    return `${minimum}, ${limit}`;
 }
 
 function describeSceneDetection(diagnostics, slideCount) {
@@ -240,6 +244,7 @@ export function updateScenes(scenes, videoPlayer) {
     
     // Clear timeline
     timelineContainer.innerHTML = '';
+    delete timelineContainer.dataset.groupingSignature;
     
     if (scenes.length === 0) {
         scenesContainer.innerHTML = '<p>No scene changes detected.</p>';

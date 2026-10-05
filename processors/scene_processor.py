@@ -26,6 +26,16 @@ ADAPTIVE_PRESETS = {
     "balanced": {"change_threshold": 0.005, "keep_builds": "large", "large_build": 0.025},
     "fewer": {"change_threshold": 0.015, "keep_builds": "none", "large_build": 1.0},
 }
+MINIMUM_SLIDE_DURATION_FLOOR = 2.0
+
+
+def resolve_minimum_slide_duration(options: dict, duration_seconds: float) -> dict:
+    """Convert a percentage-of-video minimum slide duration into seconds."""
+    percent = options.get("minimum_slide_duration_percent")
+    if percent is None:
+        return options
+    seconds = max(MINIMUM_SLIDE_DURATION_FLOOR, duration_seconds * float(percent) / 100)
+    return {**options, "minimum_slide_duration": round(seconds, 1)}
 
 
 class SceneProcessor:
@@ -160,6 +170,7 @@ class SceneProcessor:
         """
         video_id = os.path.splitext(os.path.basename(video_path))[0]
         duration_seconds = self._video_duration(video_path)
+        options = resolve_minimum_slide_duration(options, duration_seconds)
         chapter_timestamps = (
             self._load_chapter_timestamps(video_id)
             if options["include_chapter_boundaries"] or mode == "chapters"
@@ -253,6 +264,7 @@ class SceneProcessor:
             "content_threshold": options["content_threshold"],
             "duration_seconds": duration_seconds,
             "minimum_slide_duration_seconds": options["minimum_slide_duration"],
+            "minimum_slide_duration_percent": options.get("minimum_slide_duration_percent"),
             "maximum_slides_per_hour": options["maximum_slides_per_hour"],
             "slide_limit": self._maximum_slide_count(
                 duration_seconds, options["maximum_slides_per_hour"]
@@ -463,6 +475,7 @@ class SceneProcessor:
             "duration_seconds": duration_seconds,
             "detail_level": detail,
             "minimum_slide_duration_seconds": minimum_duration,
+            "minimum_slide_duration_percent": options.get("minimum_slide_duration_percent"),
             "maximum_slides_per_hour": options["maximum_slides_per_hour"],
             "slide_limit": self._maximum_slide_count(
                 duration_seconds, options["maximum_slides_per_hour"]

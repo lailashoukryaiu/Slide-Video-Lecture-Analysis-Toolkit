@@ -25,7 +25,7 @@ fastapi_responses_module = sys.modules.setdefault(
 fastapi_responses_module.JSONResponse = object
 fastapi_module.responses = fastapi_responses_module
 
-from processors.scene_processor import SceneProcessor
+from processors.scene_processor import SceneProcessor, resolve_minimum_slide_duration
 
 
 FRAME_WIDTH, FRAME_HEIGHT, FRAME_RATE = 640, 360, 1
@@ -105,8 +105,9 @@ def detection_options(detail, minimum_duration, maximum_per_hour, merge=True):
     }
 
 
-# Mirrors the "Match detail level" defaults resolved in static/js/api-module.js.
 PRESET_LIMITS = {"more": (5, 0), "balanced": (10, 0), "fewer": (20, 60)}
+# Mirrors the "Match detail level" defaults resolved in static/js/api-module.js.
+PRESET_PERCENT_LIMITS = {"more": (0.25, 0), "balanced": (0.5, 0), "fewer": (1, 60)}
 
 
 class AdaptiveFinalCountTests(unittest.TestCase):
@@ -178,6 +179,23 @@ class AdaptiveFinalCountTests(unittest.TestCase):
             )
             counts[detail] = len(timestamps)
             self.assertEqual(diagnostics["detected_changes"], len(timestamps))
+        self.assertGreater(counts["more"], counts["balanced"])
+        self.assertGreater(counts["balanced"], counts["fewer"])
+
+    def test_percentage_presets_scale_with_video_length(self):
+        duration = self.processor._video_duration(self.lecture_path)
+        counts = {}
+        for detail, (percent, maximum_per_hour) in PRESET_PERCENT_LIMITS.items():
+            options = resolve_minimum_slide_duration(
+                {**detection_options(detail, 10, maximum_per_hour),
+                 "minimum_slide_duration_percent": percent},
+                duration,
+            )
+            self.assertEqual(
+                options["minimum_slide_duration"], round(max(2.0, duration * percent / 100), 1)
+            )
+            timestamps, _ = self.processor.detect_adaptive_scenes(self.lecture_path, options, [])
+            counts[detail] = len(timestamps)
         self.assertGreater(counts["more"], counts["balanced"])
         self.assertGreater(counts["balanced"], counts["fewer"])
 
@@ -271,6 +289,18 @@ class SceneProcessorLimitTests(unittest.TestCase):
 
     def test_unlimited_option_does_not_apply_a_cap(self):
         self.assertEqual(SceneProcessor._maximum_slide_count(30, 0), 0)
+
+
+class MinimumDurationPercentTests(unittest.TestCase):
+    def test_percent_converts_to_seconds_with_floor(self):
+        hour = resolve_minimum_slide_duration({"minimum_slide_duration_percent": 0.5}, 3600)
+        self.assertEqual(hour["minimum_slide_duration"], 18.0)
+        short = resolve_minimum_slide_duration({"minimum_slide_duration_percent": 0.25}, 120)
+        self.assertEqual(short["minimum_slide_duration"], 2.0)
+
+    def test_seconds_option_is_kept_without_percent(self):
+        options = {"minimum_slide_duration": 10}
+        self.assertIs(resolve_minimum_slide_duration(options, 3600), options)
 
 
 class VideoStreamReleaseTests(unittest.TestCase):

@@ -85,7 +85,7 @@ async def yolo_status():
 async def runtime_status():
     """Report the compute device used by Whisper and available CUDA GPU."""
     summary_processor._refresh_clients()
-    default_chain = summary_processor._provider_chain()
+    default_chain = summary_processor._provider_chain(prefer_groq=True)
     translation_status = {
         "translation_default_provider": (
             {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}[default_chain[0][0]]
@@ -516,12 +516,16 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
     data = await request.json()
-    mode = data.get("mode", "adaptive")
+    mode = data.get("mode", "content")
     try:
         options = {
             "adaptive_detail": str(data.get("adaptive_detail", "balanced")),
             "content_threshold": float(data.get("content_threshold", 27)),
             "minimum_slide_duration": float(data.get("minimum_slide_duration", 10)),
+            "minimum_slide_duration_percent": (
+                float(data["minimum_slide_duration_percent"])
+                if data.get("minimum_slide_duration_percent") is not None else None
+            ),
             "maximum_slides_per_hour": int(data.get("maximum_slides_per_hour", 60)),
             "merge_similar_slides": bool(data.get("merge_similar_slides", True)),
             "include_chapter_boundaries": bool(data.get("include_chapter_boundaries", True)),
@@ -535,7 +539,10 @@ async def detect_scenes(video_id: str, request: Request, background_tasks: Backg
         raise HTTPException(status_code=400, detail="Invalid adaptive detail level")
     if not 10 <= options["content_threshold"] <= 60:
         raise HTTPException(status_code=400, detail="Content-cut threshold must be between 10 and 60")
-    if options["minimum_slide_duration"] not in {5, 10, 20, 30}:
+    if options["minimum_slide_duration_percent"] is not None:
+        if options["minimum_slide_duration_percent"] not in {0.25, 0.5, 1, 2}:
+            raise HTTPException(status_code=400, detail="Invalid minimum slide duration percentage")
+    elif options["minimum_slide_duration"] not in {5, 10, 20, 30}:
         raise HTTPException(status_code=400, detail="Invalid minimum slide duration")
     if options["maximum_slides_per_hour"] not in {0, 40, 60, 90}:
         raise HTTPException(status_code=400, detail="Invalid maximum slides per hour")

@@ -17,7 +17,8 @@
 
 ### Key Features
 
-- **Scene Detection**: Adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, content-cut mode, and optional transcript chapter boundaries
+- **Scene Detection**: Content-cut detection by default, plus adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, and optional transcript chapter boundaries
+- **Visual Timeline**: Thumbnails follow the Navigate by setting (content chapters, slide changes, or both); the minimum slide duration is a percentage of the video length (2 s floor)
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
 - **Gemini Transcript Formatting**: Structured JSON output with one visible retry
@@ -284,7 +285,7 @@ The system requires pre-trained models (included in repository):
    - **YouTube Videos**: Paste a URL, choose 480p (faster) or 720p, and click "Load Video"
    - **Local Files**: Upload video files directly
    - **Real-time Processing**: Monitor progress via live updates
-   - **Slide Detection**: Choose adaptive slides, content cuts, or existing transcript chapters; higher video and screenshot quality uses more time and storage
+   - **Slide Detection**: Choose content cuts (default), adaptive slides, or existing transcript chapters; higher video and screenshot quality uses more time and storage
 
 ### Advanced Usage Examples
 
