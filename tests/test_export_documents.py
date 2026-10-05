@@ -24,7 +24,7 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 from export_jobs import export_workspace
 
 
@@ -46,6 +46,7 @@ def load_export_functions():
         "build_export_subparts", "export_archive_paths", "prepare_export_image",
         "concise_export_title", "export_thumbnail", "strip_narration", "clean_outline_title", "build_slides_pdf",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
+        "scene_slide_text", "chapter_slide_content", "add_word_slide_content",
     }
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
              and node.name in names]
@@ -149,6 +150,38 @@ class ExportDocumentTests(unittest.TestCase):
         sentences = self.functions["export_sentences"](fragments)
         self.assertEqual(len(sentences), 1)
         self.assertEqual(sentences[0]["text"], "we learn from examples to improve predictions")
+
+    def test_slide_content_option_adds_ocr_bullets_per_slide(self):
+        def ocr(text, top):
+            return {"class": "text", "bbox": [10, top, 200, top + 20], "ocr_text": text}
+        self.functions["SCENES_DIR"].joinpath("lecture.json").write_text(json.dumps([
+            {"timestamp": "00:00", "yolo_detections": {"success": True, "detections": [
+                ocr("\u2022 Backpropagation\nGradient descent", 80), ocr("Neural Networks", 10),
+                ocr("gradient descent", 120), ocr("|", 150),
+            ]}},
+            {"timestamp": "00:09", "surya_ocr": {"success": True, "results": [
+                {"text": "Validation set", "bbox": [0, 5, 50, 20]},
+                {"text": "Matched elsewhere", "bbox": [0, 30, 50, 40], "matched": True},
+            ]}},
+        ]), encoding="utf-8")
+        response = self.run_export(include_webpage=True, include_word=True, include_pdf=True, include_outline=True, include_slide_text=True)
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+            word = Document(BytesIO(archive.read("chapter_document.docx")))
+            outline = Document(BytesIO(archive.read("video_outline.docx")))
+            self.assertGreater(len(archive.read("chapter_document.pdf")), 1000)
+        self.assertIn("Validation set", [p.text for p in outline.paragraphs])
+        self.assertEqual(webpage.count('<details class="slide-content"'), 2)
+        self.assertIn("<ul><li>Neural Networks</li><li>Backpropagation</li><li>Gradient descent</li></ul>", webpage)
+        self.assertIn("<li>Validation set</li>", webpage)
+        self.assertNotIn("Matched elsewhere", webpage)
+        bullets = [p.text for p in word.paragraphs if p.style.name == "List Bullet"]
+        self.assertIn("Backpropagation", bullets)
+        self.assertIn("Validation set", bullets)
+
+        plain = self.run_export(include_webpage=True)
+        with zipfile.ZipFile(plain.path) as archive:
+            self.assertNotIn("slide-content\"", archive.read("index.html").decode())
 
     def test_slide_media_links_preserve_fractional_scene_time(self):
         self.functions["SCENES_DIR"].joinpath("lecture.json").write_text(json.dumps([

@@ -219,6 +219,7 @@ export async function exportChapters() {
             timestamp_mode: elements.timestampMode?.value || 'subpart',
             subpart_mode: elements.subpartMode?.value || 'points',
             clip_overlap: document.getElementById('exportClipOverlap')?.checked ?? true,
+            include_slide_text: document.getElementById('exportSlideText')?.checked ?? false,
             document_title: elements.exportTitle?.value.trim() || '',
             export_filename: elements.exportFilename?.value.trim() || '',
             transcript_language: state.currentTranslationLanguage || '',

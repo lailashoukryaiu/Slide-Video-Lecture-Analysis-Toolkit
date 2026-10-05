@@ -23,7 +23,7 @@ from docx.oxml import OxmlElement
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 import time
@@ -1096,6 +1096,59 @@ def chapter_boundaries_from_topics(chapters):
     ]
 
 
+def scene_slide_text(scene):
+    """Return the OCR text of one slide as ordered, de-duplicated lines."""
+    blocks = []
+    detections = (scene.get("yolo_detections") or {})
+    if detections.get("success", False):
+        for detection in detections.get("detections", []):
+            text = str(detection.get("ocr_text") or "").strip()
+            if text:
+                blocks.append((detection.get("bbox") or [], text))
+    surya = scene.get("surya_ocr") or {}
+    if surya.get("success", True):
+        for result in surya.get("results", []):
+            text = str(result.get("text") or "").strip()
+            if text and not result.get("matched", False):
+                blocks.append((result.get("bbox") or [], text))
+
+    def reading_order(block):
+        box = block[0]
+        return (float(box[1]), float(box[0])) if len(box) >= 2 else (float("inf"), 0.0)
+
+    lines, seen = [], set()
+    for _, text in sorted(blocks, key=reading_order):
+        for line in text.splitlines():
+            line = " ".join(line.split()).lstrip("\u2022\u25aa\u25cf\u25e6\u2013\u2014-*\u00b7o ").strip()
+            key = line.casefold()
+            if sum(character.isalnum() for character in line) < 2 or key in seen:
+                continue
+            seen.add(key)
+            lines.append(line)
+    return lines
+
+
+def chapter_slide_content(chapter, scene_chapters):
+    """Slides visible during a chapter, including the one already on screen at its start."""
+    end = chapter.get("end")
+    starts = [export_slide_start(scene) for scene in scene_chapters]
+    selected = [
+        index for index, start in enumerate(starts)
+        if chapter["start"] - 1 < start and (end is None or start < end)
+    ]
+    earlier = [index for index, start in enumerate(starts) if start <= chapter["start"] - 1]
+    if earlier and (not selected or starts[selected[0]] > chapter["start"] + 1):
+        selected.insert(0, earlier[-1])
+    return [
+        {
+            "number": scene_chapters[index]["image_index"] + 1,
+            "start": starts[index],
+            "lines": scene_chapters[index].get("slide_text", []),
+        }
+        for index in selected if scene_chapters[index].get("slide_text")
+    ]
+
+
 def chapter_boundaries_from_scenes(scenes):
     return [
         {
@@ -1103,6 +1156,7 @@ def chapter_boundaries_from_scenes(scenes):
             "time_seconds": float(scene.get("time_seconds", parse_chapter_timestamp(str(scene["timestamp"])))),
             "title": str(scene.get("title") or f"Slide change {index + 1}"),
             "image_index": index,
+            "slide_text": scene_slide_text(scene),
         }
         for index, scene in enumerate(scenes)
         if isinstance(scene, dict) and "timestamp" in scene
@@ -1503,6 +1557,18 @@ def create_combined_chapter_documents(
                     styles["BodyText"],
                 ))
                 pdf_story.append(Spacer(1, 0.1 * inch))
+            if pdf_text and files.get("slide_content"):
+                pdf_story.append(Paragraph("Slide content", styles["Heading2"]))
+                for slide in files["slide_content"]:
+                    pdf_story.append(Paragraph(
+                        f"<b>Slide {slide['number']}</b> ({format_chapter_timestamp(slide['start'])})",
+                        styles["Normal"],
+                    ))
+                    pdf_story.append(ListFlowable(
+                        [ListItem(Paragraph(html.escape(line), styles["BodyText"])) for line in slide["lines"]],
+                        bulletType="bullet", leftIndent=14,
+                    ))
+                pdf_story.append(Spacer(1, 0.1 * inch))
         if pdf_story is not None and pdf_images and image_path is not None:
             pdf_story.extend([
                 PdfImage(str(image_path), width=6.5 * inch, height=3.65 * inch, kind="proportional"),
@@ -1539,6 +1605,8 @@ def create_combined_chapter_documents(
             word_document.add_paragraph(f"Starts at {timestamp}")
             if word_text and chapter_summary:
                 word_document.add_paragraph(f"Summary: {chapter_summary}")
+            if word_text and files.get("slide_content"):
+                add_word_slide_content(word_document, files["slide_content"], level=2)
         if word_document and word_images and image_path is not None:
             try:
                 word_document.add_picture(str(image_path), width=Inches(6.5))
@@ -1575,6 +1643,16 @@ def create_combined_chapter_documents(
     if word_document:
         word_document.add_paragraph(footnote, style="Caption")
         word_document.save(str(docx_path))
+
+def add_word_slide_content(document, slides, level):
+    document.add_heading("Slide content", level=level)
+    for slide in slides:
+        document.add_paragraph().add_run(
+            f"Slide {slide['number']} ({format_chapter_timestamp(slide['start'])})"
+        ).bold = True
+        for line in slide["lines"]:
+            document.add_paragraph(line, style="List Bullet")
+
 
 def collapse_word_heading(paragraph):
     paragraph_properties = paragraph._p.get_or_add_pPr()
@@ -1822,6 +1900,9 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             chapter_files = []
             image_cache = {}
             overlap_seconds = 1.0 if options.get("clip_overlap", True) else 0.0
+            include_slide_text = bool(options.get("include_slide_text", False))
+            if include_slide_text and not any(scene.get("slide_text") for scene in scene_chapters):
+                step("Slide content: no slide text found yet. Run text extraction (OCR) on the slides first")
             for chapter in chapter_data:
                 number = chapter["index"]
                 chapter["clip_start"] = max(0.0, chapter["start"] - (overlap_seconds if number > 1 else 0.0))
@@ -1896,6 +1977,9 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     ],
                 })
                 files = chapter_files[-1]
+                files["slide_content"] = (
+                    chapter_slide_content(chapter, scene_chapters) if include_slide_text else []
+                )
                 needs_structure = any(export_flags[name] for name in (
                     "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
                 ))
@@ -1989,6 +2073,9 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "border:1px solid var(--line);border-radius:6px;padding:.15rem .6rem;cursor:pointer}"
                     ".outline-chapter>summary{cursor:pointer}.outline-chapter>summary::marker{color:var(--brand)}"
                     ".outline-chapter>ol{margin:.2rem 0 .4rem}"
+                    ".slide-content{margin:1rem 0;padding:.5rem 1rem;background:var(--soft);border-radius:10px}"
+                    ".slide-content>summary{font-weight:600;cursor:pointer;color:var(--brand)}"
+                    ".slide-content h4{font-size:.95rem;margin:.75rem 0 .2rem}.slide-content ul{margin:.2rem 0 .5rem}"
                     ".time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.85em;white-space:nowrap}"
                     "section.chapter{border-top:1px solid var(--line);padding:2rem 0;scroll-margin-top:1rem}"
                     "img,video{max-width:100%;display:block}video{width:100%;border-radius:10px;background:#000;margin:1rem 0}"
@@ -2049,6 +2136,20 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     ])
                     if summary:
                         webpage_parts.append(f"<p class=\"chapter-summary\">{html.escape(summary)}</p>")
+                    if files.get("slide_content"):
+                        webpage_parts.append("<details class=\"slide-content\" open><summary>Slide content</summary>")
+                        for slide in files["slide_content"]:
+                            webpage_parts.append(
+                                f"<h4>Slide {slide['number']} "
+                                + seek_link(
+                                    chapter["index"], chapter["clip_start"], max(slide["start"], chapter["start"]),
+                                    f"({format_chapter_timestamp(slide['start'])})", "time",
+                                )
+                                + "</h4><ul>"
+                                + "".join(f"<li>{html.escape(line)}</li>" for line in slide["lines"])
+                                + "</ul>"
+                            )
+                        webpage_parts.append("</details>")
                     webpage_parts.extend([
                         f"<video id=\"video-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
                         "<details class=\"chapter-subparts\" open><summary>Sections</summary>",
@@ -2116,6 +2217,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         )
                         if chapter.get("summary"):
                             outline_document.add_paragraph(chapter["summary"], style="Intense Quote")
+                        if files.get("slide_content"):
+                            add_word_slide_content(outline_document, files["slide_content"], level=3)
                         if files["subparts"]:
                             for subpart_index, subpart in enumerate(files["subparts"], start=1):
                                 outline_document.add_heading(

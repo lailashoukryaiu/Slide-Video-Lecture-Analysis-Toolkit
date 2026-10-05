@@ -18,6 +18,7 @@
 ### Key Features
 
 - **Scene Detection**: Content-cut detection by default, plus adaptive slide detection with configurable detail, duration, duplicate filtering, hourly limits, and optional transcript chapter boundaries
+- **Slide Content in Exports**: Optionally add each slide's extracted text (OCR) as a bullet list under its chapter in HTML, Word, PDF and outline exports
 - **Visual Timeline**: Thumbnails follow the Navigate by setting (content chapters, slide changes, or both); the minimum slide duration is a percentage of the video length (2 s floor)
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
