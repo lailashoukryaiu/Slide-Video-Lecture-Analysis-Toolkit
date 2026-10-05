@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="/static/styles.css?v=compact-slide-titles-20261005">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=20261005">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -46,9 +47,6 @@
             </select>
             <button id="loadVideoBtn" class="btn btn-primary">
                 <i class="fas fa-download"></i> Load Video
-            </button>
-            <button id="downloadSlidesPdfBtn" class="btn btn-secondary" disabled>
-                <i class="fas fa-file-pdf"></i> Export slides as one PDF
             </button>
             <input type="file" id="videoFile" accept="video/*" style="display: none;"
                    onchange="document.getElementById('loadingIndicator').style.display='block'; document.getElementById('loadingIndicator').querySelector('p').textContent='Uploading selected video...'; window.dispatchEvent(new CustomEvent('video-file-selected', { detail: this.files[0] }))">
@@ -357,6 +355,9 @@
                             </button>
                             <button id="downloadScreenshotsBtn" class="btn btn-secondary" disabled>
                                 <i class="fas fa-images"></i> Download Screenshots
+                            </button>
+                            <button id="downloadSlidesPdfBtn" class="btn btn-secondary" disabled>
+                                <i class="fas fa-file-pdf"></i> Export slides as one PDF
                             </button>
                             <dialog id="sceneDetectionOptionsDialog" class="options-dialog">
                                 <form method="dialog">

@@ -1,0 +1,290 @@
+body {
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+:root {
+    max-height: none;
+}
+
+.container {
+    padding: 8px 10px;
+    min-height: 0;
+}
+
+.input-section {
+    gap: 6px;
+}
+
+.url-input {
+    max-width: none;
+    min-width: 180px;
+    padding: 6px 8px;
+    font-size: 13px;
+}
+
+.input-section .example-videos-container {
+    min-width: 0;
+    margin: 0;
+}
+
+.input-section .example-videos-select {
+    width: 160px;
+    max-width: 100%;
+    padding: 5px 6px;
+    font-size: 12px;
+}
+
+.btn,
+.video-controls .btn {
+    padding: 6px 9px;
+    font-size: 12px;
+    line-height: 1.35;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+select,
+.video-controls select {
+    max-width: 100%;
+    padding: 4px;
+    font-size: 12px;
+}
+
+.main-content {
+    grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+    gap: 10px;
+    margin-top: 8px;
+    min-height: 0;
+}
+
+.video-container {
+    min-width: 0;
+    padding: 8px;
+    gap: 4px;
+}
+
+.video-wrapper {
+    width: 100%;
+    min-height: 0;
+}
+
+#videoPlayer {
+    min-height: 0;
+    max-height: clamp(180px, calc(100dvh - 370px), 540px);
+}
+
+.chapter-caption {
+    margin: 2px 0;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.video-controls {
+    gap: 5px;
+    margin: 2px 0;
+}
+
+#navigationGrouping {
+    width: 170px;
+}
+
+.video-progress-container {
+    margin: 4px 0;
+    height: 22px;
+}
+
+.timeline-container {
+    padding: 6px;
+    margin-top: 2px;
+}
+
+.timeline-header {
+    gap: 6px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+
+.timeline-header h3 {
+    font-size: 13px;
+}
+
+.timeline {
+    min-height: 0;
+    max-height: 105px;
+    padding: 0 0 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.content-tabs {
+    min-width: 0;
+    height: max(360px, calc(100dvh - 80px));
+}
+
+.tab-btn {
+    padding: 7px 5px;
+    font-size: 12px;
+}
+
+.controls-bar {
+    padding: 7px;
+    gap: 6px;
+    justify-content: flex-start;
+    flex-shrink: 0;
+}
+
+.search-container {
+    gap: 4px;
+    min-width: min(100%, 180px);
+}
+
+.search-input {
+    padding: 5px 26px 5px 7px;
+    font-size: 12px;
+}
+
+.toggle-container {
+    gap: 4px;
+    font-size: 12px;
+}
+
+body .video-tabs {
+    margin: 0 !important;
+    padding: 0;
+    gap: 4px;
+}
+
+body .video-tab-btn {
+    padding: 5px 8px !important;
+    font-size: 12px !important;
+    line-height: 1.3;
+}
+
+body .video-tab-buttons,
+body .tab-area-container {
+    margin-bottom: 0 !important;
+}
+
+body .tab-area-container {
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+body .video-tabs .interactive-layer-controls {
+    position: static !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    margin: 0;
+    gap: 4px;
+    min-width: 0;
+    width: 100%;
+}
+
+body .video-tabs:has(#normalVideoTab.active) .interactive-layer-controls {
+    display: none !important;
+}
+
+body .video-tabs .layer-controls-expanded {
+    position: static;
+    flex-wrap: wrap;
+    padding: 4px !important;
+    gap: 4px !important;
+    min-width: 0;
+    box-shadow: none;
+}
+
+body .video-tabs .layer-controls-expanded button {
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+body .video-tabs .controls-toggle-btn {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+.video-container:has(#interactiveVideoTab.active) #videoPlayer {
+    max-height: clamp(180px, calc(100dvh - 490px), 480px);
+}
+
+.toggle-switch {
+    width: 30px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.toggle-slider:before {
+    width: 12px;
+    height: 12px;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(14px);
+}
+
+.tab-body {
+    padding: 6px 8px;
+    max-height: none;
+}
+
+.transcript-line,
+.chapter-item,
+.scene-item {
+    padding: 5px 6px;
+    margin: 2px 0;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.transcript-line.active {
+    padding-left: 6px;
+}
+
+.transcript-timestamp {
+    min-width: 48px;
+    margin-right: 6px;
+    font-size: 11px;
+}
+
+.detection-video-controls {
+    padding: 4px 6px;
+    margin-top: 2px;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.detection-toggle-btn {
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.interactive-layer-controls button {
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.alert {
+    padding: 6px 8px;
+    margin: 4px 0;
+}
+
+@media (max-width: 850px) {
+    .main-content {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .content-tabs {
+        height: 60dvh;
+        min-height: 320px;
+    }
+
+    #videoPlayer {
+        max-height: 45dvh;
+    }
+
+    .video-container:has(#interactiveVideoTab.active) #videoPlayer {
+        max-height: 45dvh;
+    }
+}

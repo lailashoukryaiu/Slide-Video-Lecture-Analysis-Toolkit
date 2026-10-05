@@ -63,6 +63,10 @@
   Video controls and the timeline sit directly below the player. Playback
   auto-scrolls within the transcript and timeline panels, without scrolling
   the surrounding page away from the video.
+  The compact desktop layout keeps controls, video, timeline, and transcript
+  together at normal browser zoom. Buttons and transcript rows use tighter
+  spacing, video height adapts to the viewport, and panels remain scrollable.
+  Narrow screens stack the panels and retain normal page scrolling.
   In HTML, the chapter's subparts and transcript are grouped in indented,
   collapsible sections beneath the chapter. Word, PDF, HTML and outline exports
   share this hierarchy. Without configured AI,
