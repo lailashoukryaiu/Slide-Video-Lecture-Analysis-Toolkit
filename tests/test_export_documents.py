@@ -157,7 +157,35 @@ class ExportDocumentTests(unittest.TestCase):
         with zipfile.ZipFile(response.path) as archive:
             webpage = archive.read("index.html").decode()
             self.assertIn("slide_0000009375.jpg", archive.namelist())
-        self.assertIn("#t=3.775", webpage)
+        self.assertIn("#t=4.775", webpage)
+
+    def test_clip_overlap_adds_one_second_without_changing_transcript_boundaries(self):
+        response = self.run_export(include_webpage=True, include_transcripts=True)
+        clips = [command for command in self.media_commands if command[-1].endswith(".mp4")]
+        starts = [float(command[command.index("-ss") + 1]) for command in clips]
+        self.assertEqual(starts[0], 0)
+        self.assertAlmostEqual(starts[1], 4.6)
+        self.assertAlmostEqual(float(clips[0][clips[0].index("-t") + 1]), 5.6)
+        self.assertNotIn("-t", clips[1], "The last chapter must continue to the video end")
+        with zipfile.ZipFile(response.path) as archive:
+            chapters = json.loads(archive.read("chapters.json"))
+            self.assertAlmostEqual(chapters[1]["start"], 5.6)
+            self.assertAlmostEqual(chapters[1]["clip_start"], 4.6)
+            self.assertIn("1 second of overlap", archive.read("index.html").decode())
+
+    def test_clip_overlap_is_clamped_at_video_start(self):
+        self.functions["TRANSCRIPTS_DIR"].joinpath("lecture.json").write_text(json.dumps([
+            {"start": 0, "duration": 0.4, "text": "First sentence."},
+            {"start": 0.4, "duration": 15.6, "text": "Second sentence."},
+        ]), encoding="utf-8")
+        self.functions["SUMMARIES_DIR"].joinpath("lecture.json").write_text(json.dumps([
+            {"timestamp": "00:00", "title": "First"},
+            {"timestamp": "00:00.4", "title": "Second"},
+        ]), encoding="utf-8")
+        self.run_export(include_webpage=True)
+        clips = [command for command in self.media_commands if command[-1].endswith(".mp4")]
+        self.assertEqual(len(clips), 2)
+        self.assertEqual(float(clips[1][clips[1].index("-ss") + 1]), 0)
 
     def test_html_archive_has_real_hierarchy_and_only_required_assets(self):
         response = self.run_export(include_webpage=True)

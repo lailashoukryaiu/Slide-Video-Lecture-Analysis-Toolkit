@@ -38,6 +38,10 @@
   reassembled into sentences; internal part boundaries move to the next sentence
   start so no transcript words are lost or duplicated. These times are estimated
   from caption timing, while slide links retain the actual detected slide time.
+  Each exported clip after the first starts up to one second early (clamped
+  at the video's beginning), overlapping the previous clip to protect speech
+  from small caption-timing errors. Logical chapter/transcript timestamps stay
+  unchanged, and slide links account for the clip's earlier start.
   Unpunctuated Whisper phrases stay together until a timed speech pause or speaker
   turn; if neither timing nor punctuation identifies a safe break, the utterance
   remains intact rather than introducing arbitrary mid-sentence cuts.

@@ -1602,6 +1602,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             image_cache = {}
             for chapter in chapter_data:
                 number = chapter["index"]
+                chapter["clip_start"] = max(0.0, chapter["start"] - (1.0 if number > 1 else 0.0))
                 step(f"Part {number}/{len(chapter_data)}: preparing {chapter['title']}")
                 safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", chapter["title"]).strip("_") or f"chapter_{number}"
                 base_name = f"{number:02d}_{safe_title}"
@@ -1611,14 +1612,16 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
 
                 ffmpeg_clip = [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                    "-ss", str(chapter["start"]),
+                    "-ss", str(chapter["clip_start"]),
                     "-i", str(video_path),
                 ]
                 if chapter["end"] is not None:
-                    ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["start"])])
+                    ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["clip_start"])])
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
                 if export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
                     step(f"Part {number}/{len(chapter_data)}: encoding video clip with FFmpeg")
+                    if chapter["clip_start"] < chapter["start"]:
+                        step(f"Clip starts {chapter['start'] - chapter['clip_start']:.1f}s early to preserve speech at the boundary")
                     subprocess.run(ffmpeg_clip, check=True)
                 if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
                     prepare_export_image(
@@ -1761,6 +1764,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         f"<figcaption>{html.escape(chapter['title'])}</figcaption></figure>",
                         f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
                         f"<p class=\"media-caption\">{html.escape(chapter['title'])}</p>",
+                        f"<p class=\"subtitle\">Clip starts at {format_chapter_timestamp(chapter['clip_start'])}; "
+                        "later clips include up to 1 second of overlap to protect sentence beginnings.</p>",
                         "<details class=\"chapter-subparts\"><summary>Subparts and transcript</summary>",
                     ])
                     for subpart_index, subpart in enumerate(files["subparts"], start=1):
@@ -1776,7 +1781,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         )
                         for scene in subpart["slides"]:
                             slide_start = export_slide_start(scene)
-                            offset = max(0, slide_start - chapter["start"])
+                            offset = max(0, slide_start - chapter["clip_start"])
                             webpage_parts.extend([
                                 f"<a href=\"{html.escape(clip_name)}#t={offset:.3f}\">"
                                 f"Slide at {format_chapter_timestamp(slide_start)}</a>",
