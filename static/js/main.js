@@ -1,6 +1,7 @@
 // main.js - Main application entry point
 
-import { setupVideoPlayer, updateTimeMarker } from './video.js';
+import { setupVideoPlayer, updateTimeMarker, updateChapterCaptions } from './video.js';
+import { navigationParts } from './chapter-navigation.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
 import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots } from './scenes.js';
 import { generateChapters, updateChapters, exportChapters, updateExportAvailability, refreshSavedExports } from './chapters.js';
@@ -13,6 +14,7 @@ import { initInteractiveLayer } from './interactive-layer.js';
 
 // Global state
 export const state = {
+    chapterGrouping: 'combined',
     currentTranscript: [],
     videoScenes: [],
     sceneDetectionInterval: null,
@@ -159,20 +161,10 @@ let lastKey = null;
 function navigateChapter(direction) {
     const player = elements.videoPlayer;
     if (!player) return;
-    const times = (state.videoChapters || []).map((chapter) => {
-        const parts = String(chapter.timestamp).split(':').map(Number);
-        if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part) || part < 0)) {
-            return NaN;
-        }
-        return parts.reduce((seconds, part) => seconds * 60 + part, 0);
-    }).filter(Number.isFinite).sort((first, second) => first - second);
+    const times = navigationParts(state.videoChapters || [], state.videoScenes || [], state.chapterGrouping)
+        .map((part) => part.start);
     if (!times.length) {
-        if (state.videoScenes?.length) {
-            if (direction > 0) navigateToNextSlide();
-            else navigateToPreviousSlide();
-        } else {
-            showNotification('Generate chapters or detect slides to use Previous and Next.', 'info');
-        }
+        showNotification('Generate chapters or detect slides for the selected navigation mode.', 'info');
         return;
     }
     const currentIndex = times.reduce((index, time, candidate) => (
@@ -319,12 +311,24 @@ function initApp() {
     
     // Add event listeners
     bind(elements.generateSummaryBtn, 'click', generateChapters);
+    const navigationGrouping = document.getElementById('navigationGrouping');
+    const setGrouping = (value) => {
+        state.chapterGrouping = value;
+        if (navigationGrouping) navigationGrouping.value = value;
+        if (elements.chapterGrouping) elements.chapterGrouping.value = value;
+        updateChapterCaptions();
+    };
+    bind(navigationGrouping, 'change', (event) => setGrouping(event.target.value));
+    bind(elements.chapterGrouping, 'change', (event) => setGrouping(event.target.value));
+    document.addEventListener('chaptersUpdated', updateChapterCaptions);
+    document.addEventListener('scenesLoaded', updateChapterCaptions);
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });
     bind(elements.exportChaptersBtn, 'click', () => {
         if (!elements.exportOptionsDialog.open) {
             updateExportAvailability();
+            setGrouping(elements.chapterGrouping.value);
             elements.exportOptionsDialog.showModal();
             void loadExportSuggestions();
             void refreshSavedExports();

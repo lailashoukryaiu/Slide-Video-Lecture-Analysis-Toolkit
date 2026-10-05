@@ -11,6 +11,8 @@ const elements = {videoPlayer: {currentTime: 0}};
 const state = {videoChapters: [
     {timestamp: '00:00'}, {timestamp: '02:00'}, {timestamp: '01:02:03'},
 ], videoScenes: []};
+eval(fs.readFileSync(path.join(__dirname, '..', 'static', 'js', 'chapter-navigation.js'), 'utf8')
+    .replace(/^export /gm, ''));
 let slideDirection;
 let notification;
 const navigateToNextSlide = () => {slideDirection = 1;};
@@ -30,9 +32,20 @@ assert.equal(elements.videoPlayer.currentTime, 0);
 state.videoChapters = [];
 state.videoScenes = [{time_seconds: 0}, {time_seconds: 20}];
 navigateChapter(1);
-assert.equal(slideDirection, 1);
+assert.equal(elements.videoPlayer.currentTime, 20);
 navigateChapter(-1);
-assert.equal(slideDirection, -1);
+assert.equal(elements.videoPlayer.currentTime, 0);
+state.videoChapters = [{timestamp: '00:10', title: 'Topic'}];
+state.chapterGrouping = 'topic';
+navigateChapter(1);
+assert.equal(elements.videoPlayer.currentTime, 10);
+state.chapterGrouping = 'slides';
+navigateChapter(1);
+assert.equal(elements.videoPlayer.currentTime, 20);
+state.chapterGrouping = 'combined';
+navigateChapter(-1);
+assert.equal(elements.videoPlayer.currentTime, 10);
+state.videoChapters = [];
 state.videoScenes = [];
 navigateChapter(1);
 assert(notification.includes('Generate chapters'));

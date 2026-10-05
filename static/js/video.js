@@ -4,6 +4,30 @@ import { elements } from './elements.js';
 import { formatTime } from './utils.js';
 import { state } from './main.js';
 import { updateActiveTranscript } from './transcript.js';
+import { navigationParts, activePart } from './chapter-navigation.js';
+import { scrollWithinContainer } from './scroll-utils.js';
+
+export function updateChapterCaptions() {
+    const parts = navigationParts(state.videoChapters || [], state.videoScenes || [], state.chapterGrouping);
+    const caption = document.getElementById('currentChapterTitle');
+    if (caption) {
+        const text = activePart(parts, elements.videoPlayer.currentTime)?.title
+            || 'No chapter or slide title available at this time.';
+        if (caption.textContent !== text) caption.textContent = text;
+    }
+    document.querySelectorAll('.timeline-item').forEach((item) => {
+        const image = item.querySelector('.timeline-thumbnail');
+        if (!image) return;
+        let title = item.querySelector('.chapter-caption');
+        if (!title) {
+            title = document.createElement('div');
+            title.className = 'chapter-caption';
+            item.appendChild(title);
+        }
+        const text = activePart(parts, Number(image.dataset.time))?.title || 'No chapter title available.';
+        if (title.textContent !== text) title.textContent = text;
+    });
+}
 
 /**
  * Sets up the video progress bar
@@ -25,7 +49,10 @@ export function setupVideoPlayer(videoPlayer) {
     }
 
     const navigationHandlers = {
-        timeupdate: () => updateTimeMarker(videoPlayer),
+        timeupdate: () => {
+            updateTimeMarker(videoPlayer);
+            updateChapterCaptions();
+        },
         timeline: updateTimelineHighlight,
         transcript: updateActiveTranscript
     };
@@ -64,6 +91,7 @@ export function setupVideoPlayer(videoPlayer) {
     
     // Add listener for transcript updates
     videoPlayer.addEventListener('timeupdate', navigationHandlers.transcript);
+    updateChapterCaptions();
 }
 
 /**
@@ -110,17 +138,7 @@ export function updateTimelineHighlight() {
             // Scroll the active thumbnail into view if it's not visible
             const timelineContainer = elements.thumbnailTimeline;
             const thumbnailItem = thumbnail.parentElement;
-            const containerRect = timelineContainer.getBoundingClientRect();
-            const thumbnailRect = thumbnailItem.getBoundingClientRect();
-            
-            // Check if thumbnail is outside the visible area
-            if (thumbnailRect.left < containerRect.left || thumbnailRect.right > containerRect.right) {
-                thumbnailItem.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'nearest',
-                    inline: 'center'
-                });
-            }
+            scrollWithinContainer(timelineContainer, thumbnailItem, 'horizontal');
         } else {
             thumbnail.classList.remove('active');
         }

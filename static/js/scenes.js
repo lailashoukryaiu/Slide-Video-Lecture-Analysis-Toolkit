@@ -2,7 +2,7 @@
 
 import { elements } from './elements.js';
 import { state } from './main.js';
-import { updateTimelineHighlight } from './video.js';
+import { updateTimelineHighlight, updateChapterCaptions } from './video.js';
 import { fetchOcrResults } from './ocr.js';
 import { showError } from './ui.js';
 import { saveBlobToUserLocation } from './utils.js';
@@ -216,6 +216,7 @@ export function updateScenes(scenes, videoPlayer) {
     if (scenes.length === 0) {
         scenesContainer.innerHTML = '<p>No scene changes detected.</p>';
         timelineContainer.innerHTML = '<p>No scenes available for timeline.</p>';
+        updateChapterCaptions();
         return;
     }
     
@@ -322,6 +323,7 @@ export function updateScenes(scenes, videoPlayer) {
     
     // Add timeupdate listener to highlight current thumbnail
     videoPlayer.addEventListener('timeupdate', updateTimelineHighlight);
+    updateChapterCaptions();
 }
 
 /**

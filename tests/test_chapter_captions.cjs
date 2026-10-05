@@ -1,0 +1,47 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const read = (name) => fs.readFileSync(path.join(__dirname, '..', 'static', 'js', name), 'utf8')
+    .replace(/^import .*;\r?$/gm, '').replace(/^export /gm, '');
+const caption = {textContent: ''};
+const items = [5, 25].map((time) => ({
+    image: {dataset: {time}}, caption: null,
+    querySelector(selector) { return selector === '.timeline-thumbnail' ? this.image : this.caption; },
+    appendChild(child) { this.caption = child; },
+}));
+const state = {
+    chapterGrouping: 'combined',
+    videoChapters: [{timestamp: '00:00', title: 'Introduction'}, {timestamp: '00:20', title: '<Learning>'}],
+    videoScenes: [{time_seconds: 0}, {time_seconds: 25}],
+};
+const elements = {videoPlayer: {currentTime: 23}};
+const context = vm.createContext({
+    state, elements, console,
+    document: {
+        getElementById: () => caption,
+        querySelectorAll: () => items,
+        createElement: () => ({textContent: ''}),
+    },
+});
+vm.runInContext(read('chapter-navigation.js') + '\n' + read('video.js'), context);
+context.updateChapterCaptions();
+assert.equal(caption.textContent, '<Learning>');
+assert.equal(items[0].caption.textContent, 'Introduction');
+assert.equal(items[1].caption.textContent, 'Slide 2: <Learning>');
+assert.equal(context.navigationParts(state.videoChapters, state.videoScenes).length, 3);
+state.chapterGrouping = 'topic';
+context.updateChapterCaptions();
+assert.equal(items[1].caption.textContent, '<Learning>');
+state.chapterGrouping = 'slides';
+context.updateChapterCaptions();
+assert.equal(caption.textContent, 'Slide 1: Introduction');
+elements.videoPlayer.currentTime = 26;
+context.updateChapterCaptions();
+assert.equal(caption.textContent, 'Slide 2: <Learning>');
+state.videoChapters = [];
+state.videoScenes = [];
+context.updateChapterCaptions();
+assert(caption.textContent.includes('No chapter'));
+assert(items[0].caption.textContent.includes('No chapter'));
+console.log('PASS: screenshot/video titles, grouping boundaries, safe text and reset');

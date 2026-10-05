@@ -8,12 +8,13 @@ const element = () => ({
     children: [], textContent: '',
     appendChild(child) { this.children.push(child); },
     replaceChildren() { this.children = []; },
+    setAttribute() {},
 });
 const progress = element();
 const history = element();
 const errors = [];
 const context = vm.createContext({
-    state: {currentVideoId: 'video'}, elements: {}, console,
+    state: {currentVideoId: 'video'}, elements: {}, console, TypeError,
     document: {
         createElement: element,
         getElementById: (id) => id === 'exportProgress' ? progress : history,
@@ -24,7 +25,7 @@ const context = vm.createContext({
             status: 'complete', title: '<unsafe title>', created_at: 100,
             open_url: '/export_jobs/test/webpage/index.html',
             download_url: '/export_jobs/test/download',
-        }]}),
+        }, {status: 'error', error: 'Previous export failed'}]}),
     }),
 });
 vm.runInContext(source, context);
@@ -42,5 +43,14 @@ assert(progress.children[1].children[1].textContent.includes('running for 21s'))
     assert.equal(row.children[1].target, '_blank');
     assert.equal(row.children[1].rel, 'noopener');
     assert.equal(row.children[2].textContent, 'Download');
+    const goodFetch = context.fetch;
+    context.fetch = async () => {throw new TypeError('Failed to fetch');};
+    await context.refreshSavedExports();
+    assert(history.children[0].textContent.includes('Could not reach the app server'));
+    assert(history.children[0].textContent.includes('Refresh saved exports'));
+    assert.equal(errors.length, 0, 'History connection errors belong beside the history, not unrelated global errors');
+    context.fetch = goodFetch;
+    await context.refreshSavedExports();
+    assert.equal(history.children[0].textContent, 'Saved exports', 'Successful retry removes the connection error');
     console.log('PASS: export step timing, safe saved titles and browser/download links');
 })().catch((error) => {console.error(error); process.exitCode = 1;});

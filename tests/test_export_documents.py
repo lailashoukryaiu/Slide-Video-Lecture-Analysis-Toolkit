@@ -43,7 +43,7 @@ def load_export_functions():
         "build_outline_points", "parse_chapter_timestamp", "format_chapter_timestamp",
         "chapter_boundaries_from_topics", "chapter_boundaries_from_scenes", "export_slide_start",
         "export_sentences", "align_export_chapters", "export_key_points", "summarize_export_batch",
-        "build_export_subparts", "export_archive_paths",
+        "build_export_subparts", "export_archive_paths", "prepare_export_image",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
     }
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -61,7 +61,7 @@ class ExportDocumentTests(unittest.TestCase):
         self.directory.mkdir()
         self.addCleanup(shutil.rmtree, self.directory)
         self.functions = load_export_functions()
-        for name in ("EXPORTS_DIR", "TRANSCRIPTS_DIR", "SUMMARIES_DIR", "SCENES_DIR", "VIDEO_DIR"):
+        for name in ("EXPORTS_DIR", "TRANSCRIPTS_DIR", "SUMMARIES_DIR", "SCENES_DIR", "VIDEO_DIR", "FULLSIZE_IMAGES_DIR"):
             directory = self.directory / name
             directory.mkdir()
             self.functions[name] = directory
@@ -86,10 +86,12 @@ class ExportDocumentTests(unittest.TestCase):
         ]), encoding="utf-8")
 
     def run_export(self, **options):
+        self.media_commands = []
         async def request_json():
             return options
 
         def run_media(command, **kwargs):
+            self.media_commands.append(command)
             if command[0] == "ffprobe":
                 return SimpleNamespace(stdout="16")
             target = Path(command[-1])
@@ -169,6 +171,8 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertIn('<details class="chapter-subparts">', webpage)
             self.assertIn('<details class="subpart">', webpage)
             self.assertIn("No AI-generated summary available.", webpage)
+            self.assertRegex(webpage, r'<figcaption>Neural networks</figcaption>')
+            self.assertRegex(webpage, r'</video>\s*<p class="media-caption">Neural networks</p>')
             self.assertNotIn("<summary>Key point", webpage)
             self.assertIn("Extractive key sentences (AI not configured)", webpage)
             self.assertIn("Slide at 00:00:09", webpage)
@@ -219,6 +223,29 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertGreater(response.path.stat().st_size, 1000)
         self.assertTrue(any(call.args[1].name == "Heading2" for call in paragraphs))
         print("PDF: built", response.path.stat().st_size, "bytes with timestamped Heading2 subparts.")
+
+    def test_saved_slides_are_copied_not_reextracted(self):
+        folder = self.functions["FULLSIZE_IMAGES_DIR"] / "lecture"
+        folder.mkdir()
+        for index in range(2):
+            PillowImage.new("RGB", (40, 20), "blue").save(folder / f"{index}.jpg")
+        response = self.run_export(include_webpage=True)
+        image_times = [float(command[command.index("-ss") + 1])
+                       for command in self.media_commands if command[-1].endswith(".jpg")]
+        self.assertNotIn(0, image_times)
+        self.assertNotIn(9, image_times)
+        self.assertEqual(len(image_times), 1, "Only the sentence-aligned chapter start needs a new capture")
+        with zipfile.ZipFile(response.path) as archive:
+            self.assertEqual(archive.read("slide_0000000000.jpg"), (folder / "0.jpg").read_bytes())
+            self.assertEqual(archive.read("slide_0000009000.jpg"), (folder / "1.jpg").read_bytes())
+            self.assertEqual(archive.read("01_Neural_networks.jpg"), (folder / "0.jpg").read_bytes())
+
+    def test_missing_saved_images_are_extracted_only_once_per_timestamp(self):
+        self.run_export(include_webpage=True)
+        image_times = [float(command[command.index("-ss") + 1])
+                       for command in self.media_commands if command[-1].endswith(".jpg")]
+        self.assertEqual(image_times.count(0), 1, "Chapter/slide images at the same time should share a capture")
+        self.assertEqual(image_times.count(9), 1)
 
     def test_packaged_export_survives_locked_intermediate_files(self):
         paths = set()

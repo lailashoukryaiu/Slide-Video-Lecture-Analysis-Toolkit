@@ -155,7 +155,14 @@ export async function refreshSavedExports() {
             container.appendChild(row);
         });
     } catch (error) {
-        showError(`Could not load saved exports: ${error.message}`);
+        if (state.currentVideoId !== videoId) return;
+        container.replaceChildren();
+        const message = document.createElement('p');
+        message.setAttribute('role', 'alert');
+        message.textContent = error instanceof TypeError
+            ? 'Could not reach the app server to load saved exports. A failed export does not remove saved history. Wait for the server to finish restarting, then click Refresh saved exports.'
+            : `Could not load saved exports: ${error.message}. Click Refresh saved exports to retry.`;
+        container.appendChild(message);
     }
 }
 

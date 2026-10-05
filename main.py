@@ -965,6 +965,7 @@ def chapter_boundaries_from_scenes(scenes):
             "timestamp": str(scene["timestamp"]),
             "time_seconds": float(scene.get("time_seconds", parse_chapter_timestamp(str(scene["timestamp"])))),
             "title": str(scene.get("title") or f"Slide change {index + 1}"),
+            "image_index": index,
         }
         for index, scene in enumerate(scenes)
         if isinstance(scene, dict) and "timestamp" in scene
@@ -972,6 +973,28 @@ def chapter_boundaries_from_scenes(scenes):
 
 def export_slide_start(scene):
     return float(scene.get("time_seconds", parse_chapter_timestamp(scene["timestamp"])))
+
+
+def prepare_export_image(video_id, video_path, timestamp, scenes, destination, cache, step):
+    key = round(timestamp * 1000)
+    source = cache.get(key)
+    if source is None:
+        matching = next((scene for scene in scenes if abs(export_slide_start(scene) - timestamp) < 0.001), None)
+        if matching is not None:
+            saved = FULLSIZE_IMAGES_DIR / video_id / f"{matching['image_index']}.jpg"
+            if saved.is_file():
+                source = saved
+    if source is not None:
+        step(f"Reusing extracted slide image at {format_chapter_timestamp(timestamp)}")
+        shutil.copy2(source, destination)
+    else:
+        step(f"Extracting missing export image at {format_chapter_timestamp(timestamp)}")
+        subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-ss", str(timestamp), "-i", str(video_path),
+            "-frames:v", "1", str(destination),
+        ], check=True)
+    cache[key] = destination
 
 
 def combine_chapter_boundaries(topic_chapters, scene_chapters):
@@ -1576,6 +1599,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             ) if requested_filename else export_root / f"{export_title}_chapters.zip"
             chaptered_lines = [f"# {document_title}", ""]
             chapter_files = []
+            image_cache = {}
             for chapter in chapter_data:
                 number = chapter["index"]
                 step(f"Part {number}/{len(chapter_data)}: preparing {chapter['title']}")
@@ -1597,12 +1621,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     step(f"Part {number}/{len(chapter_data)}: encoding video clip with FFmpeg")
                     subprocess.run(ffmpeg_clip, check=True)
                 if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
-                    step(f"Part {number}/{len(chapter_data)}: extracting the chapter image")
-                    subprocess.run([
-                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                    "-ss", str(chapter["start"]), "-i", str(video_path),
-                    "-frames:v", "1", str(image_path)
-                    ], check=True)
+                    prepare_export_image(
+                        video_id, video_path, chapter["start"], scene_chapters,
+                        image_path, image_cache, step,
+                    )
 
                 chapter_transcript = [
                     item for item in transcript
@@ -1674,12 +1696,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                             if not scene["image"].is_file() and any(export_flags[name] for name in (
                                 "include_webpage", "include_scorm", "include_word", "include_pdf", "include_outline",
                             )):
-                                step(f"Part {number}/{len(chapter_data)}: extracting slide at {format_chapter_timestamp(slide_start)}")
-                                subprocess.run([
-                                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                                    "-ss", str(slide_start), "-i", str(video_path),
-                                    "-frames:v", "1", str(scene["image"]),
-                                ], check=True)
+                                prepare_export_image(
+                                    video_id, video_path, slide_start, scene_chapters,
+                                    scene["image"], image_cache, step,
+                                )
                 chaptered_lines.extend([
                     f"## Part {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
@@ -1714,6 +1734,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "section{border-top:1px solid #ccc;padding:2rem 0}img,video{max-width:100%;display:block;margin:1rem 0}"
                     "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}"
                     ".chapter-summary{font-size:1.05rem;line-height:1.5}"
+                    "figure{margin:1rem 0}figcaption,.media-caption{font-weight:bold;margin:.5rem 0 1.5rem}"
                     ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid #ddd}"
                     ".subpart{margin-left:1rem;padding:.5rem 0}.subpart>summary{font-weight:bold}</style></head><body>",
                     f"<h1>{html.escape(document_title)}</h1>",
@@ -1736,8 +1757,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
                         f"<p class=\"chapter-summary\"><strong>Summary:</strong> {summary_text}</p>",
                         f"<p class=\"subtitle\">{html.escape(files['point_method'])}</p>",
-                        f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
+                        f"<figure><img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">"
+                        f"<figcaption>{html.escape(chapter['title'])}</figcaption></figure>",
                         f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
+                        f"<p class=\"media-caption\">{html.escape(chapter['title'])}</p>",
                         "<details class=\"chapter-subparts\"><summary>Subparts and transcript</summary>",
                     ])
                     for subpart_index, subpart in enumerate(files["subparts"], start=1):
@@ -1757,7 +1780,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                             webpage_parts.extend([
                                 f"<a href=\"{html.escape(clip_name)}#t={offset:.3f}\">"
                                 f"Slide at {format_chapter_timestamp(slide_start)}</a>",
-                                f"<img src=\"{html.escape(scene['image'].name)}\" alt=\"{html.escape(scene['title'])}\">",
+                                f"<figure><img src=\"{html.escape(scene['image'].name)}\" alt=\"{html.escape(scene['title'])}\">"
+                                f"<figcaption>{html.escape(chapter['title'])} - {subpart_title}</figcaption></figure>",
                             ])
                         webpage_parts.append("<ul>" + "".join(
                             f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]

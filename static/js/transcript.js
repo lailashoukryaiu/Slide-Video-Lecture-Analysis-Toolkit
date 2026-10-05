@@ -2,6 +2,7 @@
 
 import { elements } from './elements.js';
 import { state } from './main.js';
+import { scrollWithinContainer } from './scroll-utils.js';
 
 /**
  * Loads the transcript data into the application
@@ -120,17 +121,6 @@ export function updateActiveTranscript() {
 
         // Only scroll if not visible
         const container = elements.transcriptContainer;
-        const lineRect = activeLine.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-
-        const isVisible = (lineRect.top >= containerRect.top && 
-                         lineRect.bottom <= containerRect.bottom);
-
-        if (!isVisible) {
-            activeLine.scrollIntoView({ 
-                behavior: 'smooth', 
-                block: 'center'
-            });
-        }
+        scrollWithinContainer(container, activeLine);
     }
 } 

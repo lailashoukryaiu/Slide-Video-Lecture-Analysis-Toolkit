@@ -42,12 +42,24 @@
   turn; if neither timing nor punctuation identifies a safe break, the utterance
   remains intact rather than introducing arbitrary mid-sentence cuts.
   Each chapter also includes a concise summary in the transcript's language.
+  The app's **Navigate by** selector chooses content chapters, slide changes,
+  or both for Previous/Next navigation and synchronizes with export grouping.
+  Titles appear beneath timeline screenshots and the playing video; HTML
+  exports repeat chapter titles beneath each screenshot and chapter clip.
+  Exports reuse saved full-size slide screenshots at matching timestamps, at
+  their saved resolution. New captures are made only for missing images or
+  chapter starts that do not match a detected slide; duplicate timestamps share
+  one capture within an export.
+  Video controls and the timeline sit directly below the player. Playback
+  auto-scrolls within the transcript and timeline panels, without scrolling
+  the surrounding page away from the video.
   In HTML, the chapter's subparts and transcript are grouped in indented,
   collapsible sections beneath the chapter. Word, PDF, HTML and outline exports
   share this hierarchy. Without configured AI,
   points are explicitly labelled extractive full sentences; configured AI failures
   are reported instead of silently substituting fabricated summaries. Select
-  slide-only subparts to export without AI summarization. HTML downloads as a ZIP
+  slide-only subparts to omit AI key-point sections; chapter summaries are still
+  generated when AI is configured. HTML downloads as a ZIP
   containing `index.html` and its required media: extract the complete package and
   open `index.html` locally. TXT/Markdown/JSON transcript files are packaged only
   when **Transcript files** is selected; other explicitly chosen formats remain

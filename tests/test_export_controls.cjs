@@ -11,6 +11,7 @@ let handler;
 let opened = false;
 let suggestionsRequested = false;
 const elements = {
+    chapterGrouping: {value: 'combined'},
     exportChaptersBtn: {},
     exportOptionsDialog: {
         open: false,
@@ -31,6 +32,7 @@ const loadExportSuggestions = () => {
     return new Promise(() => {});
 };
 const refreshSavedExports = async () => {};
+const setGrouping = () => {};
 
 eval(source.slice(start, end));
 handler();
