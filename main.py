@@ -960,10 +960,17 @@ def chapter_boundaries_from_topics(chapters):
 
 def chapter_boundaries_from_scenes(scenes):
     return [
-        {"timestamp": str(scene["timestamp"]), "title": f"Slide change {index + 1}"}
+        {
+            "timestamp": str(scene["timestamp"]),
+            "time_seconds": float(scene.get("time_seconds", parse_chapter_timestamp(str(scene["timestamp"])))),
+            "title": str(scene.get("title") or f"Slide change {index + 1}"),
+        }
         for index, scene in enumerate(scenes)
         if isinstance(scene, dict) and "timestamp" in scene
     ]
+
+def export_slide_start(scene):
+    return float(scene.get("time_seconds", parse_chapter_timestamp(scene["timestamp"])))
 
 
 def combine_chapter_boundaries(topic_chapters, scene_chapters):
@@ -978,16 +985,206 @@ def combine_chapter_boundaries(topic_chapters, scene_chapters):
         for seconds, title in sorted(boundaries.items())
     ]
 
+def export_sentences(transcript):
+    """Join caption fragments; punctuation or a speech pause closes an utterance."""
+    sentences, words = [], []
+    ordered = sorted(transcript, key=lambda item: float(item.get("start", 0)))
+    previous_end, previous_speaker = None, None
+    for index, item in enumerate(ordered):
+        tokens = str(item.get("text", "")).split()
+        start = float(item.get("start", 0))
+        duration = float(item.get("duration", 0) or 0)
+        explicit_end = float(item.get("end", start + duration) or start + duration)
+        if duration <= 0 and explicit_end > start:
+            duration = explicit_end - start
+        speaker = item.get("speaker")
+        # Whisper sometimes emits unpunctuated phrases. A real pause (not an
+        # arbitrary caption boundary) or speaker turn is a safe utterance break.
+        if words and (
+            (previous_end is not None and start - previous_end >= 1.2)
+            or (speaker and previous_speaker and speaker != previous_speaker)
+        ):
+            sentences.append({
+                "start": words[0][1], "text": " ".join(word[0] for word in words),
+                "speaker": words[0][2],
+            })
+            words = []
+        previous_end = start + duration if duration > 0 else None
+        previous_speaker = speaker
+        if duration <= 0 and index + 1 < len(ordered):
+            duration = max(0, float(ordered[index + 1].get("start", start)) - start)
+        for offset, token in enumerate(tokens):
+            words.append((token, start + duration * offset / len(tokens), item.get("speaker")))
+            # Avoid decimal numbers and common abbreviations as sentence endings.
+            abbreviation = token.lower().rstrip('"\'”)') in {
+                "mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e.", "vs.", "etc.",
+            }
+            if re.search(r'[.!?。！？]["\'”’)\]]*$', token) and not abbreviation:
+                sentences.append({
+                    "start": words[0][1], "text": " ".join(word[0] for word in words),
+                    "speaker": words[0][2],
+                })
+                words = []
+    if words:
+        sentences.append({
+            "start": words[0][1], "text": " ".join(word[0] for word in words),
+            "speaker": words[0][2],
+        })
+    return sentences
+
+
+def align_export_chapters(chapters, sentences):
+    """Move internal boundaries forward; never drop the opening transcript."""
+    result = []
+    for chapter in sorted(chapters, key=lambda item: parse_chapter_timestamp(item["timestamp"])):
+        source_start = parse_chapter_timestamp(chapter["timestamp"])
+        start = 0 if not result else next(
+            (item["start"] for item in sentences if item["start"] >= source_start), None
+        )
+        if start is None:
+            if not sentences:
+                start = source_start
+            else:
+                continue
+        if result and start <= result[-1]["start"]:
+            continue
+        result.append({
+            "index": len(result) + 1, "title": chapter["title"],
+            "start": start, "source_start": source_start, "end": None,
+        })
+    for current, following in zip(result, result[1:]):
+        current["end"] = following["start"]
+    return result
+
+
+async def export_key_points(sentences):
+    """Use the existing provider chain, or clearly labelled extractive sentences."""
+    if not sentences:
+        return [], "No spoken content"
+    summary_processor._refresh_clients()
+    chain = summary_processor._provider_chain()
+    if not chain:
+        return build_outline_points(sentences), "Extractive key sentences (AI not configured)"
+    failures = []
+    # Bound prompt size without truncating a sentence.
+    batches, batch, characters = [], [], 0
+    for index, sentence in enumerate(sentences):
+        text = sentence["text"]
+        if batch and characters + len(text) > 10000:
+            batches.append(batch)
+            batch, characters = [], 0
+        batch.append({"id": index, "text": text})
+        characters += len(text)
+    if batch:
+        batches.append(batch)
+    points = []
+    for batch in batches:
+        prompt = (
+            "Summarize the important ideas in these lecture sentences in their original language. "
+            "Return a JSON object with a points array (1 to 4 items). Each item must contain "
+            "sentence_id (an input id), title (a meaningful specific topic, not 'Key point'), "
+            "and text (a concise complete-sentence summary with terminal punctuation, "
+            "grounded only in this transcript). "
+            "Do not invent facts. Input:\n" + json.dumps(batch, ensure_ascii=False)
+        )
+        for provider, model in chain:
+            try:
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(summary_processor._complete, provider, model, prompt, 0.2),
+                    timeout=90,
+                )
+                data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()))
+                validated = []
+                allowed = {item["id"] for item in batch}
+                for point in data.get("points", []):
+                    sentence_id = point.get("sentence_id")
+                    title, text = str(point.get("title", "")).strip(), str(point.get("text", "")).strip()
+                    if not isinstance(sentence_id, int) or sentence_id not in allowed or not title or not text:
+                        raise ValueError("AI returned invalid key points")
+                    if title.lower() in {"key point", "important point", "topic"}:
+                        raise ValueError("AI returned generic key-point titles")
+                    if not re.search(r'[.!?。！？]["\'”’)\]]*$', text):
+                        raise ValueError("AI returned an incomplete key-point sentence")
+                    validated.append({"start": sentences[sentence_id]["start"], "title": title, "text": text})
+                if not validated:
+                    raise ValueError("AI returned no key points")
+                points.extend(validated)
+                break
+            except Exception as error:
+                failures.append(f"{provider} {model}: {error}")
+        else:
+            raise HTTPException(status_code=502, detail="Could not summarize export key points: " + " | ".join(failures))
+    return sorted(points, key=lambda point: point["start"]), "AI-summarized key points"
+
+
+def build_export_subparts(chapter, sentences, points, scenes, mode):
+    boundaries = {}
+    for kind, entries in (
+        ("point", points if mode in {"points", "both"} else []),
+        ("slide", scenes if mode in {"slides", "both"} else []),
+    ):
+        for entry in entries:
+            source_start = entry["start"] if kind == "point" else export_slide_start(entry)
+            if source_start < chapter["start"] or (chapter["end"] is not None and source_start >= chapter["end"]):
+                continue
+            start = next((item["start"] for item in sentences if item["start"] >= source_start), None)
+            if start is None or (chapter["end"] is not None and start >= chapter["end"]):
+                # Still retain the slide event, even if it occurs during the last sentence.
+                start = sentences[-1]["start"] if sentences else chapter["start"]
+            item = boundaries.setdefault(start, {"start": start, "points": [], "slides": []})
+            item["points" if kind == "point" else "slides"].append(entry)
+    boundaries.setdefault(chapter["start"], {"start": chapter["start"], "points": [], "slides": []})
+    subparts = [boundaries[start] for start in sorted(boundaries)]
+    for index, subpart in enumerate(subparts):
+        end = subparts[index + 1]["start"] if index + 1 < len(subparts) else chapter["end"]
+        subpart["sentences"] = [
+            item for item in sentences if item["start"] >= subpart["start"]
+            and (end is None or item["start"] < end)
+        ]
+        subpart["title"] = (
+            subpart["points"][0]["title"] if subpart["points"] else
+            " ".join(subpart["sentences"][0]["text"].split()[:10]).rstrip(".,!?")
+            if subpart["sentences"] else chapter["title"]
+        )
+    return subparts
+
+
+def export_archive_paths(directory, flags):
+    """Include chosen deliverables and referenced webpage assets, not working files."""
+    webpage = flags["include_webpage"] or flags["include_scorm"]
+    names = set()
+    if webpage:
+        names.add("index.html")
+    if flags["include_scorm"]:
+        names.update({"imsmanifest.xml", "scorm_api.js"})
+    if flags["include_word"]:
+        names.add("chapter_document.docx")
+    if flags["include_pdf"]:
+        names.add("chapter_document.pdf")
+    if flags["include_outline"]:
+        names.add("video_outline.docx")
+    if flags["include_transcripts"]:
+        names.update({"transcript_by_chapter.md", "chapters.json"})
+    return [
+        path for path in directory.iterdir() if path.name in names
+        or (path.suffix == ".jpg" and (flags["include_images"] or webpage))
+        or (path.suffix == ".mp4" and (flags["include_clips"] or webpage))
+        or (path.suffix == ".txt" and flags["include_transcripts"])
+    ]
+
+
 def create_combined_chapter_documents(
     chapters, chapter_files, pdf_path=None, docx_path=None,
     pdf_text=True, pdf_images=True, word_text=True, word_images=True,
-    document_title="Lecture Chapters", document_subtitle=None
+    document_title="Lecture Chapters", document_subtitle=None, timestamp_mode="subpart",
 ):
     """Create title, screenshot, and transcript documents for all chapters."""
+    if not pdf_path and not docx_path:
+        return
     styles = getSampleStyleSheet()
-    pdf_story = [Paragraph(document_title, styles["Title"])] if pdf_path else None
+    pdf_story = [Paragraph(html.escape(document_title), styles["Title"])] if pdf_path else None
     if pdf_story is not None and document_subtitle:
-        pdf_story.append(Paragraph(document_subtitle, styles["Italic"]))
+        pdf_story.append(Paragraph(html.escape(document_subtitle), styles["Italic"]))
     word_document = Document() if docx_path else None
     if word_document:
         word_document.add_heading(document_title, level=0)
@@ -1013,7 +1210,7 @@ def create_combined_chapter_documents(
 
         if pdf_story is not None:
             pdf_story.extend([
-            Paragraph(heading, styles["Heading1"]),
+            Paragraph(html.escape(heading), styles["Heading1"]),
             Paragraph(f"Starts at {timestamp}", styles["Normal"]),
             Spacer(1, 0.15 * inch),
             ])
@@ -1023,23 +1220,65 @@ def create_combined_chapter_documents(
                 Spacer(1, 0.15 * inch),
             ])
         if pdf_story is not None and pdf_text:
-            pdf_story.append(Paragraph(
-            (transcript or "No transcript available for this chapter.")
-            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            .replace("\n", "<br/>"),
-            styles["BodyText"],
-            ))
+            for subpart in files.get("subparts", []):
+                pdf_story.append(Paragraph(
+                    html.escape(subpart["title"] + (
+                        f" ({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else ""
+                    )),
+                    styles["Heading2"],
+                ))
+                for scene in subpart["slides"]:
+                    pdf_story.append(Paragraph(
+                        f"Slide at {format_chapter_timestamp(export_slide_start(scene))}",
+                        styles["Normal"],
+                    ))
+                    if pdf_images and scene["image"].is_file():
+                        pdf_story.append(PdfImage(str(scene["image"]), width=6.5 * inch,
+                                                  height=3.65 * inch, kind="proportional"))
+                for point in subpart["points"]:
+                    pdf_story.append(Paragraph(html.escape(point["text"]), styles["BodyText"]))
+                pdf_story.append(Paragraph(
+                    html.escape(subpart["transcript"]).replace("\n", "<br/>"), styles["BodyText"]
+                ))
+            if not files.get("subparts"):
+                pdf_story.append(Paragraph(
+                    html.escape(transcript or "No transcript available for this chapter.")
+                    .replace("\n", "<br/>"), styles["BodyText"],
+                ))
         if word_document:
             word_document.add_heading(heading, level=1)
             word_document.add_paragraph(f"Starts at {timestamp}")
+            if files.get("point_method"):
+                word_document.add_paragraph(files["point_method"], style="Caption")
+        if pdf_story is not None and files.get("point_method"):
+            pdf_story.append(Paragraph(html.escape(files["point_method"]), styles["Italic"]))
         if word_document and word_images and image_path is not None:
             try:
                 word_document.add_picture(str(image_path), width=Inches(6.5))
             except UnrecognizedImageError:
                 pass
         if word_document and word_text:
-            word_document.add_heading("Transcript", level=2)
-            word_document.add_paragraph(transcript or "No transcript available for this chapter.")
+            for subpart in files.get("subparts", []):
+                word_document.add_heading(
+                    subpart["title"] + (
+                        f" ({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else ""
+                    ), level=2
+                )
+                for scene in subpart["slides"]:
+                    word_document.add_paragraph(
+                        f"Slide at {format_chapter_timestamp(export_slide_start(scene))}"
+                    )
+                    if word_images and scene["image"].is_file():
+                        try:
+                            word_document.add_picture(str(scene["image"]), width=Inches(6.5))
+                        except UnrecognizedImageError:
+                            pass
+                for point in subpart["points"]:
+                    word_document.add_paragraph(point["text"], style="List Bullet")
+                word_document.add_paragraph(subpart["transcript"] or "No spoken content.")
+            if not files.get("subparts"):
+                word_document.add_heading("Transcript", level=2)
+                word_document.add_paragraph(transcript or "No transcript available for this chapter.")
     footnote = "Transcription model: faster-whisper turbo."
     if pdf_story is not None:
         pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
@@ -1062,16 +1301,17 @@ async def export_chapters(video_id: str, request: Request):
     transcript_language = str(options.get("transcript_language", "")).strip()
     if transcript_language and transcript_language not in {"de", "en", "ar", "pl"}:
         raise HTTPException(status_code=400, detail="Invalid transcript language")
-    chapter_grouping = options.get("chapter_grouping", "topic")
+    chapter_grouping = options.get("chapter_grouping", "combined")
     if chapter_grouping not in {"topic", "slides", "combined"}:
         raise HTTPException(status_code=400, detail="Invalid chapter grouping")
-    timestamp_mode = options.get("timestamp_mode", "original")
+    timestamp_mode = options.get("timestamp_mode", "subpart")
     if timestamp_mode not in {"original", "part", "subpart"}:
         raise HTTPException(status_code=400, detail="Invalid timestamp mode")
-    subpart_mode = options.get("subpart_mode", "points")
+    subpart_mode = options.get("subpart_mode", "both")
     if subpart_mode not in {"points", "slides", "both"}:
         raise HTTPException(status_code=400, detail="Invalid subpart mode")
-    export_flags = {name: bool(options.get(name, True)) for name in (
+    format_selected = any(name.startswith("include_") for name in options)
+    export_flags = {name: bool(options.get(name, not format_selected and name == "include_word")) for name in (
         "include_images", "include_transcripts", "include_clips",
         "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
     )}
@@ -1092,6 +1332,9 @@ async def export_chapters(video_id: str, request: Request):
 
     try:
         scene_chapters = []
+        if scene_path.is_file():
+            with scene_path.open("r", encoding="utf-8") as file:
+                scene_chapters = chapter_boundaries_from_scenes(json.load(file))
         if interval_minutes is not None:
             try:
                 interval_seconds = float(interval_minutes) * 60
@@ -1113,7 +1356,6 @@ async def export_chapters(video_id: str, request: Request):
             ]
         else:
             topic_chapters = []
-            scene_chapters = []
             if summary_path.is_file():
                 with summary_path.open("r", encoding="utf-8") as file:
                     topic_chapters = chapter_boundaries_from_topics(json.load(file))
@@ -1149,6 +1391,7 @@ async def export_chapters(video_id: str, request: Request):
                 with transcript_path.open("r", encoding="utf-8") as file:
                     transcript = json.load(file)
                 break
+        transcript = export_sentences(transcript)
         transcript_required = any((
             export_flags["include_transcripts"],
             export_flags["include_word"],
@@ -1169,22 +1412,7 @@ async def export_chapters(video_id: str, request: Request):
             except (OSError, json.JSONDecodeError):
                 speaker_names = {}
 
-        chapter_data = []
-        for index, chapter in enumerate(chapters):
-            if not isinstance(chapter, dict) or "timestamp" not in chapter:
-                continue
-            start = parse_chapter_timestamp(str(chapter["timestamp"]))
-            end = (
-                parse_chapter_timestamp(str(chapters[index + 1]["timestamp"]))
-                if index + 1 < len(chapters)
-                else None
-            )
-            chapter_data.append({
-                "index": len(chapter_data) + 1,
-                "title": str(chapter.get("title", f"Chapter {index + 1}")),
-                "start": start,
-                "end": end,
-            })
+        chapter_data = align_export_chapters(chapters, transcript)
         if not chapter_data:
             raise HTTPException(status_code=400, detail="Chapter timestamps are invalid")
 
@@ -1297,13 +1525,42 @@ async def export_chapters(video_id: str, request: Request):
                     "image": image_path,
                     "clip": clip_path,
                     "transcript": transcript_path,
-                    "outline_points": build_outline_points(chapter_transcript),
+                    "outline_points": [],
                     "slide_subparts": [
                         scene for scene in scene_chapters
-                        if chapter["start"] <= parse_chapter_timestamp(scene["timestamp"])
-                        and (chapter["end"] is None or parse_chapter_timestamp(scene["timestamp"]) < chapter["end"])
+                        if chapter["start"] <= export_slide_start(scene)
+                        and (chapter["end"] is None or export_slide_start(scene) < chapter["end"])
                     ],
                 })
+                files = chapter_files[-1]
+                needs_structure = any(export_flags[name] for name in (
+                    "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
+                ))
+                if needs_structure:
+                    if subpart_mode in {"points", "both"}:
+                        files["outline_points"], files["point_method"] = await export_key_points(chapter_transcript)
+                    else:
+                        files["point_method"] = "Slide-based sections"
+                    files["subparts"] = build_export_subparts(
+                        chapter, chapter_transcript, files["outline_points"], scene_chapters, subpart_mode
+                    )
+                    for subpart in files["subparts"]:
+                        subpart["transcript"] = "\n".join(
+                            format_export_transcript_item(item) if timestamp_mode == "original"
+                            else re.sub(r"^\[[^\]]+\]\s*", "", format_export_transcript_item(item))
+                            for item in subpart["sentences"]
+                        )
+                        for scene in subpart["slides"]:
+                            slide_start = export_slide_start(scene)
+                            scene["image"] = temp_dir / f"slide_{int(slide_start * 1000):010d}.jpg"
+                            if not scene["image"].is_file() and any(export_flags[name] for name in (
+                                "include_webpage", "include_scorm", "include_word", "include_pdf", "include_outline",
+                            )):
+                                subprocess.run([
+                                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                                    "-ss", str(slide_start), "-i", str(video_path),
+                                    "-frames:v", "1", str(scene["image"]),
+                                ], check=True)
                 chaptered_lines.extend([
                     f"## Part {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
@@ -1314,7 +1571,8 @@ async def export_chapters(video_id: str, request: Request):
 
             if export_flags["include_transcripts"]:
                 (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
-            (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
+            if export_flags["include_transcripts"]:
+                (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
             create_combined_chapter_documents(
                 chapter_data, chapter_files,
                 temp_dir / "chapter_document.pdf" if export_flags["include_pdf"] else None,
@@ -1323,6 +1581,7 @@ async def export_chapters(video_id: str, request: Request):
                 word_text=export_flags["include_word"], word_images=export_flags["include_word"],
                 document_title=document_title,
                 document_subtitle=document_subtitle,
+                timestamp_mode=timestamp_mode,
             )
             if export_flags["include_webpage"] or export_flags["include_scorm"]:
                 webpage_parts = [
@@ -1341,25 +1600,32 @@ async def export_chapters(video_id: str, request: Request):
                 for chapter, files in zip(chapter_data, chapter_files):
                     image_name = files["image"].name
                     clip_name = files["clip"].name
-                    transcript_html = html.escape(files["transcript"].read_text(encoding="utf-8"))
-                    point_details = "".join(
-                        f"<details><summary>Key point — {format_chapter_timestamp(point['start'])}</summary>"
-                        f"<p>{html.escape(point['text'])}</p></details>"
-                        for point in files["outline_points"]
-                    )
-                    if not point_details:
-                        point_details = "<p>No key points were available for this part.</p>"
                     webpage_parts.extend([
                         f"<section><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
                         f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
-                            f"<details><summary><strong>Part {chapter['index']}: {html.escape(chapter['title'])}</strong> "
-                            f"({format_chapter_timestamp(chapter['start'])})</summary>",
-                            f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
-                            f"<video controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
-                            f"<details><summary>Transcript and key points</summary>{point_details}"
-                            f"<pre>{transcript_html}</pre></details>",
-                            "</details></section>",
-                        ])
+                        f"<p class=\"subtitle\">{html.escape(files['point_method'])}</p>",
+                        f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
+                        f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
+                    ])
+                    for subpart in files["subparts"]:
+                        webpage_parts.append(
+                            f"<section class=\"subpart\"><h3>{html.escape(subpart['title'])} "
+                            + (f"({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else "")
+                            + "</h3>"
+                        )
+                        for scene in subpart["slides"]:
+                            slide_start = export_slide_start(scene)
+                            offset = max(0, slide_start - chapter["start"])
+                            webpage_parts.extend([
+                                f"<a href=\"{html.escape(clip_name)}#t={offset:.3f}\">"
+                                f"Slide at {format_chapter_timestamp(slide_start)}</a>",
+                                f"<img src=\"{html.escape(scene['image'].name)}\" alt=\"{html.escape(scene['title'])}\">",
+                            ])
+                        webpage_parts.append("<ul>" + "".join(
+                            f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]
+                        ) + "</ul>")
+                        webpage_parts.append(f"<pre>{html.escape(subpart['transcript'])}</pre></section>")
+                    webpage_parts.append("</section>")
                 webpage_parts.append("</body></html>")
                 (temp_dir / "index.html").write_text("\n".join(webpage_parts), encoding="utf-8")
             if export_flags["include_outline"]:
@@ -1379,34 +1645,28 @@ async def export_chapters(video_id: str, request: Request):
                             "Key points",
                             style="Intense Quote",
                         )
-                        outline_items = []
-                        if subpart_mode in {"points", "both"}:
-                            outline_items.extend(
-                                ("point", point["start"], point["title"], point["text"])
-                                for point in files["outline_points"]
-                            )
-                        if subpart_mode in {"slides", "both"}:
-                            outline_items.extend(
-                                (
-                                    "slide",
-                                    parse_chapter_timestamp(scene["timestamp"]),
-                                    scene["title"],
-                                    scene["title"],
-                                )
-                                for scene in files["slide_subparts"]
-                            )
-                        outline_items.sort(key=lambda item: item[1])
-                        if outline_items:
-                            for label, start, title, text in outline_items:
+                        outline_document.add_paragraph(files["point_method"])
+                        if files["subparts"]:
+                            for subpart in files["subparts"]:
                                 outline_document.add_heading(
-                                    f"{title} ({format_chapter_timestamp(start)})",
+                                    f"{subpart['title']} ({format_chapter_timestamp(subpart['start'])})",
                                     level=3,
                                 )
-                                if label == "point":
+                                for point in subpart["points"]:
                                     outline_document.add_paragraph(
-                                        text,
+                                        point["text"],
                                         style="List Bullet 2",
                                     )
+                                for scene in subpart["slides"]:
+                                    outline_document.add_paragraph(
+                                        f"Slide at {format_chapter_timestamp(export_slide_start(scene))}"
+                                    )
+                                    if scene["image"].is_file():
+                                        try:
+                                            outline_document.add_picture(str(scene["image"]), width=Inches(6.5))
+                                        except UnrecognizedImageError:
+                                            pass
+                                outline_document.add_paragraph(subpart["transcript"] or "No spoken content.")
                         else:
                             outline_document.add_paragraph(
                                 "No spoken content was available for this part.",
@@ -1457,8 +1717,8 @@ async def export_chapters(video_id: str, request: Request):
                         "<file href=\"index.html\"/><file href=\"scorm_api.js\"/>"
                         + "".join(
                             f"<file href=\"{html.escape(path.name)}\"/>"
-                            for path in temp_dir.iterdir()
-                            if path.name not in {"imsmanifest.xml", "index.html", "scorm_api.js"}
+                            for path in export_archive_paths(temp_dir, export_flags)
+                            if path.suffix in {".jpg", ".mp4"}
                         )
                         + "</resource></resources></manifest>",
                         encoding="utf-8",
@@ -1499,13 +1759,7 @@ async def export_chapters(video_id: str, request: Request):
                 )
                 shutil.copy2(temp_dir / "video_outline.docx", direct_export_path)
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
-                for file_path in temp_dir.iterdir():
-                    if file_path.suffix == ".mp4" and not (export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
-                        continue
-                    if file_path.suffix.lower() in {".jpg", ".jpeg", ".png"} and not (export_flags["include_images"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
-                        continue
-                    if file_path.suffix == ".txt" and not (export_flags["include_transcripts"] or export_flags["include_webpage"] or export_flags["include_scorm"]):
-                        continue
+                for file_path in export_archive_paths(temp_dir, export_flags):
                     archive.write(file_path, file_path.name)
 
         if direct_export_path is not None:

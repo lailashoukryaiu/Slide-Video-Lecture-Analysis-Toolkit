@@ -22,20 +22,17 @@ export function updateExportAvailability() {
     const hasParts = hasTopics || hasSlides;
     const intervalToggle = elements.intervalExportToggle;
 
-    if (hasVideo && !hasParts && intervalToggle) {
-        intervalToggle.checked = true;
-        intervalToggle.disabled = true;
-    } else if (intervalToggle) {
+    if (intervalToggle) {
         intervalToggle.disabled = false;
     }
 
     const useIntervals = Boolean(intervalToggle?.checked);
-    const canBuildParts = hasParts || useIntervals;
+    const canBuildParts = hasVideo;
     const chapterGrouping = elements.chapterGrouping;
     if (chapterGrouping) {
         [...chapterGrouping.options].forEach((option) => {
-            const requiresTopics = option.value === 'topic' || option.value === 'combined';
-            const requiresSlides = option.value === 'slides' || option.value === 'combined';
+            const requiresTopics = option.value === 'topic';
+            const requiresSlides = option.value === 'slides';
             option.disabled = !useIntervals && (
                 (requiresTopics && !hasTopics) || (requiresSlides && !hasSlides)
             );
@@ -75,9 +72,9 @@ export function updateExportAvailability() {
     if (elements.exportAvailabilityNote) {
         if (!hasVideo) {
             elements.exportAvailabilityNote.textContent = 'Load a video before exporting.';
-        } else if (!hasParts && useIntervals) {
+        } else if (!hasParts && !useIntervals) {
             elements.exportAvailabilityNote.textContent =
-                'No chapters or slides are available. Fixed-interval parts are enabled so video assets can still be exported.';
+                'Without chapters or slides, the full video is one part; transcript-based subparts are still available.';
         } else if (!hasTranscript) {
             elements.exportAvailabilityNote.textContent =
                 'Transcript-dependent exports are disabled until a transcript is available.';
@@ -100,17 +97,17 @@ export async function exportChapters() {
         }
         const options = {
             ...(useIntervals ? { interval_minutes: intervalMinutes } : {}),
-            include_images: !elements.exportImages?.disabled && (elements.exportImages?.checked ?? true),
-            include_transcripts: !elements.exportTranscripts?.disabled && (elements.exportTranscripts?.checked ?? true),
-            include_clips: !elements.exportClips?.disabled && (elements.exportClips?.checked ?? true),
+            include_images: !elements.exportImages?.disabled && (elements.exportImages?.checked ?? false),
+            include_transcripts: !elements.exportTranscripts?.disabled && (elements.exportTranscripts?.checked ?? false),
+            include_clips: !elements.exportClips?.disabled && (elements.exportClips?.checked ?? false),
             include_word: !elements.exportWord?.disabled && (elements.exportWord?.checked ?? true),
-            include_pdf: !elements.exportPdf?.disabled && (elements.exportPdf?.checked ?? true),
+            include_pdf: !elements.exportPdf?.disabled && (elements.exportPdf?.checked ?? false),
             include_webpage: !elements.exportWebpage?.disabled && (elements.exportWebpage?.checked ?? false),
             include_outline: !elements.exportOutline?.disabled && (elements.exportOutline?.checked ?? false),
             include_scorm: !elements.exportScorm?.disabled && (elements.exportScorm?.checked ?? false),
-            chapter_grouping: elements.chapterGrouping?.value || 'topic',
-            timestamp_mode: elements.timestampMode?.value || 'original',
-            subpart_mode: elements.subpartMode?.value || 'points',
+            chapter_grouping: elements.chapterGrouping?.value || 'combined',
+            timestamp_mode: elements.timestampMode?.value || 'subpart',
+            subpart_mode: elements.subpartMode?.value || 'both',
             document_title: elements.exportTitle?.value.trim() || '',
             export_filename: elements.exportFilename?.value.trim() || '',
             transcript_language: state.currentTranslationLanguage || '',

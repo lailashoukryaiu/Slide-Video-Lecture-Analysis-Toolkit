@@ -33,6 +33,22 @@
   with English, German, French, Spanish and Arabic overrides.
 - **Export Options**: Export Chapters opens the full options dialog immediately:
   grouping, fixed intervals, timestamps, subparts, filenames and document formats.
+  The default structure combines content chapters with meaningful key-point and
+  slide-change subparts, timestamped at each part/subpart. Caption fragments are
+  reassembled into sentences; internal part boundaries move to the next sentence
+  start so no transcript words are lost or duplicated. These times are estimated
+  from caption timing, while slide links retain the actual detected slide time.
+  Unpunctuated Whisper phrases stay together until a timed speech pause or speaker
+  turn; if neither timing nor punctuation identifies a safe break, the utterance
+  remains intact rather than introducing arbitrary mid-sentence cuts.
+  Word, PDF, HTML and outline exports share this hierarchy. Without configured AI,
+  points are explicitly labelled extractive full sentences; configured AI failures
+  are reported instead of silently substituting fabricated summaries. Select
+  slide-only subparts to export without AI summarization. HTML downloads as a ZIP
+  containing `index.html` and its required media: extract the complete package and
+  open `index.html` locally. TXT/Markdown/JSON transcript files are packaged only
+  when **Transcript files** is selected; other explicitly chosen formats remain
+  included. Content-only, slide-only and fixed-interval grouping remain available.
 - **Web Interface**: FastAPI-based web application with real-time updates
 
 ## Interactive User Interface

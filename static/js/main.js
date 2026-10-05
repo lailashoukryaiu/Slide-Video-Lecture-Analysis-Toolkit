@@ -156,6 +156,34 @@ function navigateToPreviousSlide() {
 let lastKeyTime = 0;
 let lastKey = null;
 
+function navigateChapter(direction) {
+    const player = elements.videoPlayer;
+    if (!player) return;
+    const times = (state.videoChapters || []).map((chapter) => {
+        const parts = String(chapter.timestamp).split(':').map(Number);
+        if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part) || part < 0)) {
+            return NaN;
+        }
+        return parts.reduce((seconds, part) => seconds * 60 + part, 0);
+    }).filter(Number.isFinite).sort((first, second) => first - second);
+    if (!times.length) {
+        if (state.videoScenes?.length) {
+            if (direction > 0) navigateToNextSlide();
+            else navigateToPreviousSlide();
+        } else {
+            showNotification('Generate chapters or detect slides to use Previous and Next.', 'info');
+        }
+        return;
+    }
+    const currentIndex = times.reduce((index, time, candidate) => (
+        time <= player.currentTime + 0.1 ? candidate : index
+    ), -1);
+    const targetIndex = direction > 0
+        ? Math.min(times.length - 1, currentIndex + 1)
+        : Math.max(0, currentIndex - 1);
+    player.currentTime = times[targetIndex];
+}
+
 /**
  * Sets up keyboard controls for slide navigation
  */
@@ -164,24 +192,6 @@ function setupKeyboardControls() {
         // Only handle keyboard shortcuts when not typing in input fields
         if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.isContentEditable) {
             return;
-        }
-
-        function navigateChapter(direction) {
-            const player = elements.videoPlayer;
-            const chapters = state.videoChapters || [];
-            if (!player || !chapters.length) return;
-            const times = chapters.map((chapter) => {
-                const [minutes, seconds] = String(chapter.timestamp).split(':').map(Number);
-                return minutes * 60 + seconds;
-            });
-            const currentIndex = times.reduce((index, time, candidate) => (
-                time <= player.currentTime + 0.5 ? candidate : index
-            ), -1);
-            const targetIndex = direction > 0
-                ? Math.min(times.length - 1, currentIndex + 1)
-                : Math.max(0, currentIndex <= 0 ? 0 : currentIndex - 1);
-            player.currentTime = times[targetIndex];
-            player.play().catch(() => {});
         }
 
         const currentTime = Date.now();

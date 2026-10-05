@@ -291,21 +291,21 @@
                                 </label>
                                 <label for="chapterGrouping">Divide parts by:</label>
                                 <select id="chapterGrouping">
-                                    <option value="topic" selected>Topic</option>
+                                    <option value="topic">Topic</option>
                                     <option value="slides">Slide changes</option>
-                                    <option value="combined">Topics and slide changes</option>
+                                    <option value="combined" selected>Content chapters with slide-change subparts</option>
                                 </select>
-                                <label for="timestampMode">Word timestamps:</label>
+                                <label for="timestampMode">Document timestamps:</label>
                                 <select id="timestampMode">
-                                    <option value="original" selected>Original transcript timestamps</option>
+                                    <option value="original">Original transcript timestamps</option>
                                     <option value="part">Only at the beginning of each part</option>
-                                    <option value="subpart">At the beginning of each part and subpart</option>
+                                    <option value="subpart" selected>At the beginning of each part and subpart</option>
                                 </select>
-                                <label for="subpartMode">Outline subparts:</label>
+                                <label for="subpartMode">Document subparts:</label>
                                 <select id="subpartMode">
-                                    <option value="points" selected>Important points/topics</option>
+                                    <option value="points">Important points/topics</option>
                                     <option value="slides">Slide changes inside each part</option>
-                                    <option value="both">Important points and slide changes</option>
+                                    <option value="both" selected>Important points and slide changes</option>
                                 </select>
                                 <label for="exportTitle">Title inside the Word/PDF files:</label>
                                 <input type="text" id="exportTitle" placeholder="Suggested title will be used if left blank">
@@ -318,7 +318,8 @@
                                 <label><input type="checkbox" id="exportClips"> Video clips</label>
                                 <label><input type="checkbox" id="exportWord" checked> Combined Word: title, image, and transcript</label>
                                 <label><input type="checkbox" id="exportPdf"> Combined PDF: title, image, and transcript</label>
-                                <label><input type="checkbox" id="exportWebpage"> Complete webpage: interleaved slides, clips, and transcript</label>
+                                <label><input type="checkbox" id="exportWebpage"> HTML webpage package: sections, slides, clips, and transcript</label>
+                                <small>HTML includes only its required media assets. Separate transcript files are included only when selected. Key points use configured AI, or clearly labelled full-sentence extracts when no AI is configured.</small>
                                 <label><input type="checkbox" id="exportOutline"> Hierarchical outline Word document</label>
                                 <label><input type="checkbox" id="exportScorm"> SCORM 1.2 LMS package</label>
                                 <small id="exportAvailabilityNote" role="status"></small>
@@ -567,7 +568,7 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/static/js/index.js?v=chapter-options-20261004"></script>
+    <script type="module" src="/static/js/index.js?v=content-export-20261005"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
