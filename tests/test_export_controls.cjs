@@ -30,6 +30,7 @@ const loadExportSuggestions = () => {
     suggestionsRequested = true;
     return new Promise(() => {});
 };
+const refreshSavedExports = async () => {};
 
 eval(source.slice(start, end));
 handler();

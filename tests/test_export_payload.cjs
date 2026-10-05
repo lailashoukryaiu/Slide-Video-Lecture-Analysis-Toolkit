@@ -38,15 +38,29 @@ const state = {
     videoScenes: [],
 };
 let payload;
+const errors = [];
+let downloads = 0;
+let jobFails = false;
 const context = vm.createContext({
     elements, state, console,
-    showError: () => {}, showErrorWithActions: () => {}, showNotification: () => {},
-    saveBlobToUserLocation: async () => {},
+    document: {getElementById: () => null},
+    showError: (message) => { if (message) errors.push(message); },
+    showErrorWithActions: () => {}, showNotification: () => {},
+    saveBlobToUserLocation: async () => { downloads++; },
     fetch: async (url, options) => {
-        assert.equal(url, '/export_chapters/lecture');
+        if (url === '/job-status') return {
+            ok: true, text: async () => JSON.stringify(jobFails
+                ? {status: 'error', error: 'Clip encoding failed'}
+                : {status: 'complete', download_url: '/download'}),
+        };
+        if (url === '/download') return {
+            ok: true, blob: async () => ({}),
+            headers: {get: () => 'attachment; filename="lecture.zip"'},
+        };
+        assert.equal(url, '/export_jobs/lecture');
         payload = JSON.parse(options.body);
         return {
-            ok: true, blob: async () => ({}),
+            ok: true, text: async () => JSON.stringify({status_url: '/job-status'}),
             headers: { get: () => 'attachment; filename="lecture.zip"' },
         };
     },
@@ -82,5 +96,13 @@ assert.equal(elements.exportWebpage.disabled, false);
     assert.equal(payload.chapter_grouping, 'slides');
     assert.equal(payload.timestamp_mode, 'part');
     assert.equal(payload.subpart_mode, 'slides');
+    assert.deepEqual(errors, []);
+    assert.equal(downloads, 3, 'Each completed export must download, not silently stop after posting');
+    jobFails = true;
+    await context.exportChapters();
+    assert.equal(errors.at(-1), 'Error exporting chapters: Clip encoding failed');
+    assert.equal(state.exportInProgress, false);
+    assert.equal(elements.exportChaptersBtn.disabled, false);
+    assert.equal(downloads, 3, 'A failed job must not produce a download');
     console.log('PASS: combined sentence/slide defaults, HTML-only flags, no forced intervals, explicit modes preserved');
 })().catch(error => { console.error(error); process.exitCode = 1; });

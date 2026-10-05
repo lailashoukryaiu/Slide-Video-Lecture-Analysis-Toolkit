@@ -41,7 +41,10 @@
   Unpunctuated Whisper phrases stay together until a timed speech pause or speaker
   turn; if neither timing nor punctuation identifies a safe break, the utterance
   remains intact rather than introducing arbitrary mid-sentence cuts.
-  Word, PDF, HTML and outline exports share this hierarchy. Without configured AI,
+  Each chapter also includes a concise summary in the transcript's language.
+  In HTML, the chapter's subparts and transcript are grouped in indented,
+  collapsible sections beneath the chapter. Word, PDF, HTML and outline exports
+  share this hierarchy. Without configured AI,
   points are explicitly labelled extractive full sentences; configured AI failures
   are reported instead of silently substituting fabricated summaries. Select
   slide-only subparts to export without AI summarization. HTML downloads as a ZIP
@@ -146,6 +149,15 @@ brew install tesseract ffmpeg
 
 Chapter exports default to the HTML webpage package. Word, PDF and other
 formats are optional selections in the export dialog.
+
+Exports run in a background job with timestamped steps (clip encoding, images,
+AI summaries, document building, packaging and saving). Saved exports include
+an **Open HTML in browser** link and a download link in the Chapters tab.
+HTML pages and their media remain under `static/exports/jobs` across app
+restarts. Keep this directory to retain previous exports. In Colab, files
+under `/content` still disappear when the runtime resets; download the package
+or persist the exports directory in Drive. Older downloads created before
+saved-export support are not automatically imported.
 
 Create an isolated Conda environment, install the Python requirements, and
 install FFmpeg (including ffprobe) and Tesseract:

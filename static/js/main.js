@@ -3,7 +3,7 @@
 import { setupVideoPlayer, updateTimeMarker } from './video.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
 import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots } from './scenes.js';
-import { generateChapters, updateChapters, exportChapters, updateExportAvailability } from './chapters.js';
+import { generateChapters, updateChapters, exportChapters, updateExportAvailability, refreshSavedExports } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
@@ -327,12 +327,16 @@ function initApp() {
             updateExportAvailability();
             elements.exportOptionsDialog.showModal();
             void loadExportSuggestions();
+            void refreshSavedExports();
         }
     });
     bind(elements.startExportBtn, 'click', () => {
         elements.exportOptionsDialog.close();
         void exportChapters();
     });
+    document.addEventListener('transcriptUpdated', () => void refreshSavedExports());
+    document.addEventListener('chaptersUpdated', () => void refreshSavedExports());
+    bind(document.getElementById('refreshSavedExportsBtn'), 'click', refreshSavedExports);
     bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
     bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
     bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));

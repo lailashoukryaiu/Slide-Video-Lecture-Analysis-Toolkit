@@ -84,7 +84,88 @@ export function updateExportAvailability() {
     }
 }
 
+function renderExportSteps(status) {
+    const container = document.getElementById('exportProgress');
+    if (!container) return;
+    container.replaceChildren();
+    const heading = document.createElement('strong');
+    heading.textContent = status.status === 'complete' ? 'Export ready' : status.status === 'error' ? 'Export stopped' : 'Exporting…';
+    container.appendChild(heading);
+    const list = document.createElement('ol');
+    const steps = status.steps || [];
+    steps.forEach((step, index) => {
+        const item = document.createElement('li');
+        const duration = index + 1 < steps.length
+            ? steps[index + 1].elapsed - step.elapsed
+            : Math.max(0, (status.elapsed || step.elapsed) - step.elapsed);
+        const running = index === steps.length - 1 && status.status === 'running';
+        item.textContent = `${Math.floor(step.elapsed / 60)}:${String(Math.floor(step.elapsed % 60)).padStart(2, '0')} — ${step.message} (${running ? 'running for' : 'took'} ${Math.round(duration)}s)`;
+        list.appendChild(item);
+    });
+    container.appendChild(list);
+    if (status.error) {
+        const message = document.createElement('p');
+        message.textContent = status.error;
+        container.appendChild(message);
+    }
+}
+
+export async function refreshSavedExports() {
+    const container = document.getElementById('savedExports');
+    if (!container) return;
+    if (!state.currentVideoId) {
+        container.replaceChildren();
+        document.getElementById('exportProgress')?.replaceChildren();
+        return;
+    }
+    const videoId = state.currentVideoId;
+    try {
+        const response = await fetch(`/saved_exports/${encodeURIComponent(videoId)}`);
+        const data = await readJsonResponse(response, 'Saved exports');
+        if (state.currentVideoId !== videoId) return;
+        container.replaceChildren();
+        const heading = document.createElement('h3');
+        heading.textContent = 'Saved exports';
+        container.appendChild(heading);
+        const completed = data.exports.filter((item) => item.status === 'complete');
+        if (!completed.length) {
+            const message = document.createElement('p');
+            message.textContent = 'Completed exports will appear here and remain available after server restarts.';
+            container.appendChild(message);
+        }
+        completed.forEach((item) => {
+            const row = document.createElement('p');
+            const title = document.createElement('span');
+            title.textContent = `${item.title} — ${new Date(item.created_at * 1000).toLocaleString()} `;
+            row.appendChild(title);
+            if (item.open_url) {
+                const open = document.createElement('a');
+                open.textContent = 'Open HTML in browser';
+                open.href = item.open_url;
+                open.target = '_blank';
+                open.rel = 'noopener';
+                open.className = 'btn btn-secondary';
+                row.appendChild(open);
+            }
+            const download = document.createElement('a');
+            download.textContent = 'Download';
+            download.href = item.download_url;
+            download.className = 'btn btn-secondary';
+            row.appendChild(download);
+            container.appendChild(row);
+        });
+    } catch (error) {
+        showError(`Could not load saved exports: ${error.message}`);
+    }
+}
+
 export async function exportChapters() {
+    if (state.exportInProgress) {
+        showNotification('An export is already running.', 'info');
+        return;
+    }
+    state.exportInProgress = true;
+    const videoId = state.currentVideoId;
     const button = elements.exportChaptersBtn;
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
@@ -112,7 +193,8 @@ export async function exportChapters() {
             export_filename: elements.exportFilename?.value.trim() || '',
             transcript_language: state.currentTranslationLanguage || '',
         };
-        const response = await fetch(`/export_chapters/${state.currentVideoId}`, {
+        renderExportSteps({status: 'running', steps: [{elapsed: 0, message: 'Starting export job'}]});
+        const response = await fetch(`/export_jobs/${encodeURIComponent(videoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(options)
@@ -131,7 +213,21 @@ export async function exportChapters() {
             }
             throw new Error(message);
         }
-        const blob = await response.blob();
+        const job = await readJsonResponse(response, 'Start export');
+        let status;
+        do {
+            const statusResponse = await fetch(job.status_url);
+            status = await readJsonResponse(statusResponse, 'Export progress');
+            if (state.currentVideoId === videoId) renderExportSteps(status);
+            if (status.status === 'error') throw new Error(status.error || 'Export failed');
+            if (status.status !== 'complete') {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        } while (status.status !== 'complete');
+        await refreshSavedExports();
+        const downloadResponse = await fetch(status.download_url);
+        if (!downloadResponse.ok) throw new Error(`Could not download export (${downloadResponse.status})`);
+        const blob = await downloadResponse.blob();
         const directWord = options.include_word && !options.include_pdf
             && !options.include_webpage && !options.include_outline && !options.include_scorm
             && !options.include_images && !options.include_transcripts && !options.include_clips;
@@ -139,17 +235,18 @@ export async function exportChapters() {
             && !options.include_webpage && !options.include_outline && !options.include_scorm
             && !options.include_images && !options.include_transcripts && !options.include_clips;
         const fallbackFilename = directWord
-            ? `${state.currentVideoId}_chapter_document.docx`
+            ? `${videoId}_chapter_document.docx`
             : directPdf
-                ? `${state.currentVideoId}_chapter_document.pdf`
-                : `${state.currentVideoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
-        const disposition = response.headers.get('content-disposition') || '';
+                ? `${videoId}_chapter_document.pdf`
+                : `${videoId}_${useIntervals ? 'intervals' : 'chapters'}.zip`;
+        const disposition = downloadResponse.headers.get('content-disposition') || '';
         const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
         const filename = filenameMatch ? filenameMatch[1] : fallbackFilename;
         await saveBlobToUserLocation(blob, filename);
     } catch (error) {
         showError(`Error exporting chapters: ${error.message}`);
     } finally {
+        state.exportInProgress = false;
         button.disabled = false;
         button.innerHTML = '<i class="fas fa-download"></i> Export Chapters';
     }

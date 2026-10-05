@@ -30,6 +30,7 @@ import html
 from collections import Counter
 from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
+from export_jobs import ExportJobStore
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
@@ -1058,63 +1059,93 @@ def align_export_chapters(chapters, sentences):
 
 
 async def export_key_points(sentences):
-    """Use the existing provider chain, or clearly labelled extractive sentences."""
+    batches, batch, characters = [], [], 0
+    for sentence in sentences:
+        if batch and characters + len(sentence["text"]) > 10000:
+            batches.append(batch)
+            batch, characters = [], 0
+        batch.append(sentence)
+        characters += len(sentence["text"])
+    if batch:
+        batches.append(batch)
+    if len(batches) <= 1:
+        return await summarize_export_batch(sentences)
+    points, summaries, source = [], [], ""
+    for batch in batches:
+        batch_points, source, summary = await summarize_export_batch(batch)
+        points.extend(batch_points)
+        if summary:
+            summaries.append({"start": batch[0]["start"], "text": summary})
+    if summaries:
+        _, _, summary = await export_key_points(summaries)
+    else:
+        summary = None
+    return sorted(points, key=lambda point: point["start"]), source, summary
+
+
+async def summarize_export_batch(sentences):
+    """Generate a chapter summary and key points in one provider request."""
     if not sentences:
-        return [], "No spoken content"
+        return [], "No spoken content", None
     summary_processor._refresh_clients()
     chain = summary_processor._provider_chain()
     if not chain:
-        return build_outline_points(sentences), "Extractive key sentences (AI not configured)"
-    failures = []
-    # Bound prompt size without truncating a sentence.
-    batches, batch, characters = [], [], 0
-    for index, sentence in enumerate(sentences):
-        text = sentence["text"]
-        if batch and characters + len(text) > 10000:
-            batches.append(batch)
-            batch, characters = [], 0
-        batch.append({"id": index, "text": text})
-        characters += len(text)
-    if batch:
-        batches.append(batch)
-    points = []
-    for batch in batches:
-        prompt = (
-            "Summarize the important ideas in these lecture sentences in their original language. "
-            "Return a JSON object with a points array (1 to 4 items). Each item must contain "
-            "sentence_id (an input id), title (a meaningful specific topic, not 'Key point'), "
-            "and text (a concise complete-sentence summary with terminal punctuation, "
-            "grounded only in this transcript). "
-            "Do not invent facts. Input:\n" + json.dumps(batch, ensure_ascii=False)
+        return (
+            build_outline_points(sentences),
+            "Extractive key sentences (AI not configured)",
+            None,
         )
-        for provider, model in chain:
-            try:
-                raw = await asyncio.wait_for(
-                    asyncio.to_thread(summary_processor._complete, provider, model, prompt, 0.2),
-                    timeout=90,
-                )
-                data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()))
-                validated = []
-                allowed = {item["id"] for item in batch}
-                for point in data.get("points", []):
-                    sentence_id = point.get("sentence_id")
-                    title, text = str(point.get("title", "")).strip(), str(point.get("text", "")).strip()
-                    if not isinstance(sentence_id, int) or sentence_id not in allowed or not title or not text:
-                        raise ValueError("AI returned invalid key points")
-                    if title.lower() in {"key point", "important point", "topic"}:
-                        raise ValueError("AI returned generic key-point titles")
-                    if not re.search(r'[.!?。！？]["\'”’)\]]*$', text):
-                        raise ValueError("AI returned an incomplete key-point sentence")
-                    validated.append({"start": sentences[sentence_id]["start"], "title": title, "text": text})
-                if not validated:
-                    raise ValueError("AI returned no key points")
-                points.extend(validated)
-                break
-            except Exception as error:
-                failures.append(f"{provider} {model}: {error}")
-        else:
-            raise HTTPException(status_code=502, detail="Could not summarize export key points: " + " | ".join(failures))
-    return sorted(points, key=lambda point: point["start"]), "AI-summarized key points"
+    failures = []
+    prompt_sentences = [
+        {"id": index, "text": sentence["text"]}
+        for index, sentence in enumerate(sentences)
+    ]
+    prompt = (
+        "Summarize this lecture chapter in its original language in one or two concise sentences. "
+        "Also select 1 to 4 important key points from the chapter. "
+        "Return a JSON object with a summary string and a points array. "
+        "Each point must contain sentence_id (an input id), title (a meaningful specific topic, "
+        "not 'Key point'), and text (a concise complete-sentence summary with terminal punctuation, "
+        "grounded only in this transcript). Do not invent facts. Input:\n"
+        + json.dumps(prompt_sentences, ensure_ascii=False)
+    )
+    for provider, model in chain:
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(summary_processor._complete, provider, model, prompt, 0.2),
+                timeout=90,
+            )
+            data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()))
+            if not isinstance(data.get("summary"), str):
+                raise ValueError("AI returned an invalid chapter summary")
+            summary = " ".join(data["summary"].split()).strip()
+            if not summary:
+                raise ValueError("AI returned no chapter summary")
+            validated = []
+            allowed = {item["id"] for item in prompt_sentences}
+            for point in data.get("points", []):
+                sentence_id = point.get("sentence_id")
+                title, text = str(point.get("title", "")).strip(), str(point.get("text", "")).strip()
+                if type(sentence_id) is not int or sentence_id not in allowed or not title or not text:
+                    raise ValueError("AI returned invalid key points")
+                if title.lower() in {"key point", "important point", "topic"}:
+                    raise ValueError("AI returned generic key-point titles")
+                if not re.search(r'[.!?。！？]["\'”’)\]]*$', text):
+                    raise ValueError("AI returned an incomplete key-point sentence")
+                validated.append({"start": sentences[sentence_id]["start"], "title": title, "text": text})
+            if not validated:
+                raise ValueError("AI returned no key points")
+            return (
+                sorted(validated, key=lambda point: point["start"]),
+                "AI-summarized key points",
+                summary,
+            )
+        except Exception as error:
+            failures.append(f"{provider} {model}: {error}")
+    raise HTTPException(
+        status_code=502,
+        detail="Could not summarize export chapter: " + " | ".join(failures),
+    )
 
 
 def build_export_subparts(chapter, sentences, points, scenes, mode):
@@ -1196,6 +1227,7 @@ def create_combined_chapter_documents(
         title = str(chapter["title"])
         timestamp = format_chapter_timestamp(chapter["start"])
         transcript = files["transcript"].read_text(encoding="utf-8").strip()
+        chapter_summary = chapter.get("summary")
         heading = f"Part {index + 1}: {title}"
         image_path = files["image"]
         try:
@@ -1214,6 +1246,13 @@ def create_combined_chapter_documents(
             Paragraph(f"Starts at {timestamp}", styles["Normal"]),
             Spacer(1, 0.15 * inch),
             ])
+            if pdf_text:
+                summary_text = chapter_summary or "No AI summary available."
+                pdf_story.append(Paragraph(
+                    f"<b>Summary:</b> {html.escape(summary_text)}",
+                    styles["BodyText"],
+                ))
+                pdf_story.append(Spacer(1, 0.1 * inch))
         if pdf_story is not None and pdf_images and image_path is not None:
             pdf_story.extend([
                 PdfImage(str(image_path), width=6.5 * inch, height=3.65 * inch, kind="proportional"),
@@ -1248,6 +1287,10 @@ def create_combined_chapter_documents(
         if word_document:
             word_document.add_heading(heading, level=1)
             word_document.add_paragraph(f"Starts at {timestamp}")
+            if word_text:
+                word_document.add_paragraph(
+                    f"Summary: {chapter_summary or 'No AI summary available.'}"
+                )
             if files.get("point_method"):
                 word_document.add_paragraph(files["point_method"], style="Caption")
         if pdf_story is not None and files.get("point_method"):
@@ -1293,10 +1336,79 @@ def collapse_word_heading(paragraph):
     paragraph_properties = paragraph._p.get_or_add_pPr()
     paragraph_properties.append(OxmlElement("w:collapsed"))
 
+export_jobs = ExportJobStore(EXPORTS_DIR / "jobs")
+
+
 @app.post("/export_chapters/{video_id}")
-async def export_chapters(video_id: str, request: Request):
+async def export_chapters_endpoint(video_id: str, request: Request):
+    return await export_chapters(video_id, request)
+
+
+@app.post("/export_jobs/{video_id}")
+async def start_export_job(video_id: str, request: Request):
+    if not video_processor.get_video_path(video_id):
+        raise HTTPException(status_code=404, detail="Video not found")
+    options = await request.json()
+    if not isinstance(options, dict):
+        raise HTTPException(status_code=400, detail="Export options must be an object")
+
+    async def generate(video_id, options, step, artifacts, export_root):
+        class ExportRequest:
+            async def json(self):
+                return options
+        return await export_chapters(video_id, ExportRequest(), step, artifacts, export_root)
+
+    job_id = export_jobs.start(video_id, options, generate)
+    return {"success": True, "job_id": job_id, "status_url": f"/export_jobs/{job_id}/status"}
+
+
+def read_export_job(job_id):
+    try:
+        return export_jobs.read(job_id)
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Export not found")
+
+
+@app.get("/export_jobs/{job_id}/status")
+async def export_job_status(job_id: str):
+    return read_export_job(job_id)
+
+
+@app.get("/saved_exports/{video_id}")
+async def saved_exports(video_id: str):
+    return {"exports": export_jobs.list(video_id)}
+
+
+@app.get("/export_jobs/{job_id}/download")
+async def download_export_job(job_id: str):
+    state = read_export_job(job_id)
+    if state["status"] != "complete":
+        raise HTTPException(status_code=409, detail="Export is not complete")
+    try:
+        path = export_jobs.file(job_id, state["download_file"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Export download not found")
+    return FileResponse(path, filename=state["filename"])
+
+
+@app.get("/export_jobs/{job_id}/webpage/{filename}")
+async def open_export_webpage(job_id: str, filename: str):
+    state = read_export_job(job_id)
+    if state["status"] != "complete":
+        raise HTTPException(status_code=409, detail="Export is not complete")
+    try:
+        path = export_jobs.file(job_id, filename, webpage=True)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Export asset not found")
+    return FileResponse(path)
+
+
+async def export_chapters(video_id: str, request: Request, on_step=None, on_artifacts=None, export_root=None):
     """Create a ZIP containing chapter clips, screenshots, and transcripts."""
     options = await request.json()
+    export_root = Path(export_root) if export_root is not None else EXPORTS_DIR
+    step = on_step or (lambda message: None)
+    step("Reading export options and saved chapters, slides and transcript")
     interval_minutes = options.get("interval_minutes")
     transcript_language = str(options.get("transcript_language", "")).strip()
     if transcript_language and transcript_language not in {"de", "en", "ar", "pl"}:
@@ -1392,6 +1504,7 @@ async def export_chapters(video_id: str, request: Request):
                     transcript = json.load(file)
                 break
         transcript = export_sentences(transcript)
+        step(f"Reconstructed {len(transcript)} complete transcript sentences")
         transcript_required = any((
             export_flags["include_transcripts"],
             export_flags["include_word"],
@@ -1416,9 +1529,9 @@ async def export_chapters(video_id: str, request: Request):
         if not chapter_data:
             raise HTTPException(status_code=400, detail="Chapter timestamps are invalid")
 
-        export_dir = EXPORTS_DIR / video_id
+        export_dir = export_root / video_id
         export_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = EXPORTS_DIR / f"{video_id}_chapters.zip"
+        zip_path = export_root / f"{video_id}_chapters.zip"
         direct_export_path = None
         document_title = Path(video_path).stem
         source_filename = document_title
@@ -1434,7 +1547,7 @@ async def export_chapters(video_id: str, request: Request):
         requested_title = str(options.get("document_title", "")).strip()
         if requested_title:
             document_title = requested_title
-        with tempfile.TemporaryDirectory(dir=EXPORTS_DIR) as temp_dir_name:
+        with tempfile.TemporaryDirectory(dir=export_root) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             generic_name = (
                 bool(re.fullmatch(r"[0-9a-f]{32,64}", document_title, re.IGNORECASE))
@@ -1457,14 +1570,15 @@ async def export_chapters(video_id: str, request: Request):
             requested_filename = re.sub(
                 r"[^A-Za-z0-9._-]+", "_", str(options.get("export_filename", "")).strip()
             ).strip("._-")
-            zip_path = EXPORTS_DIR / (
+            zip_path = export_root / (
                 requested_filename if requested_filename.lower().endswith(".zip")
                 else requested_filename + ".zip"
-            ) if requested_filename else EXPORTS_DIR / f"{export_title}_chapters.zip"
+            ) if requested_filename else export_root / f"{export_title}_chapters.zip"
             chaptered_lines = [f"# {document_title}", ""]
             chapter_files = []
             for chapter in chapter_data:
                 number = chapter["index"]
+                step(f"Part {number}/{len(chapter_data)}: preparing {chapter['title']}")
                 safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", chapter["title"]).strip("_") or f"chapter_{number}"
                 base_name = f"{number:02d}_{safe_title}"
                 clip_path = temp_dir / f"{base_name}.mp4"
@@ -1480,8 +1594,10 @@ async def export_chapters(video_id: str, request: Request):
                     ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["start"])])
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
                 if export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
+                    step(f"Part {number}/{len(chapter_data)}: encoding video clip with FFmpeg")
                     subprocess.run(ffmpeg_clip, check=True)
                 if export_flags["include_images"] or export_flags["include_word"] or export_flags["include_pdf"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
+                    step(f"Part {number}/{len(chapter_data)}: extracting the chapter image")
                     subprocess.run([
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                     "-ss", str(chapter["start"]), "-i", str(video_path),
@@ -1537,8 +1653,10 @@ async def export_chapters(video_id: str, request: Request):
                     "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
                 ))
                 if needs_structure:
+                    step(f"Part {number}/{len(chapter_data)}: generating summary and transcript key points")
+                    points, point_method, chapter["summary"] = await export_key_points(chapter_transcript)
                     if subpart_mode in {"points", "both"}:
-                        files["outline_points"], files["point_method"] = await export_key_points(chapter_transcript)
+                        files["outline_points"], files["point_method"] = points, point_method
                     else:
                         files["point_method"] = "Slide-based sections"
                     files["subparts"] = build_export_subparts(
@@ -1556,6 +1674,7 @@ async def export_chapters(video_id: str, request: Request):
                             if not scene["image"].is_file() and any(export_flags[name] for name in (
                                 "include_webpage", "include_scorm", "include_word", "include_pdf", "include_outline",
                             )):
+                                step(f"Part {number}/{len(chapter_data)}: extracting slide at {format_chapter_timestamp(slide_start)}")
                                 subprocess.run([
                                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                                     "-ss", str(slide_start), "-i", str(video_path),
@@ -1573,6 +1692,8 @@ async def export_chapters(video_id: str, request: Request):
                 (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
             if export_flags["include_transcripts"]:
                 (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
+            if export_flags["include_word"] or export_flags["include_pdf"]:
+                step("Building Word/PDF documents")
             create_combined_chapter_documents(
                 chapter_data, chapter_files,
                 temp_dir / "chapter_document.pdf" if export_flags["include_pdf"] else None,
@@ -1584,13 +1705,17 @@ async def export_chapters(video_id: str, request: Request):
                 timestamp_mode=timestamp_mode,
             )
             if export_flags["include_webpage"] or export_flags["include_scorm"]:
+                step("Building HTML webpage")
                 webpage_parts = [
                     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
                     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
                     f"<title>{html.escape(document_title)}</title>",
                     "<style>body{font-family:Arial,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}"
                     "section{border-top:1px solid #ccc;padding:2rem 0}img,video{max-width:100%;display:block;margin:1rem 0}"
-                    "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}</style></head><body>",
+                    "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}"
+                    ".chapter-summary{font-size:1.05rem;line-height:1.5}"
+                    ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid #ddd}"
+                    ".subpart{margin-left:1rem;padding:.5rem 0}.subpart>summary{font-weight:bold}</style></head><body>",
                     f"<h1>{html.escape(document_title)}</h1>",
                 ]
                 if export_flags["include_scorm"]:
@@ -1600,18 +1725,31 @@ async def export_chapters(video_id: str, request: Request):
                 for chapter, files in zip(chapter_data, chapter_files):
                     image_name = files["image"].name
                     clip_name = files["clip"].name
+                    summary = chapter.get("summary")
+                    summary_text = (
+                        html.escape(summary) if summary else
+                        "No AI-generated summary available. "
+                        + html.escape(files["point_method"])
+                    )
                     webpage_parts.extend([
-                        f"<section><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
+                        f"<section class=\"chapter\"><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
                         f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
+                        f"<p class=\"chapter-summary\"><strong>Summary:</strong> {summary_text}</p>",
                         f"<p class=\"subtitle\">{html.escape(files['point_method'])}</p>",
                         f"<img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">",
                         f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
+                        "<details class=\"chapter-subparts\"><summary>Subparts and transcript</summary>",
                     ])
-                    for subpart in files["subparts"]:
+                    for subpart_index, subpart in enumerate(files["subparts"], start=1):
+                        subpart_title = html.escape(subpart["title"])
+                        subpart_timestamp = (
+                            f" ({format_chapter_timestamp(subpart['start'])})"
+                            if timestamp_mode != "part" else ""
+                        )
                         webpage_parts.append(
-                            f"<section class=\"subpart\"><h3>{html.escape(subpart['title'])} "
-                            + (f"({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else "")
-                            + "</h3>"
+                            f"<details class=\"subpart\"><summary>Subpart {subpart_index}: "
+                            f"{subpart_title}{subpart_timestamp}</summary>"
+                            f"<h3>{subpart_title}{subpart_timestamp}</h3>"
                         )
                         for scene in subpart["slides"]:
                             slide_start = export_slide_start(scene)
@@ -1624,8 +1762,8 @@ async def export_chapters(video_id: str, request: Request):
                         webpage_parts.append("<ul>" + "".join(
                             f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]
                         ) + "</ul>")
-                        webpage_parts.append(f"<pre>{html.escape(subpart['transcript'])}</pre></section>")
-                    webpage_parts.append("</section>")
+                        webpage_parts.append(f"<pre>{html.escape(subpart['transcript'])}</pre></details>")
+                    webpage_parts.append("</details></section>")
                 webpage_parts.append("</body></html>")
                 (temp_dir / "index.html").write_text("\n".join(webpage_parts), encoding="utf-8")
             if export_flags["include_outline"]:
@@ -1743,24 +1881,27 @@ async def export_chapters(video_id: str, request: Request):
                 requested_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", requested_filename).strip("._-")
                 if requested_filename:
                     suffix = ".docx" if only_word else ".pdf"
-                    direct_export_path = EXPORTS_DIR / (
+                    direct_export_path = export_root / (
                         requested_filename if requested_filename.lower().endswith(suffix)
                         else requested_filename + suffix
                     )
                 else:
-                    direct_export_path = EXPORTS_DIR / f"{export_title}_{'word' if only_word else 'pdf'}.{'docx' if only_word else 'pdf'}"
+                    direct_export_path = export_root / f"{export_title}_{'word' if only_word else 'pdf'}.{'docx' if only_word else 'pdf'}"
                 shutil.copy2(temp_dir / document_name, direct_export_path)
             elif only_outline:
                 requested_filename = str(options.get("export_filename", "")).strip()
                 requested_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", requested_filename).strip("._-")
-                direct_export_path = EXPORTS_DIR / (
+                direct_export_path = export_root / (
                     (requested_filename if requested_filename.lower().endswith(".docx") else requested_filename + ".docx")
                     if requested_filename else f"{export_title}_outline.docx"
                 )
                 shutil.copy2(temp_dir / "video_outline.docx", direct_export_path)
+            step("Packaging the selected documents and media")
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
                 for file_path in export_archive_paths(temp_dir, export_flags):
                     archive.write(file_path, file_path.name)
+            if on_artifacts:
+                on_artifacts(temp_dir, export_archive_paths(temp_dir, export_flags), document_title)
 
         if direct_export_path is not None:
             return FileResponse(

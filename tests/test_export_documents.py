@@ -3,6 +3,7 @@ import ast
 import asyncio
 from collections import Counter
 import html
+from io import BytesIO
 import json
 from pathlib import Path
 import re
@@ -40,7 +41,7 @@ def load_export_functions():
     names = {
         "build_outline_points", "parse_chapter_timestamp", "format_chapter_timestamp",
         "chapter_boundaries_from_topics", "chapter_boundaries_from_scenes", "export_slide_start",
-        "export_sentences", "align_export_chapters", "export_key_points",
+        "export_sentences", "align_export_chapters", "export_key_points", "summarize_export_batch",
         "build_export_subparts", "export_archive_paths",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
     }
@@ -164,6 +165,9 @@ class ExportDocumentTests(unittest.TestCase):
             webpage = archive.read("index.html").decode()
             self.assertIn("<h2>Part 1: Neural networks</h2>", webpage)
             self.assertGreaterEqual(webpage.count("<h3>"), 3)
+            self.assertIn('<details class="chapter-subparts">', webpage)
+            self.assertIn('<details class="subpart">', webpage)
+            self.assertIn("No AI-generated summary available.", webpage)
             self.assertNotIn("<summary>Key point", webpage)
             self.assertIn("Extractive key sentences (AI not configured)", webpage)
             self.assertIn("Slide at 00:00:09", webpage)
@@ -218,19 +222,95 @@ class ExportDocumentTests(unittest.TestCase):
     def test_ai_points_use_specific_titles_and_errors_are_not_hidden(self):
         processor = self.functions["summary_processor"]
         processor._provider_chain = lambda: [("gemini", "test-model")]
-        processor._complete = lambda *args: json.dumps({"points": [{
-            "sentence_id": 0, "title": "Learning from examples",
-            "text": "Neural networks learn patterns from examples.",
-        }]})
+        calls = []
+
+        def complete(*args):
+            calls.append(args)
+            return json.dumps({
+                "summary": "Neural networks learn patterns from examples.",
+                "points": [{
+                    "sentence_id": 0, "title": "Learning from examples",
+                    "text": "Neural networks learn patterns from examples.",
+                }],
+            })
+
+        processor._complete = complete
         sentences = self.functions["export_sentences"](self.transcript)
-        points, method = asyncio.run(self.functions["export_key_points"](sentences))
+        points, method, summary = asyncio.run(self.functions["export_key_points"](sentences))
         self.assertEqual(points[0]["title"], "Learning from examples")
         self.assertEqual(method, "AI-summarized key points")
-        processor._complete = lambda *args: '{"points":[{"sentence_id":0,"title":"Key point","text":"Fake."}]}'
+        self.assertEqual(summary, "Neural networks learn patterns from examples.")
+        self.assertEqual(len(calls), 1)
+        processor._complete = lambda *args: json.dumps({
+            "summary": "A valid short summary.",
+            "points": [{"sentence_id": 0, "title": "Key point", "text": "Fake."}],
+        })
         with self.assertRaises(HTTPException) as raised:
             asyncio.run(self.functions["export_key_points"](sentences))
         self.assertEqual(raised.exception.status_code, 502)
         self.assertIn("generic", raised.exception.detail)
+
+    def test_long_chapters_keep_bounded_batches_and_short_combined_summary(self):
+        processor = self.functions["summary_processor"]
+        processor._provider_chain = lambda: [("groq", "test-model")]
+        calls = []
+
+        def complete(*args):
+            calls.append(args)
+            return json.dumps({
+                "summary": "The chapter explains learning.",
+                "points": [{"sentence_id": 0, "title": "Learning", "text": "Learning uses examples."}],
+            })
+
+        processor._complete = complete
+        sentences = [{"start": index, "text": "Examples " * 700 + "."} for index in range(3)]
+        points, _, summary = asyncio.run(self.functions["export_key_points"](sentences))
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([point["start"] for point in points], [0, 1, 2])
+        self.assertEqual(summary, "The chapter explains learning.")
+        self.assertTrue(all(len(call[2]) < 11000 for call in calls))
+
+    def test_one_ai_request_per_chapter_supplies_html_word_and_pdf_summaries(self):
+        processor = self.functions["summary_processor"]
+        processor._provider_chain = lambda: [("gemini", "test-model")]
+        calls = []
+
+        def complete(*args):
+            calls.append(args)
+            return json.dumps({
+                "summary": "This chapter teaches neural network fundamentals.",
+                "points": [{
+                    "sentence_id": 0,
+                    "title": "Neural network fundamentals",
+                    "text": "Neural networks learn patterns from examples.",
+                }],
+            })
+
+        processor._complete = complete
+        paragraph = mock.Mock(wraps=Paragraph)
+        with mock.patch.dict(self.functions, {"Paragraph": paragraph}):
+            response = self.run_export(
+                include_webpage=True, include_word=True, include_pdf=True
+            )
+
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+            document = Document(BytesIO(archive.read("chapter_document.docx")))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(webpage.count("This chapter teaches neural network fundamentals."), 2)
+        self.assertEqual(webpage.count('<details class="chapter-subparts">'), 2)
+        document_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertEqual(
+            document_text.count(
+                "Summary: This chapter teaches neural network fundamentals."
+            ),
+            2,
+        )
+        self.assertTrue(any(
+            "<b>Summary:</b> This chapter teaches neural network fundamentals."
+            in str(call.args[0])
+            for call in paragraph.call_args_list
+        ))
 
     def test_scorm_contains_manifest_without_internal_transcript_files(self):
         response = self.run_export(include_scorm=True)
