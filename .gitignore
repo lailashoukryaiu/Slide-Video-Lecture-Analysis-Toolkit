@@ -63,3 +63,4 @@ static/status
 results/
 test.py
 debug.txt
+static/exports/
