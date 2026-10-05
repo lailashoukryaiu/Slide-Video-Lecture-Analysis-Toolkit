@@ -15,7 +15,7 @@ export function conciseTitle(title, limit = 36) {
     return `${split > 0 ? prefix.slice(0, split) : prefix}...`;
 }
 
-export function navigationParts(chapters = [], scenes = [], mode = 'combined') {
+export function navigationParts(chapters = [], scenes = [], mode = 'topic') {
     const topics = chapters.map((chapter) => ({start: chapterStart(chapter), title: chapter.title}))
         .filter((part) => Number.isFinite(part.start)).sort((a, b) => a.start - b.start);
     const slides = scenes.map((scene, index) => {
@@ -25,7 +25,9 @@ export function navigationParts(chapters = [], scenes = [], mode = 'combined') {
             title: `${index + 1}${topic?.title ? `: ${topic.title}` : ''}`,
         };
     }).filter((part) => Number.isFinite(part.start));
-    const selected = mode === 'topic' ? topics : mode === 'slides' ? slides : [...slides, ...topics];
+    // Before chapters are generated, content mode falls back to slide changes so navigation still works.
+    const selected = mode === 'topic' ? (topics.length ? topics : slides)
+        : mode === 'slides' ? slides : [...slides, ...topics];
     return [...new Map(selected.map((part) => [part.start, part])).values()].sort((a, b) => a.start - b.start);
 }
 

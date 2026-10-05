@@ -196,7 +196,7 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertEqual(float(clips[1][clips[1].index("-ss") + 1]), 0)
 
     def test_html_archive_has_real_hierarchy_and_only_required_assets(self):
-        response = self.run_export(include_webpage=True)
+        response = self.run_export(include_webpage=True, subpart_mode="both")
         with zipfile.ZipFile(response.path) as archive:
             names = archive.namelist()
             self.assertIn("index.html", names)
@@ -220,6 +220,15 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertEqual(" ".join(html.unescape(block).replace("\n", " ") for block in transcript_blocks),
                              " ".join(item["text"] for item in self.transcript))
         print("HTML: timestamped chapter/subpart headings, complete sentences, valid slide links; ZIP =", names)
+
+    def test_default_export_uses_content_chapters_without_slide_sections(self):
+        response = self.run_export(include_webpage=True)
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+            names = archive.namelist()
+        self.assertIn("Part 2: Training and evaluation", webpage)
+        self.assertNotIn("Slide 2:", webpage)
+        self.assertFalse(any(name.startswith("slide_") for name in names), names)
 
     def test_explicit_transcripts_and_formats_are_preserved(self):
         response = self.run_export(include_webpage=True, include_transcripts=True,
@@ -326,7 +335,7 @@ class ExportDocumentTests(unittest.TestCase):
         folder.mkdir()
         for index in range(2):
             PillowImage.new("RGB", (40, 20), "blue").save(folder / f"{index}.jpg")
-        response = self.run_export(include_webpage=True)
+        response = self.run_export(include_webpage=True, subpart_mode="both")
         image_times = [float(command[command.index("-ss") + 1])
                        for command in self.media_commands if command[-1].endswith(".jpg")]
         self.assertNotIn(0, image_times)
@@ -338,7 +347,7 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertEqual(archive.read("01_Neural_networks.jpg"), (folder / "0.jpg").read_bytes())
 
     def test_missing_saved_images_are_extracted_only_once_per_timestamp(self):
-        self.run_export(include_webpage=True)
+        self.run_export(include_webpage=True, subpart_mode="both")
         image_times = [float(command[command.index("-ss") + 1])
                        for command in self.media_commands if command[-1].endswith(".jpg")]
         self.assertEqual(image_times.count(0), 1, "Chapter/slide images at the same time should share a capture")
@@ -415,7 +424,7 @@ class ExportDocumentTests(unittest.TestCase):
             })
 
         processor._complete = complete
-        response = self.run_export(include_webpage=True)
+        response = self.run_export(include_webpage=True, subpart_mode="both")
         with zipfile.ZipFile(response.path) as archive:
             webpage = archive.read("index.html").decode()
         self.assertIn("Never mention the lecture, speaker", prompts[0])

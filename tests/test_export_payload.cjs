@@ -12,7 +12,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'static', 'js', 'chapt
     .replace(/^export /gm, '');
 const groupingOptions = ['topic', 'slides', 'combined'].map(value => ({ value, disabled: false }));
 const grouping = {
-    value: 'combined',
+    value: 'topic',
     options: groupingOptions,
     get selectedOptions() { return this.options.filter(option => option.value === this.value); },
 };
@@ -34,7 +34,7 @@ const elements = {
 const state = {
     currentVideoId: 'lecture',
     currentTranscript: [{ text: 'A full sentence.', start: 0 }],
-    videoChapters: [],
+    videoChapters: [{ timestamp: '00:00', title: 'Introduction' }],
     videoScenes: [],
 };
 let payload;
@@ -68,14 +68,14 @@ const context = vm.createContext({
 vm.runInContext(source, context);
 context.updateExportAvailability();
 assert.equal(elements.intervalExportToggle.checked, false, 'Do not force fixed intervals');
-assert.equal(grouping.value, 'combined');
+assert.equal(grouping.value, 'topic');
 assert.equal(groupingOptions[2].disabled, false, 'Combined remains available without both inputs');
 assert.equal(elements.exportWebpage.disabled, false);
 
 (async () => {
     await context.exportChapters();
-    assert.equal(payload.chapter_grouping, 'combined');
-    assert.equal(payload.subpart_mode, 'both');
+    assert.equal(payload.chapter_grouping, 'topic');
+    assert.equal(payload.subpart_mode, 'points');
     assert.equal(payload.timestamp_mode, 'subpart');
     assert.equal(payload.include_webpage, true);
     for (const field of ['include_images', 'include_transcripts', 'include_clips', 'include_word', 'include_pdf']) {
@@ -104,5 +104,5 @@ assert.equal(elements.exportWebpage.disabled, false);
     assert.equal(state.exportInProgress, false);
     assert.equal(elements.exportChaptersBtn.disabled, false);
     assert.equal(downloads, 3, 'A failed job must not produce a download');
-    console.log('PASS: combined sentence/slide defaults, HTML-only flags, no forced intervals, explicit modes preserved');
+    console.log('PASS: content-chapter defaults, HTML-only flags, no forced intervals, explicit modes preserved');
 })().catch(error => { console.error(error); process.exitCode = 1; });

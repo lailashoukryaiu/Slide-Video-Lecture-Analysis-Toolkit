@@ -31,10 +31,12 @@
   Groq, then Gemini and OpenAI; explicit model choices remain available.
 - **Summary Language**: Chapter options default to the transcript's language,
   with English, German, French, Spanish and Arabic overrides.
+- **Resizable Layout**: Drag the handles between the video, visual timeline and side
+  panel to resize them; sizes are remembered and a double-click resets them.
 - **Export Options**: Export Chapters opens the full options dialog immediately:
   grouping, fixed intervals, timestamps, sections, filenames and document formats.
-  The default structure combines content chapters with meaningful key-point and
-  slide-change sections, numbered 1.1, 1.2 and timestamped at each part/section. Caption fragments are
+  The default structure uses content chapters with key-point sections (slide changes
+  are optional), numbered 1.1, 1.2 and timestamped at each part/section. Caption fragments are
   reassembled into sentences; internal part boundaries move to the next sentence
   start so no transcript words are lost or duplicated. These times are estimated
   from caption timing, while slide links retain the actual detected slide time.

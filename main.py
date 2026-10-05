@@ -1613,13 +1613,13 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
     transcript_language = str(options.get("transcript_language", "")).strip()
     if transcript_language and transcript_language not in {"de", "en", "ar", "pl"}:
         raise HTTPException(status_code=400, detail="Invalid transcript language")
-    chapter_grouping = options.get("chapter_grouping", "combined")
+    chapter_grouping = options.get("chapter_grouping", "topic")
     if chapter_grouping not in {"topic", "slides", "combined"}:
         raise HTTPException(status_code=400, detail="Invalid chapter grouping")
     timestamp_mode = options.get("timestamp_mode", "subpart")
     if timestamp_mode not in {"original", "part", "subpart"}:
         raise HTTPException(status_code=400, detail="Invalid timestamp mode")
-    subpart_mode = options.get("subpart_mode", "both")
+    subpart_mode = options.get("subpart_mode", "points")
     if subpart_mode not in {"points", "slides", "both"}:
         raise HTTPException(status_code=400, detail="Invalid subpart mode")
     format_selected = any(name.startswith("include_") for name in options)

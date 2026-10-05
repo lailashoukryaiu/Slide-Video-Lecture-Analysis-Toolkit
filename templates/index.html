@@ -9,9 +9,9 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=outline-20261005">
-    <link rel="stylesheet" href="/static/compact-layout.css?v=outline-20261005">
-    <link rel="stylesheet" href="/static/theme.css?v=outline-20261005">
+    <link rel="stylesheet" href="/static/styles.css?v=resize-20261005">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=resize-20261005">
+    <link rel="stylesheet" href="/static/theme.css?v=resize-20261005">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -87,9 +87,9 @@
                 <div class="video-controls" aria-label="Video controls">
                     <label for="navigationGrouping">Navigate by</label>
                     <select id="navigationGrouping">
-                        <option value="topic">Content chapters only</option>
+                        <option value="topic" selected>Content chapters</option>
                         <option value="slides">Slide changes only</option>
-                        <option value="combined" selected>Content chapters and slide changes</option>
+                        <option value="combined">Content chapters and slide changes</option>
                     </select>
                     <button id="previousChapterBtn" class="btn btn-secondary" type="button" title="Previous chapter">
                         <i class="fas fa-step-backward"></i> Previous
@@ -114,7 +114,7 @@
                     <!-- Scene markers will be added here -->
                 </div>
                 </div>
-                
+                <div class="layout-splitter" id="timelineSplitter" role="separator" aria-orientation="vertical" aria-label="Resize visual timeline" title="Drag to resize. Double-click to reset." tabindex="0"></div>
                 <div class="timeline-container">
                     <div class="timeline-header">
                         <h3><i class="fas fa-film"></i> Visual Timeline</h3>
@@ -132,6 +132,7 @@
                 </div>
             </div>
             
+            <div class="layout-splitter" id="panelSplitter" role="separator" aria-orientation="vertical" aria-label="Resize side panel" title="Drag to resize. Double-click to reset." tabindex="0"></div>
             <!-- Right column: Tabs for transcript, chapters, and scenes -->
             <div class="content-tabs">
                 <div class="tabs-header">
@@ -309,9 +310,9 @@
                                 </label>
                                 <label for="chapterGrouping">Divide parts by:</label>
                                 <select id="chapterGrouping">
-                                    <option value="topic">Topic</option>
+                                    <option value="topic" selected>Content chapters</option>
                                     <option value="slides">Slide changes</option>
-                                    <option value="combined" selected>Content chapters with slide-change sections</option>
+                                    <option value="combined">Content chapters with slide-change sections</option>
                                 </select>
                                 <label for="timestampMode">Document timestamps:</label>
                                 <select id="timestampMode">
@@ -321,9 +322,9 @@
                                 </select>
                                 <label for="subpartMode">Sections inside each part:</label>
                                 <select id="subpartMode">
-                                    <option value="points">Important points/topics</option>
+                                    <option value="points" selected>Important points/topics</option>
                                     <option value="slides">Slide changes inside each part</option>
-                                    <option value="both" selected>Important points and slide changes</option>
+                                    <option value="both">Important points and slide changes</option>
                                 </select>
                                 <label title="Each clip starts 1 second early so the first words of a sentence are not cut off"><input type="checkbox" id="exportClipOverlap" checked> Start each clip 1 second early (avoids cut-off words)</label>
                                 <label for="exportTitle">Title inside the Word/PDF files:</label>
@@ -598,7 +599,8 @@
 
     <!-- Scripts -->
     <script src="/static/js/popup-placement.js?v=20261006"></script>
-    <script type="module" src="/static/js/index.js?v=outline-20261005"></script>
+    <script src="/static/js/layout-resize.js?v=resize-20261005"></script>
+    <script type="module" src="/static/js/index.js?v=resize-20261005"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

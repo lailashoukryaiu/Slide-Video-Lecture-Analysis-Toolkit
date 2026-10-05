@@ -14,7 +14,7 @@ import { initInteractiveLayer } from './interactive-layer.js';
 
 // Global state
 export const state = {
-    chapterGrouping: 'combined',
+    chapterGrouping: 'topic',
     currentTranscript: [],
     videoScenes: [],
     sceneDetectionInterval: null,

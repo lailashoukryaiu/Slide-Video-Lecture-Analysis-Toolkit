@@ -51,6 +51,10 @@ select,
     font-size: 12px;
 }
 
+.layout-splitter {
+    display: none;
+}
+
 .main-content {
     grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 400px);
     gap: 10px;
@@ -318,16 +322,26 @@ input:checked + .toggle-slider:before {
 
 @media (min-width: 851px) {
     /*
-     * Visual timeline sits beside the player as a two-column vertical list.
-     * The player column is only as wide as the video at its current height,
-     * so the remaining width goes to the thumbnails instead of black bars.
+     * Three resizable areas: player | visual timeline | side panel.
+     * layout-resize.js sets --timeline-width and --side-panel-width when the
+     * user drags a splitter. The player column is never wider than the video
+     * at its current height, so extra width goes to the thumbnails instead of
+     * black bars.
      */
+    .main-content {
+        grid-template-columns: minmax(0, 1fr) 10px var(--side-panel-width, clamp(260px, 24vw, 360px));
+        column-gap: 0;
+    }
+
     .video-container {
         display: grid;
-        grid-template-columns: minmax(0, calc(var(--video-height) * var(--video-aspect))) minmax(200px, 1fr);
+        grid-template-columns:
+            minmax(0, calc(var(--video-height) * var(--video-aspect)))
+            8px
+            minmax(var(--timeline-width, 180px), 1fr);
         grid-template-rows: minmax(0, 1fr);
         align-items: stretch;
-        column-gap: 8px;
+        column-gap: 0;
         /* Same height as the right panel, so the thumbnail list uses the full column. */
         min-height: max(360px, calc(100dvh - 80px));
     }
@@ -347,9 +361,9 @@ input:checked + .toggle-slider:before {
 
     .video-container .timeline {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
         align-content: start;
-        gap: 8px 6px;
+        gap: 10px;
         flex: 1;
         min-height: 0;
         max-height: none;
@@ -377,6 +391,50 @@ input:checked + .toggle-slider:before {
 
     .video-container .timeline-header h3 {
         white-space: nowrap;
+    }
+
+    .layout-splitter {
+        display: block;
+        position: relative;
+        align-self: stretch;
+        cursor: col-resize;
+        touch-action: none;
+        user-select: none;
+    }
+
+    .layout-splitter::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 4px;
+        height: 36px;
+        border-radius: 999px;
+        background: var(--border-strong, #c6cad6);
+        transform: translate(-50%, -50%);
+        transition: background-color .15s, height .15s;
+    }
+
+    .layout-splitter:hover::after,
+    .layout-splitter:focus-visible::after,
+    .layout-splitter.dragging::after {
+        height: 64px;
+        background: var(--brand, #4f46e5);
+    }
+
+    .layout-splitter:focus-visible {
+        outline: none;
+    }
+
+    body.layout-resizing,
+    body.layout-resizing * {
+        cursor: col-resize !important;
+        user-select: none !important;
+    }
+
+    body.layout-resizing video,
+    body.layout-resizing iframe {
+        pointer-events: none;
     }
 
     /* Keep playback, navigation and detection buttons on one row. */
