@@ -209,6 +209,8 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertNotIn("AI-generated", webpage)
             self.assertNotIn("AI not configured", webpage)
             self.assertIn('<nav class="outline"', webpage)
+            self.assertRegex(webpage, r'<details class="outline-chapter"><summary><a href="#part-\d+">')
+            self.assertIn('class="outline-toggle"', webpage)
             self.assertIn('href="#part-2"', webpage)
             self.assertRegex(webpage, r'<figcaption title="Neural networks">1: Neural networks</figcaption>')
             self.assertNotIn("<summary>Key point", webpage)

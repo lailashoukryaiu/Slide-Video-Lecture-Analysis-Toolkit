@@ -1984,6 +1984,11 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     ".outline h2{font-size:1.05rem;margin-bottom:.5rem}.outline ol{margin:0;padding-left:1.4rem}"
                     ".outline li{margin:.2rem 0}.outline ol ol{list-style:none;padding-left:1rem;font-size:.92rem}"
                     ".outline a{color:var(--text);text-decoration:none}.outline a:hover{color:var(--brand);text-decoration:underline}"
+                    ".outline-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.5rem}"
+                    ".outline-head h2{margin:0}.outline-toggle{font:inherit;font-size:.82rem;color:var(--brand);background:none;"
+                    "border:1px solid var(--line);border-radius:6px;padding:.15rem .6rem;cursor:pointer}"
+                    ".outline-chapter>summary{cursor:pointer}.outline-chapter>summary::marker{color:var(--brand)}"
+                    ".outline-chapter>ol{margin:.2rem 0 .4rem}"
                     ".time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.85em;white-space:nowrap}"
                     "section.chapter{border-top:1px solid var(--line);padding:2rem 0;scroll-margin-top:1rem}"
                     "img,video{max-width:100%;display:block}video{width:100%;border-radius:10px;background:#000;margin:1rem 0}"
@@ -2005,19 +2010,30 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     webpage_parts.insert(1, "<script src=\"scorm_api.js\"></script>")
                 if document_subtitle:
                     webpage_parts.append(f"<p class=\"subtitle\">{html.escape(document_subtitle)}</p>")
-                outline = ["<nav class=\"outline\" aria-label=\"Course outline\"><h2>Course outline</h2><ol>"]
-                for chapter, files in zip(chapter_data, chapter_files):
+                has_outline_sections = any(len(files.get("subparts", [])) > 1 for files in chapter_files)
+                outline = ["<nav class=\"outline\" aria-label=\"Course outline\"><div class=\"outline-head\"><h2>Course outline</h2>"]
+                if has_outline_sections:
                     outline.append(
-                        f"<li><a href=\"#part-{chapter['index']}\">{html.escape(chapter['title'])}</a> "
+                        "<button type=\"button\" class=\"outline-toggle\" onclick=\"var d=document.querySelectorAll("
+                        "'.outline-chapter'),o=[].some.call(d,function(x){return !x.open});"
+                        "d.forEach(function(x){x.open=o});this.textContent=o?'Collapse all':'Expand all'\">Expand all</button>"
+                    )
+                outline.append("</div><ol>")
+                for chapter, files in zip(chapter_data, chapter_files):
+                    chapter_link = (
+                        f"<a href=\"#part-{chapter['index']}\">{html.escape(chapter['title'])}</a> "
                         f"<span class=\"time\">{format_chapter_timestamp(chapter['start'])}</span>"
                     )
                     if len(files.get("subparts", [])) > 1:
-                        outline.append("<ol>" + "".join(
-                            f"<li><a href=\"#part-{chapter['index']}-{subpart_index}\">"
-                            f"{chapter['index']}.{subpart_index} {html.escape(subpart['title'])}</a></li>"
-                            for subpart_index, subpart in enumerate(files["subparts"], start=1)
-                        ) + "</ol>")
-                    outline.append("</li>")
+                        outline.append(
+                            f"<li><details class=\"outline-chapter\"><summary>{chapter_link}</summary><ol>" + "".join(
+                                f"<li><a href=\"#part-{chapter['index']}-{subpart_index}\">"
+                                f"{chapter['index']}.{subpart_index} {html.escape(subpart['title'])}</a></li>"
+                                for subpart_index, subpart in enumerate(files["subparts"], start=1)
+                            ) + "</ol></details></li>"
+                        )
+                    else:
+                        outline.append(f"<li>{chapter_link}</li>")
                 outline.append("</ol></nav>")
                 webpage_parts.extend(outline)
                 for chapter, files in zip(chapter_data, chapter_files):
