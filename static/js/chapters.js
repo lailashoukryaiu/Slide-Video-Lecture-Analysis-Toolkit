@@ -4,6 +4,7 @@ import { elements } from './elements.js';
 import { state } from './main.js';
 import { showError, showErrorWithActions, showNotification } from './ui.js';
 import { saveBlobToUserLocation } from './utils.js';
+import { conciseTitle } from './chapter-navigation.js';
 
 let chapterMarkerGeneration = 0;
 
@@ -424,10 +425,14 @@ export function updateChapters(chapters) {
     chapters.forEach(chapter => {
         const div = document.createElement('div');
         div.className = 'chapter-item';
-        div.innerHTML = `
-            <span class="chapter-timestamp">${chapter.timestamp}</span>
-            <span>${chapter.title}</span>
-        `;
+        const timestamp = document.createElement('span');
+        timestamp.className = 'chapter-timestamp';
+        timestamp.textContent = chapter.timestamp;
+        const title = document.createElement('span');
+        title.textContent = conciseTitle(chapter.title);
+        title.title = chapter.title;
+        div.appendChild(timestamp);
+        div.appendChild(title);
         div.onclick = () => {
             const [minutes, seconds] = chapter.timestamp.split(':').map(Number);
             const time = minutes * 60 + seconds;

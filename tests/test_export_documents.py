@@ -44,6 +44,7 @@ def load_export_functions():
         "chapter_boundaries_from_topics", "chapter_boundaries_from_scenes", "export_slide_start",
         "export_sentences", "align_export_chapters", "export_key_points", "summarize_export_batch",
         "build_export_subparts", "export_archive_paths", "prepare_export_image",
+        "concise_export_title", "export_thumbnail", "build_slides_pdf",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
     }
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -194,17 +195,17 @@ class ExportDocumentTests(unittest.TestCase):
             self.assertIn("index.html", names)
             self.assertTrue(all(name == "index.html" or name.endswith((".jpg", ".mp4")) for name in names), names)
             webpage = archive.read("index.html").decode()
-            self.assertIn("<h2>Part 1: Neural networks</h2>", webpage)
-            self.assertGreaterEqual(webpage.count("<h3>"), 3)
+            self.assertIn('<h2 title="Neural networks">Part 1: Neural networks</h2>', webpage)
+            self.assertGreaterEqual(webpage.count("<h3 "), 3)
             self.assertIn('<details class="chapter-subparts">', webpage)
             self.assertIn('<details class="subpart">', webpage)
             self.assertIn("No AI-generated summary available.", webpage)
-            self.assertRegex(webpage, r'<figcaption>Neural networks</figcaption>')
-            self.assertRegex(webpage, r'</video>\s*<p class="media-caption">Neural networks</p>')
+            self.assertRegex(webpage, r'<figcaption title="Neural networks">1: Neural networks</figcaption>')
+            self.assertRegex(webpage, r'</video>\s*<p class="media-caption" title="Neural networks">Neural networks</p>')
             self.assertNotIn("<summary>Key point", webpage)
             self.assertIn("Extractive key sentences (AI not configured)", webpage)
-            self.assertIn("Slide at 00:00:09", webpage)
-            self.assertRegex(webpage, r"<h3>[^<]+\(00:00:\d\d\)</h3>")
+            self.assertIn("2: 00:00:09", webpage)
+            self.assertRegex(webpage, r"<h3[^>]*>[^<]+\(00:00:\d\d\)</h3>")
             for reference in re.findall(r'(?:src|href)="([^"]+)"', webpage):
                 self.assertIn(html.unescape(reference).split("#")[0], names)
             transcript_blocks = re.findall(r"<pre>(.*?)</pre>", webpage, re.DOTALL)
@@ -251,6 +252,66 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertGreater(response.path.stat().st_size, 1000)
         self.assertTrue(any(call.args[1].name == "Heading2" for call in paragraphs))
         print("PDF: built", response.path.stat().st_size, "bytes with timestamped Heading2 subparts.")
+
+    def test_slides_pdf_has_one_image_page_per_detected_slide(self):
+        folder = self.functions["FULLSIZE_IMAGES_DIR"] / "lecture"
+        folder.mkdir()
+        for index, size in enumerate([(80, 40), (40, 80)]):
+            PillowImage.new("RGB", size, "blue").save(folder / f"{index}.jpg")
+        destination = self.directory / "slides.pdf"
+        self.functions["build_slides_pdf"]("lecture", destination)
+        pdf = destination.read_bytes()
+        self.assertTrue(pdf.startswith(b"%PDF-"))
+        self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", pdf)), 2)
+        self.assertEqual(len(re.findall(rb"/Subtype\s*/Image\b", pdf)), 2)
+        self.assertRegex(pdf, rb"/MediaBox\s*\[\s*0 0 80 40\s*\]")
+        self.assertRegex(pdf, rb"/MediaBox\s*\[\s*0 0 40 80\s*\]")
+        (folder / "1.jpg").unlink()
+        with self.assertRaises(HTTPException) as raised:
+            self.functions["build_slides_pdf"]("lecture", destination)
+        self.assertEqual(raised.exception.status_code, 409)
+
+    def test_compact_export_thumbnails_and_full_title_on_hover(self):
+        title = "A lengthy title describing neural networks and many learning examples"
+        self.functions["SUMMARIES_DIR"].joinpath("lecture.json").write_text(json.dumps([
+            {"timestamp": "00:00", "title": title},
+        ]), encoding="utf-8")
+        response = self.run_export(include_webpage=True)
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+        self.assertIn(f'title="{title}"', webpage)
+        self.assertLessEqual(len(self.functions["concise_export_title"](title)), 48)
+        self.assertIn('class="chapter-heading"', webpage)
+        self.assertIn('class="subpart-heading"', webpage)
+        self.assertIn('.export-thumbnail img{width:120px;height:68px', webpage)
+        self.assertIn('target="_blank" rel="noopener" title="Enlarge:', webpage)
+
+    def test_slides_pdf_http_download_and_temporary_cleanup(self):
+        from fastapi import FastAPI, HTTPException as FastAPIException
+        from fastapi.responses import FileResponse
+        from fastapi.testclient import TestClient
+        from starlette.background import BackgroundTask
+        from export_jobs import cleanup_export_workspace
+        folder = self.functions["FULLSIZE_IMAGES_DIR"] / "lecture"
+        folder.mkdir()
+        for index in range(2):
+            PillowImage.new("RGB", (40, 20), "blue").save(folder / f"{index}.jpg")
+        app = FastAPI()
+        namespace = dict(self.functions, app=app, FileResponse=FileResponse,
+                         HTTPException=FastAPIException, BackgroundTask=BackgroundTask,
+                         cleanup_export_workspace=cleanup_export_workspace)
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        route = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
+                     and node.name == "download_slides_pdf")
+        builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == "build_slides_pdf")
+        exec(compile(ast.Module(body=[builder, route], type_ignores=[]), str(ROOT / "main.py"), "exec"), namespace)
+        with TestClient(app) as client:
+            response = client.get("/download_slides_pdf/lecture")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "application/pdf")
+            self.assertTrue(response.content.startswith(b"%PDF-"))
+            self.assertEqual(client.get("/download_slides_pdf/missing").status_code, 404)
 
     def test_saved_slides_are_copied_not_reextracted(self):
         folder = self.functions["FULLSIZE_IMAGES_DIR"] / "lecture"
@@ -410,7 +471,7 @@ class ExportDocumentTests(unittest.TestCase):
         with zipfile.ZipFile(response.path) as archive:
             webpage = archive.read("index.html").decode()
         self.assertIn("Interval 2", webpage)
-        self.assertIn("Slide at 00:00:09", webpage)
+        self.assertIn("2: 00:00:09", webpage)
         self.assertNotRegex(webpage, r"<h3>[^<]+\(00:00:")
 
 

@@ -56,6 +56,7 @@ export const elements = {
     get thumbnailTimeline() { return document.getElementById('thumbnailTimeline'); },
     get scenesContainer() { return document.getElementById('scenesContainer'); },
     get downloadScreenshotsBtn() { return document.getElementById('downloadScreenshotsBtn'); },
+    get downloadSlidesPdfBtn() { return document.getElementById('downloadSlidesPdfBtn'); },
     get chaptersContainer() { return document.getElementById('chaptersContainer'); },
     get summaryStatus() { return document.getElementById('summaryStatus'); },
     get summaryOptionsBtn() { return document.getElementById('summaryOptionsBtn'); },

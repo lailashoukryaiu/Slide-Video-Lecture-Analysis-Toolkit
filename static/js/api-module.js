@@ -720,6 +720,9 @@ function resetVideoStates() {
     if (elements.downloadScreenshotsBtn) {
         elements.downloadScreenshotsBtn.disabled = true;
     }
+    if (elements.downloadSlidesPdfBtn) {
+        elements.downloadSlidesPdfBtn.disabled = true;
+    }
     
     // Reset slide content and disable search
     elements.slideContentContainer.innerHTML = `

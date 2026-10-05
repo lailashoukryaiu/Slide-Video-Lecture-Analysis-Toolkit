@@ -30,7 +30,8 @@ import html
 from collections import Counter
 from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
-from export_jobs import ExportJobStore, export_workspace
+from export_jobs import ExportJobStore, export_workspace, cleanup_export_workspace
+from starlette.background import BackgroundTask
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
@@ -537,6 +538,52 @@ async def download_scene_screenshots(video_id: str):
 async def get_ocr_text(video_id: str):
     return await ocr_processor.get_ocr_text(video_id)
 
+
+def build_slides_pdf(video_id, destination):
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.lib.utils import ImageReader
+
+    image_dir = (FULLSIZE_IMAGES_DIR / video_id).resolve()
+    if image_dir.parent != FULLSIZE_IMAGES_DIR.resolve():
+        raise HTTPException(status_code=400, detail="Invalid video ID")
+    scene_path = SCENES_DIR / f"{video_id}.json"
+    if not scene_path.is_file():
+        raise HTTPException(status_code=404, detail="Detect slides before exporting a slides PDF")
+    scenes = json.loads(scene_path.read_text(encoding="utf-8"))
+    if not isinstance(scenes, list) or not scenes:
+        raise HTTPException(status_code=400, detail="No detected slides are available")
+    images = [image_dir / f"{index}.jpg" for index in range(len(scenes))]
+    missing = [index + 1 for index, image in enumerate(images) if not image.is_file()]
+    if missing:
+        raise HTTPException(status_code=409, detail=f"Missing screenshots for slides {missing}. Run slide detection again.")
+    pdf = Canvas(str(destination))
+    pdf.setTitle("Detected slides")
+    for image in images:
+        reader = ImageReader(str(image))
+        width, height = reader.getSize()
+        pdf.setPageSize((width, height))
+        pdf.drawImage(str(image), 0, 0, width=width, height=height)
+        pdf.showPage()
+    pdf.save()
+
+
+@app.get("/download_slides_pdf/{video_id}")
+async def download_slides_pdf(video_id: str):
+    workspace = Path(tempfile.mkdtemp(prefix="lecture-slides-pdf-"))
+    try:
+        destination = workspace / "slides.pdf"
+        await asyncio.to_thread(build_slides_pdf, video_id, destination)
+    except HTTPException:
+        cleanup_export_workspace(workspace)
+        raise
+    except (OSError, ValueError, UnidentifiedImageError) as error:
+        cleanup_export_workspace(workspace)
+        raise HTTPException(status_code=500, detail=f"Could not create slides PDF: {error}")
+    return FileResponse(
+        destination, media_type="application/pdf", filename="slides.pdf",
+        background=BackgroundTask(cleanup_export_workspace, workspace),
+    )
+
 @app.post("/stop_ocr/{video_id}")
 async def stop_ocr(video_id: str):
     return await ocr_processor.stop_ocr(video_id)
@@ -973,6 +1020,25 @@ def chapter_boundaries_from_scenes(scenes):
 
 def export_slide_start(scene):
     return float(scene.get("time_seconds", parse_chapter_timestamp(scene["timestamp"])))
+
+
+def concise_export_title(title, limit=48):
+    text = " ".join(str(title).split())
+    if len(text) <= limit:
+        return text
+    prefix = text[:limit - 3]
+    return (prefix.rsplit(" ", 1)[0] if " " in prefix else prefix) + "..."
+
+
+def export_thumbnail(image, title, label=""):
+    full_title = html.escape(title, quote=True)
+    short_title = html.escape(concise_export_title(title))
+    return (
+        f'<figure class="export-thumbnail"><a href="{html.escape(image, quote=True)}" '
+        f'target="_blank" rel="noopener" title="Enlarge: {full_title}">'
+        f'<img src="{html.escape(image, quote=True)}" alt="{full_title}" loading="lazy"></a>'
+        f'<figcaption title="{full_title}">{html.escape(label)}{short_title}</figcaption></figure>'
+    )
 
 
 def prepare_export_image(video_id, video_path, timestamp, scenes, destination, cache, step):
@@ -1738,6 +1804,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "pre{white-space:pre-wrap;background:#f6f6f6;padding:1rem;border-radius:6px}.subtitle{color:#666}"
                     ".chapter-summary{font-size:1.05rem;line-height:1.5}"
                     "figure{margin:1rem 0}figcaption,.media-caption{font-weight:bold;margin:.5rem 0 1.5rem}"
+                    ".chapter-heading,.subpart-heading{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}"
+                    ".export-thumbnail{margin:.5rem 0;width:120px;flex-shrink:0}"
+                    ".export-thumbnail img{width:120px;height:68px;object-fit:contain;margin:0;cursor:zoom-in}"
+                    ".export-thumbnail figcaption{font-size:.8rem;overflow-wrap:anywhere;margin:.3rem 0}"
                     ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid #ddd}"
                     ".subpart{margin-left:1rem;padding:.5rem 0}.subpart>summary{font-weight:bold}</style></head><body>",
                     f"<h1>{html.escape(document_title)}</h1>",
@@ -1756,37 +1826,47 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         + html.escape(files["point_method"])
                     )
                     webpage_parts.extend([
-                        f"<section class=\"chapter\"><h2>Part {chapter['index']}: {html.escape(chapter['title'])}</h2>",
+                        "<section class=\"chapter\"><div class=\"chapter-heading\">",
+                        export_thumbnail(image_name, chapter["title"], f"{chapter['index']}: "),
+                        f"<h2 title=\"{html.escape(chapter['title'], quote=True)}\">Part {chapter['index']}: "
+                        f"{html.escape(concise_export_title(chapter['title']))}</h2></div>",
                         f"<p>Start: {format_chapter_timestamp(chapter['start'])}</p>",
                         f"<p class=\"chapter-summary\"><strong>Summary:</strong> {summary_text}</p>",
                         f"<p class=\"subtitle\">{html.escape(files['point_method'])}</p>",
-                        f"<figure><img src=\"{html.escape(image_name)}\" alt=\"Slide for part {chapter['index']}\">"
-                        f"<figcaption>{html.escape(chapter['title'])}</figcaption></figure>",
                         f"<video id=\"part-{chapter['index']}\" controls preload=\"metadata\" src=\"{html.escape(clip_name)}\"></video>",
-                        f"<p class=\"media-caption\">{html.escape(chapter['title'])}</p>",
+                        f"<p class=\"media-caption\" title=\"{html.escape(chapter['title'], quote=True)}\">"
+                        f"{html.escape(concise_export_title(chapter['title']))}</p>",
                         f"<p class=\"subtitle\">Clip starts at {format_chapter_timestamp(chapter['clip_start'])}; "
                         "later clips include up to 1 second of overlap to protect sentence beginnings.</p>",
                         "<details class=\"chapter-subparts\"><summary>Subparts and transcript</summary>",
                     ])
                     for subpart_index, subpart in enumerate(files["subparts"], start=1):
-                        subpart_title = html.escape(subpart["title"])
+                        subpart_title = html.escape(concise_export_title(subpart["title"]))
                         subpart_timestamp = (
                             f" ({format_chapter_timestamp(subpart['start'])})"
                             if timestamp_mode != "part" else ""
                         )
                         webpage_parts.append(
-                            f"<details class=\"subpart\"><summary>Subpart {subpart_index}: "
+                            f"<details class=\"subpart\"><summary title=\"{html.escape(subpart['title'], quote=True)}\">Subpart {subpart_index}: "
                             f"{subpart_title}{subpart_timestamp}</summary>"
-                            f"<h3>{subpart_title}{subpart_timestamp}</h3>"
+                            "<div class=\"subpart-heading\">"
+                        )
+                        for scene in subpart["slides"]:
+                            webpage_parts.append(export_thumbnail(
+                                scene["image"].name, subpart["title"], f"{scene['image_index'] + 1}: ",
+                            ))
+                        if not subpart["slides"]:
+                            webpage_parts.append(export_thumbnail(image_name, subpart["title"]))
+                        webpage_parts.append(
+                            f"<h3 title=\"{html.escape(subpart['title'], quote=True)}\">"
+                            f"{subpart_title}{subpart_timestamp}</h3></div>"
                         )
                         for scene in subpart["slides"]:
                             slide_start = export_slide_start(scene)
                             offset = max(0, slide_start - chapter["clip_start"])
                             webpage_parts.extend([
                                 f"<a href=\"{html.escape(clip_name)}#t={offset:.3f}\">"
-                                f"Slide at {format_chapter_timestamp(slide_start)}</a>",
-                                f"<figure><img src=\"{html.escape(scene['image'].name)}\" alt=\"{html.escape(scene['title'])}\">"
-                                f"<figcaption>{html.escape(chapter['title'])} - {subpart_title}</figcaption></figure>",
+                                f"{scene['image_index'] + 1}: {format_chapter_timestamp(slide_start)}</a>",
                             ])
                         webpage_parts.append("<ul>" + "".join(
                             f"<li>{html.escape(point['text'])}</li>" for point in subpart["points"]

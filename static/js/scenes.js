@@ -181,6 +181,32 @@ export async function downloadSceneScreenshots() {
     }
 }
 
+export async function downloadSlidesPdf() {
+    const button = document.getElementById('downloadSlidesPdfBtn');
+    const videoId = state.currentVideoId;
+    if (!videoId || !button) {
+        showError('Load a video and refresh the page before exporting slides.');
+        return;
+    }
+    button.disabled = true;
+    button.textContent = 'Building slides PDF...';
+    try {
+        const response = await fetch(`/download_slides_pdf/${encodeURIComponent(videoId)}`);
+        if (!response.ok) {
+            const text = await response.text();
+            let message = text;
+            try { message = JSON.parse(text).detail || text; } catch { /* Keep server error text. */ }
+            throw new Error(message || `Slides PDF failed (${response.status})`);
+        }
+        await saveBlobToUserLocation(await response.blob(), `${videoId}_slides.pdf`);
+    } catch (error) {
+        showError(`Error exporting slides PDF: ${error.message}`);
+    } finally {
+        button.disabled = !state.videoScenes?.length;
+        button.textContent = 'Export slides as one PDF';
+    }
+}
+
 /**
  * Updates the scenes display with new scene data
  * @param {Array} scenes - The scene data
@@ -191,6 +217,8 @@ export function updateScenes(scenes, videoPlayer) {
     clearSceneCache();
     
     state.videoScenes = scenes;
+    const pdfButton = document.getElementById('downloadSlidesPdfBtn');
+    if (pdfButton) pdfButton.disabled = scenes.length === 0;
     const scenesContainer = elements.scenesContainer;
     const progressContainer = elements.videoProgress;
     const timelineContainer = elements.thumbnailTimeline;
@@ -272,7 +300,7 @@ export function updateScenes(scenes, videoPlayer) {
             
             const badge = document.createElement('div');
             badge.className = 'detection-badge';
-            badge.textContent = `Slide ${index + 1}`;
+            badge.textContent = `${index + 1}`;
             badge.setAttribute('aria-label', `Slide ${index + 1}`);
 
             // Keep object detections in the tooltip as optional diagnostics.

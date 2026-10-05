@@ -50,10 +50,16 @@
   or both for Previous/Next navigation and synchronizes with export grouping.
   Titles appear beneath timeline screenshots and the playing video; HTML
   exports repeat chapter titles beneath each screenshot and chapter clip.
+  Display titles are capped at 48 characters with full titles on hover. HTML
+  screenshots are small clickable thumbnails beside chapter/subpart headings;
+  clicking opens the image at full size. Slide labels use numbers only.
   Exports reuse saved full-size slide screenshots at matching timestamps, at
   their saved resolution. New captures are made only for missing images or
   chapter starts that do not match a detected slide; duplicate timestamps share
   one capture within an export.
+  The slide-detection tab also offers **Export slides as one PDF**: one saved
+  full-size screenshot per page in detection order, with no transcript, clips,
+  or AI requests. Missing screenshots produce an explicit error.
   Video controls and the timeline sit directly below the player. Playback
   auto-scrolls within the transcript and timeline panels, without scrolling
   the surrounding page away from the video.

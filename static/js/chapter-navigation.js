@@ -3,7 +3,16 @@ export function chapterStart(chapter) {
     if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part) || part < 0)) {
         return NaN;
     }
+
     return parts.reduce((seconds, part) => seconds * 60 + part, 0);
+}
+
+export function conciseTitle(title, limit = 48) {
+    const text = String(title || '').replace(/\s+/g, ' ').trim();
+    if (text.length <= limit) return text;
+    const prefix = text.slice(0, limit - 3);
+    const split = prefix.lastIndexOf(' ');
+    return `${split > 0 ? prefix.slice(0, split) : prefix}...`;
 }
 
 export function navigationParts(chapters = [], scenes = [], mode = 'combined') {
@@ -13,7 +22,7 @@ export function navigationParts(chapters = [], scenes = [], mode = 'combined') {
         const topic = topics.filter((part) => part.start <= scene.time_seconds).at(-1);
         return {
             start: Number(scene.time_seconds),
-            title: `Slide ${index + 1}${topic?.title ? `: ${topic.title}` : ''}`,
+            title: `${index + 1}${topic?.title ? `: ${topic.title}` : ''}`,
         };
     }).filter((part) => Number.isFinite(part.start));
     const selected = mode === 'topic' ? topics : mode === 'slides' ? slides : [...slides, ...topics];

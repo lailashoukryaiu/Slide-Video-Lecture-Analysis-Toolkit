@@ -4,7 +4,7 @@ import { elements } from './elements.js';
 import { formatTime } from './utils.js';
 import { state } from './main.js';
 import { updateActiveTranscript } from './transcript.js';
-import { navigationParts, activePart } from './chapter-navigation.js';
+import { navigationParts, activePart, conciseTitle } from './chapter-navigation.js';
 import { scrollWithinContainer } from './scroll-utils.js';
 
 export function updateChapterCaptions() {
@@ -13,7 +13,8 @@ export function updateChapterCaptions() {
     if (caption) {
         const text = activePart(parts, elements.videoPlayer.currentTime)?.title
             || 'No chapter or slide title available at this time.';
-        if (caption.textContent !== text) caption.textContent = text;
+        caption.title = text;
+        if (caption.textContent !== conciseTitle(text)) caption.textContent = conciseTitle(text);
     }
     document.querySelectorAll('.timeline-item').forEach((item) => {
         const image = item.querySelector('.timeline-thumbnail');
@@ -25,7 +26,8 @@ export function updateChapterCaptions() {
             item.appendChild(title);
         }
         const text = activePart(parts, Number(image.dataset.time))?.title || 'No chapter title available.';
-        if (title.textContent !== text) title.textContent = text;
+        title.title = text;
+        if (title.textContent !== conciseTitle(text)) title.textContent = conciseTitle(text);
     });
 }
 

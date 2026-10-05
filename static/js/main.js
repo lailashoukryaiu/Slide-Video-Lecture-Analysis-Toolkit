@@ -3,7 +3,7 @@
 import { setupVideoPlayer, updateTimeMarker, updateChapterCaptions } from './video.js';
 import { navigationParts } from './chapter-navigation.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
-import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots } from './scenes.js';
+import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots, downloadSlidesPdf } from './scenes.js';
 import { generateChapters, updateChapters, exportChapters, updateExportAvailability, refreshSavedExports } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
@@ -311,6 +311,7 @@ function initApp() {
     
     // Add event listeners
     bind(elements.generateSummaryBtn, 'click', generateChapters);
+    bind(document.getElementById('downloadSlidesPdfBtn'), 'click', downloadSlidesPdf);
     const navigationGrouping = document.getElementById('navigationGrouping');
     const setGrouping = (value) => {
         state.chapterGrouping = value;
