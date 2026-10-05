@@ -71,7 +71,7 @@ select,
 
 #videoPlayer {
     min-height: 0;
-    max-height: clamp(180px, calc(100dvh - 370px), 540px);
+    max-height: clamp(180px, calc(100dvh - 384px), 540px);
 }
 
 .chapter-caption {
@@ -206,7 +206,7 @@ body .video-tabs .controls-toggle-btn {
 }
 
 .video-container:has(#interactiveVideoTab.active) #videoPlayer {
-    max-height: clamp(180px, calc(100dvh - 490px), 480px);
+    max-height: clamp(180px, calc(100dvh - 504px), 480px);
 }
 
 .toggle-switch {

@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0d1017" media="(prefers-color-scheme: dark)">
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=compact-slide-titles-20261005">
+    <link rel="stylesheet" href="/static/styles.css?v=theme-20261005">
     <link rel="stylesheet" href="/static/compact-layout.css?v=20261005">
+    <link rel="stylesheet" href="/static/theme.css?v=20261005">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -39,7 +43,11 @@
 
     <div class="container">
         <div class="input-section">
-            <input type="text" id="youtubeUrl" class="url-input" placeholder="Enter YouTube URL (e.g., https://www.youtube.com/watch?v=...)">
+            <a class="brand" href="/" title="SlideDec - lecture video analysis">
+                <span class="brand-mark" aria-hidden="true"><i class="fas fa-play"></i></span>
+                <span class="brand-name">SlideDec</span>
+            </a>
+            <input type="text" id="youtubeUrl" class="url-input" aria-label="YouTube URL" placeholder="Paste a YouTube URL (https://www.youtube.com/watch?v=...)">
             <label for="youtubeVideoQuality">Video quality</label>
             <select id="youtubeVideoQuality" title="Higher quality downloads are larger and slower">
                 <option value="480" selected>480p (faster)</option>
@@ -54,7 +62,7 @@
                     onclick="document.getElementById('videoFile').click()">
                 <i class="fas fa-upload"></i> Upload Video
             </button>
-            <button id="settingsBtn" class="btn btn-secondary">
+            <button id="settingsBtn" class="btn btn-secondary" type="button" aria-label="Settings" title="Settings">
                 <i class="fas fa-cog"></i> Settings
             </button>
         </div>
@@ -145,16 +153,16 @@
                             <div class="search-container">
                                 <div class="search-input-wrapper">
                                     <input type="text" id="transcriptSearch" class="search-input" placeholder="Search transcript...">
-                                    <button id="clearSearchBtn" class="clear-search-btn">
+                                    <button id="clearSearchBtn" class="clear-search-btn" type="button" aria-label="Clear transcript search">
                                         <i class="fas fa-times"></i>
                                     </button>
                                 </div>
                                 <div class="search-controls">
-                                    <button id="prevSearchBtn" class="search-nav-btn" disabled>
+                                    <button id="prevSearchBtn" class="search-nav-btn" type="button" aria-label="Previous match" disabled>
                                         <i class="fas fa-chevron-up"></i>
                                     </button>
                                     <span id="searchResultsCount">0/0</span>
-                                    <button id="nextSearchBtn" class="search-nav-btn" disabled>
+                                    <button id="nextSearchBtn" class="search-nav-btn" type="button" aria-label="Next match" disabled>
                                         <i class="fas fa-chevron-down"></i>
                                     </button>
                                 </div>
@@ -438,16 +446,16 @@
                             <div class="search-container">
                                 <div class="search-input-wrapper">
                                     <input type="text" id="slideSearch" class="search-input" placeholder="Search slide content..." disabled>
-                                    <button id="clearSlideSearchBtn" class="clear-search-btn">
+                                    <button id="clearSlideSearchBtn" class="clear-search-btn" type="button" aria-label="Clear slide search">
                                         <i class="fas fa-times"></i>
                                     </button>
                                 </div>
                                 <div class="search-controls">
-                                    <button id="prevSlideSearchBtn" class="search-nav-btn" disabled>
+                                    <button id="prevSlideSearchBtn" class="search-nav-btn" type="button" aria-label="Previous slide match" disabled>
                                         <i class="fas fa-chevron-up"></i>
                                     </button>
                                     <span id="slideSearchResultsCount">0/0</span>
-                                    <button id="nextSlideSearchBtn" class="search-nav-btn" disabled>
+                                    <button id="nextSlideSearchBtn" class="search-nav-btn" type="button" aria-label="Next slide match" disabled>
                                         <i class="fas fa-chevron-down"></i>
                                     </button>
                                 </div>

@@ -67,6 +67,9 @@
   together at normal browser zoom. Buttons and transcript rows use tighter
   spacing, video height adapts to the viewport, and panels remain scrollable.
   Narrow screens stack the panels and retain normal page scrolling.
+  The interface uses a modern light theme that follows the operating system's
+  dark-mode setting automatically, with visible keyboard focus and reduced
+  motion when the system requests it.
   In HTML, the chapter's subparts and transcript are grouped in indented,
   collapsible sections beneath the chapter. Word, PDF, HTML and outline exports
   share this hierarchy. Without configured AI,
