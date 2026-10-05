@@ -26,6 +26,8 @@ MODEL_UNAVAILABLE_MARKERS = (
 )
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}
+# Concurrent translation requests for Gemini/OpenAI; Groq stays at one.
+TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 
 class SummaryProcessor:
     def __init__(self):
@@ -135,14 +137,53 @@ class SummaryProcessor:
         add("openai", getattr(self, "openai_model_name", None))
         return chain
 
-    def _complete(self, provider, model, prompt, temperature, json_output=True, max_tokens=None):
-        """Run one prompt against one provider and return the response text."""
+    @staticmethod
+    def _fast_thinking_config(model):
+        """Minimal reasoning for simple tasks such as translation, if the SDK supports it."""
+        thinking_config = getattr(types, "ThinkingConfig", None)
+        if thinking_config is None:
+            return None
+        fields = getattr(thinking_config, "model_fields", {})
+        try:
+            if model.startswith("gemini-2.5") and "thinking_budget" in fields:
+                return thinking_config(thinking_budget=0)
+            if "thinking_level" in fields:
+                return thinking_config(thinking_level="minimal")
+            if "thinking_budget" in fields:
+                return thinking_config(thinking_budget=0)
+        except Exception:
+            return None
+        return None
+
+    def _complete(
+        self, provider, model, prompt, temperature, json_output=True, max_tokens=None, fast=False,
+    ):
+        """Run one prompt against one provider and return the response text.
+
+        fast=True turns model reasoning down; it is used for translation, which
+        does not benefit from long thinking but pays for it in latency.
+        """
         if provider == "gemini":
             config = {"temperature": temperature}
             if json_output:
                 config["response_mime_type"] = "application/json"
             if max_tokens:
                 config["max_output_tokens"] = max_tokens
+            no_thinking_control = getattr(self, "_no_thinking_control", set())
+            thinking = self._fast_thinking_config(model) if fast and model not in no_thinking_control else None
+            if thinking is not None:
+                try:
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(**config, thinking_config=thinking),
+                    )
+                    return response.text
+                except Exception as error:
+                    if "thinking" not in str(error).lower():
+                        raise
+                    # This model rejects the reasoning setting; use its default from now on.
+                    self._no_thinking_control = no_thinking_control | {model}
             response = self.client.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -159,6 +200,8 @@ class SummaryProcessor:
             options["response_format"] = {"type": "json_object"}
         if max_tokens:
             options["max_completion_tokens"] = max_tokens
+        if fast and provider == "groq" and "gpt-oss" in model:
+            options["extra_body"] = {"reasoning_effort": "low"}
         response = client.chat.completions.create(**options)
         return response.choices[0].message.content
 
@@ -299,9 +342,13 @@ Format each chapter exactly like this example:
             })
 
     async def translate_transcript(
-        self, transcript, target_language, requested_model=None, _chain=None, _chain_offset=0
+        self, transcript, target_language, requested_model=None, _chain=None, _chain_offset=0,
+        on_progress=None, _done=None, _started_at=None,
     ):
-        """Translate transcript segments in bounded concurrent batches."""
+        """Translate transcript segments in bounded concurrent batches.
+
+        Batches that already succeeded are kept when falling back to another model.
+        """
         if _chain is None:
             self._refresh_clients()
             _chain = self._provider_chain(requested_model)
@@ -317,6 +364,8 @@ Format each chapter exactly like this example:
         if not _chain:
             raise RuntimeError(self._no_provider_message())
         provider, selected_model = _chain[0]
+        done = {} if _done is None else _done
+        started_at = _started_at or time.monotonic()
 
         translation_items = [
             {
@@ -330,22 +379,50 @@ Format each chapter exactly like this example:
         ]
         if len(translation_items) != len(transcript):
             raise ValueError("Every transcript segment must be an object")
+        remaining_items = [item for item in translation_items if item["id"] not in done]
 
         batches = (
-            self._translation_batches(translation_items, 30, 2500)
+            self._translation_batches(remaining_items, 30, 2500)
             if provider == "groq"
-            else self._translation_batches(translation_items)
+            else self._translation_batches(remaining_items)
         )
-        started_at = time.monotonic()
         # Groq's free tier counts the requested output tokens against a small
         # per-minute budget, so send smaller batches one at a time.
-        semaphore = asyncio.Semaphore(1 if provider == "groq" else 2)
+        semaphore = asyncio.Semaphore(1 if provider == "groq" else TRANSLATION_CONCURRENCY)
         max_output_tokens = 3000 if provider == "groq" else 8192
         attempts = 4 if provider == "groq" else 2
         context_lines = 4
+        total_segments = len(translation_items)
+        model_label = f"{PROVIDER_LABELS[provider]} {selected_model}"
+        abort = {"error": None}
+        finished_batches = {"count": 0}
+
+        def report(message):
+            if not on_progress:
+                return
+            try:
+                on_progress({
+                    "completed_segments": len(done),
+                    "total_segments": total_segments,
+                    "completed_batches": finished_batches["count"],
+                    "total_batches": len(batches),
+                    "provider": PROVIDER_LABELS[provider],
+                    "model": selected_model,
+                    "elapsed_seconds": round(time.monotonic() - started_at, 1),
+                    "message": message,
+                })
+            except Exception as error:
+                print(f"Translation progress callback failed: {error}")
+
+        report(
+            f"Translating {len(remaining_items)} lines in {len(batches)} batches with {model_label}"
+            + (f" ({len(done)} lines already done)" if done else "")
+        )
 
         async def translate_batch(batch, batch_number):
             async with semaphore:
+                if abort["error"] is not None:
+                    return
                 start = batch[0]["position"]
                 end = batch[-1]["position"] + 1
                 context_before = [
@@ -389,7 +466,7 @@ Format each chapter exactly like this example:
                             raw_result = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     self._complete, provider, selected_model, prompt,
-                                    0.2, True, max_output_tokens,
+                                    0.2, True, max_output_tokens, True,
                                 ),
                                 timeout=120,
                             )
@@ -445,57 +522,70 @@ Format each chapter exactly like this example:
                         )
                     }
 
-                translated_by_id = await request_translation(batch, "initial")
-                missing = [
-                    item for item in batch
-                    if item["id"] not in translated_by_id
-                ]
-                if missing:
-                    translated_by_id.update(
-                        await request_translation(missing, "missing-segment")
-                    )
-                still_missing = [
-                    item["id"] for item in batch
-                    if item["id"] not in translated_by_id
-                ]
-                if still_missing:
-                    raise RuntimeError(
-                        f"Translation batch {batch_number} omitted "
-                        f"{len(still_missing)} segment(s) after a targeted retry"
-                    )
-                return translated_by_id
-
-        try:
-            translated_batches = await asyncio.gather(
-                *(
-                    translate_batch(batch, batch_number)
-                    for batch_number, batch in enumerate(batches, start=1)
+                try:
+                    translated_by_id = await request_translation(batch, "initial")
+                    missing = [
+                        item for item in batch
+                        if item["id"] not in translated_by_id
+                    ]
+                    if missing:
+                        translated_by_id.update(
+                            await request_translation(missing, "missing-segment")
+                        )
+                    still_missing = [
+                        item["id"] for item in batch
+                        if item["id"] not in translated_by_id
+                    ]
+                    if still_missing:
+                        raise RuntimeError(
+                            f"Translation batch {batch_number} omitted "
+                            f"{len(still_missing)} segment(s) after a targeted retry"
+                        )
+                except Exception as error:
+                    if abort["error"] is None:
+                        abort["error"] = error
+                    raise
+                done.update(translated_by_id)
+                finished_batches["count"] += 1
+                report(
+                    f"Translated batch {finished_batches['count']} of {len(batches)} "
+                    f"with {model_label} \u2014 {len(done)} of {total_segments} lines done"
                 )
-            )
-        except Exception as error:
+
+        results = await asyncio.gather(
+            *(
+                translate_batch(batch, batch_number)
+                for batch_number, batch in enumerate(batches, start=1)
+            ),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            error = abort["error"] or errors[0]
             unavailable = self._is_model_unavailable(error)
             if unavailable:
                 self._mark_unavailable(provider, selected_model)
             if len(_chain) < 2 or not (unavailable or self._is_quota_error(error)):
-                raise
+                raise error
             next_provider, next_model = _chain[1]
             print(
                 f"{PROVIDER_LABELS[provider]} {selected_model} translation unavailable; "
-                f"trying {PROVIDER_LABELS[next_provider]} {next_model}: {error}"
+                f"trying {PROVIDER_LABELS[next_provider]} {next_model} for the "
+                f"{total_segments - len(done)} remaining lines: {error}"
+            )
+            report(
+                f"{model_label} is busy or out of quota; continuing the remaining "
+                f"{total_segments - len(done)} lines with {PROVIDER_LABELS[next_provider]} {next_model}"
             )
             result = await self.translate_transcript(
                 transcript, target_language, _chain=_chain[1:],
-                _chain_offset=_chain_offset + 1,
+                _chain_offset=_chain_offset + 1, on_progress=on_progress,
+                _done=done, _started_at=started_at,
             )
             result.setdefault("fallback_reason", str(error)[:300])
             return result
-        translated_text = {
-            segment_id: text
-            for batch in translated_batches
-            for segment_id, text in batch.items()
-        }
         translated = [
-            {**item, "text": translated_text[f"segment-{index}"]}
+            {**item, "text": done[f"segment-{index}"]}
             for index, item in enumerate(transcript)
         ]
         source_text = "\n".join(str(item.get("text", "")).strip() for item in transcript)

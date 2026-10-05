@@ -142,7 +142,7 @@ export function updateTimelineHighlight() {
             // Scroll the active thumbnail into view if it's not visible
             const timelineContainer = elements.thumbnailTimeline;
             const thumbnailItem = thumbnail.parentElement;
-            scrollWithinContainer(timelineContainer, thumbnailItem, 'horizontal');
+            scrollWithinContainer(timelineContainer, thumbnailItem, 'both');
         } else {
             thumbnail.classList.remove('active');
         }

@@ -9,9 +9,9 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=panel-20261006">
-    <link rel="stylesheet" href="/static/compact-layout.css?v=panel-20261006">
-    <link rel="stylesheet" href="/static/theme.css?v=panel-20261006">
+    <link rel="stylesheet" href="/static/styles.css?v=timeline-20261006">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=timeline-20261006">
+    <link rel="stylesheet" href="/static/theme.css?v=timeline-20261006">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -77,6 +77,7 @@
         <div class="main-content">
             <!-- Left column: Video player and timeline -->
             <div class="video-container">
+                <div class="player-column">
                 <div class="video-wrapper">
                     <video id="videoPlayer" preload="auto" controls crossorigin="anonymous" style="cursor: pointer;">
                         Your browser does not support the video tag.
@@ -111,6 +112,7 @@
                     <div id="timeMarker" class="time-marker"></div>
                     <div id="progressHoverTime" class="progress-hover-time"></div>
                     <!-- Scene markers will be added here -->
+                </div>
                 </div>
                 
                 <div class="timeline-container">
@@ -352,8 +354,13 @@
                             <p>Click "Generate Summary" to create chapter markers from the transcript.</p>
                         </div>
                         <div id="exportProgress" class="summary-status" role="status" aria-live="polite"></div>
-                        <button id="refreshSavedExportsBtn" type="button" class="btn btn-secondary">Refresh saved exports</button>
-                        <div id="savedExports"></div>
+                        <section class="saved-exports" aria-labelledby="savedExportsTitle">
+                            <div class="saved-exports-header">
+                                <h3 id="savedExportsTitle"><i class="fas fa-folder-open" aria-hidden="true"></i> Saved exports</h3>
+                                <button id="refreshSavedExportsBtn" type="button" class="btn btn-secondary btn-icon" title="Refresh saved exports" aria-label="Refresh saved exports"><i class="fas fa-sync-alt" aria-hidden="true"></i></button>
+                            </div>
+                            <div id="savedExports"></div>
+                        </section>
                     </div>
                     
                     <div class="tab-pane" id="scenes-tab">
@@ -591,7 +598,7 @@
 
     <!-- Scripts -->
     <script src="/static/js/popup-placement.js?v=20261006"></script>
-    <script type="module" src="/static/js/index.js?v=panel-titles-20261006"></script>
+    <script type="module" src="/static/js/index.js?v=timeline-20261006"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

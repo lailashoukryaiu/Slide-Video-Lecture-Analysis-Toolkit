@@ -26,6 +26,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+import time
 import html
 from collections import Counter
 from PIL import Image as PillowImage, UnidentifiedImageError
@@ -220,6 +221,14 @@ async def upload_transcript(video_id: str, transcript: UploadFile = File(...)):
     output_path.write_text(json.dumps(transcript_data, ensure_ascii=False), encoding="utf-8")
     return {"success": True, "transcript": transcript_data, "source_language": detect_transcript_language(transcript_data)}
 
+translation_progress = {}
+
+
+@app.get("/translation_progress/{video_id}/{target}")
+async def get_translation_progress(video_id: str, target: str):
+    return translation_progress.get(f"{video_id}:{target}") or {"status": "idle"}
+
+
 @app.post("/translate_transcript/{video_id}")
 async def translate_transcript(video_id: str, request: Request):
     data = await request.json()
@@ -268,12 +277,42 @@ async def translate_transcript(video_id: str, request: Request):
         for index, chapter in enumerate(chapters)
         if isinstance(chapter, dict) and str(chapter.get("title", "")).strip()
     ]
+    progress_key = f"{video_id}:{target}"
+    translation_progress[progress_key] = {
+        "status": "running",
+        "completed_segments": 0,
+        "total_segments": len(transcript) + len(chapter_segments),
+        "message": "Starting translation...",
+        "updated_at": time.time(),
+    }
+
+    def on_progress(update):
+        translation_progress[progress_key] = {
+            **update, "status": "running", "updated_at": time.time(),
+        }
+
     try:
         translation = await summary_processor.translate_transcript(
-            [*transcript, *chapter_segments], target, requested_model
+            [*transcript, *chapter_segments], target, requested_model, on_progress=on_progress
         )
     except (RuntimeError, ValueError, asyncio.TimeoutError, json.JSONDecodeError) as error:
+        translation_progress[progress_key] = {
+            "status": "error", "message": str(error), "updated_at": time.time(),
+        }
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except Exception as error:
+        translation_progress[progress_key] = {
+            "status": "error", "message": str(error), "updated_at": time.time(),
+        }
+        raise
+    translation_progress[progress_key] = {
+        "status": "complete",
+        "completed_segments": len(translation["transcript"]),
+        "total_segments": len(translation["transcript"]),
+        "message": f"Translated with {translation['provider']} {translation['model']}",
+        "elapsed_seconds": translation["elapsed_seconds"],
+        "updated_at": time.time(),
+    }
     translated = translation["transcript"][:len(transcript)]
     translated_title_segments = translation["transcript"][len(transcript):]
     (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(

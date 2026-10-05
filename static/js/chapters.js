@@ -126,36 +126,56 @@ export async function refreshSavedExports() {
         const data = await readJsonResponse(response, 'Saved exports');
         if (state.currentVideoId !== videoId) return;
         container.replaceChildren();
-        const heading = document.createElement('h3');
-        heading.textContent = 'Saved exports';
-        container.appendChild(heading);
         const completed = data.exports.filter((item) => item.status === 'complete');
         if (!completed.length) {
             const message = document.createElement('p');
+            message.className = 'saved-exports-empty';
             message.textContent = 'Completed exports will appear here and remain available after server restarts.';
             container.appendChild(message);
         }
+        const list = document.createElement('ul');
+        list.className = 'saved-exports-list';
         completed.forEach((item) => {
-            const row = document.createElement('p');
+            const row = document.createElement('li');
+            row.className = 'saved-export-row';
+            const info = document.createElement('div');
+            info.className = 'saved-export-info';
             const title = document.createElement('span');
-            title.textContent = `${item.title} — ${new Date(item.created_at * 1000).toLocaleString()} `;
-            row.appendChild(title);
+            title.className = 'saved-export-title';
+            title.textContent = item.title;
+            title.title = item.title;
+            const date = document.createElement('time');
+            date.className = 'saved-export-date';
+            const created = new Date(item.created_at * 1000);
+            date.dateTime = created.toISOString();
+            date.textContent = created.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+            info.appendChild(title);
+            info.appendChild(date);
+            row.appendChild(info);
+            const actions = document.createElement('div');
+            actions.className = 'saved-export-actions';
             if (item.open_url) {
                 const open = document.createElement('a');
-                open.textContent = 'Open HTML in browser';
+                open.innerHTML = '<i class="fas fa-external-link-alt" aria-hidden="true"></i> Open';
+                open.title = 'Open HTML in browser';
+                open.setAttribute('aria-label', `Open ${item.title} in browser`);
                 open.href = item.open_url;
                 open.target = '_blank';
                 open.rel = 'noopener';
                 open.className = 'btn btn-secondary';
-                row.appendChild(open);
+                actions.appendChild(open);
             }
             const download = document.createElement('a');
-            download.textContent = 'Download';
+            download.innerHTML = '<i class="fas fa-download" aria-hidden="true"></i>';
+            download.title = 'Download';
+            download.setAttribute('aria-label', `Download ${item.title}`);
             download.href = item.download_url;
-            download.className = 'btn btn-secondary';
-            row.appendChild(download);
-            container.appendChild(row);
+            download.className = 'btn btn-secondary btn-icon';
+            actions.appendChild(download);
+            row.appendChild(actions);
+            list.appendChild(row);
         });
+        if (completed.length) container.appendChild(list);
     } catch (error) {
         if (state.currentVideoId !== videoId) return;
         container.replaceChildren();

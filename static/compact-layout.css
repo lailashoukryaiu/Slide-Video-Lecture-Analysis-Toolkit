@@ -59,9 +59,17 @@ select,
 }
 
 .video-container {
+    --video-height: clamp(180px, calc(100dvh - 250px), 760px);
     min-width: 0;
     padding: 8px;
     gap: 4px;
+}
+
+.player-column {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
 .video-wrapper {
@@ -71,7 +79,7 @@ select,
 
 #videoPlayer {
     min-height: 0;
-    max-height: clamp(180px, calc(100dvh - 384px), 540px);
+    max-height: var(--video-height);
 }
 
 .chapter-caption {
@@ -241,8 +249,8 @@ body .video-tabs .controls-toggle-btn {
     flex-shrink: 0;
 }
 
-.video-container:has(#interactiveVideoTab.active) #videoPlayer {
-    max-height: clamp(180px, calc(100dvh - 504px), 480px);
+.video-container:has(#interactiveVideoTab.active) {
+    --video-height: clamp(180px, calc(100dvh - 370px), 700px);
 }
 
 .toggle-switch {
@@ -307,6 +315,68 @@ input:checked + .toggle-slider:before {
 }
 
 @media (min-width: 851px) {
+    /*
+     * Visual timeline sits beside the player as a two-column vertical list.
+     * The player column is only as wide as the video at its current height,
+     * so the remaining width goes to the thumbnails instead of black bars.
+     */
+    .video-container {
+        display: grid;
+        grid-template-columns: minmax(0, calc(var(--video-height) * 16 / 9)) minmax(230px, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        align-items: stretch;
+        column-gap: 8px;
+        /* Same height as the right panel, so the thumbnail list uses the full column. */
+        min-height: max(360px, calc(100dvh - 80px));
+    }
+
+    .player-column {
+        align-self: start;
+    }
+
+    .video-container > .timeline-container {
+        contain: size;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        margin-top: 0;
+        overflow: hidden;
+    }
+
+    .video-container .timeline {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-content: start;
+        gap: 8px 6px;
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+        padding: 2px 2px 4px;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    .video-container .timeline > p {
+        grid-column: 1 / -1;
+        margin: 0;
+    }
+
+    .video-container .timeline-item {
+        width: auto;
+        min-width: 0;
+        margin-right: 0;
+    }
+
+    .video-container .timeline-item .timeline-thumbnail {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+    }
+
+    .video-container .timeline-header h3 {
+        white-space: nowrap;
+    }
+
     /* Keep playback, navigation and detection buttons on one row. */
     .video-controls,
     .detection-video-controls {
@@ -420,5 +490,9 @@ input:checked + .toggle-slider:before {
 
     .video-container:has(#interactiveVideoTab.active) #videoPlayer {
         max-height: 45dvh;
+    }
+
+    .timeline {
+        max-height: 140px;
     }
 }

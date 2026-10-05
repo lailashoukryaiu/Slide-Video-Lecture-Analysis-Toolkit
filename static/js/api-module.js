@@ -363,15 +363,37 @@ export async function translateTranscript() {
             <div class="transcript-processing">
                 <i class="fas fa-spinner fa-spin"></i>
                 <p id="translationProgressText">Preparing translation with ${escapeHtml(selectedModelLabel)}...</p>
-                <p>The transcript and chapter titles are translated in parallel batches.</p>
+                <div class="progress-bar"><div class="progress-fill" id="translationProgressFill" style="width: 0%"></div></div>
+                <p id="translationProgressDetail">The transcript and chapter titles are translated in parallel batches.</p>
             </div>
         `;
         const progressText = document.getElementById('translationProgressText');
+        const progressFill = document.getElementById('translationProgressFill');
+        const progressDetail = document.getElementById('translationProgressDetail');
+        const progressUrl = `/translation_progress/${encodeURIComponent(state.currentVideoId)}/${encodeURIComponent(target)}`;
+        let latestProgress = null;
+        let progressRequest = null;
         translationProgressTimer = setInterval(() => {
             if (!progressText) return;
             const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-            progressText.textContent =
-                `Translating with ${selectedModelLabel} (${elapsed}s elapsed)...`;
+            const done = latestProgress?.completed_segments;
+            const total = latestProgress?.total_segments;
+            const counts = Number.isFinite(done) && total ? ` \u2014 ${done} of ${total} lines` : '';
+            progressText.textContent = `Translating (${elapsed}s)${counts}`;
+            if (progressFill && total) {
+                progressFill.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
+            }
+            if (progressDetail && latestProgress?.message) {
+                progressDetail.textContent = latestProgress.message;
+            }
+            if (progressRequest) return;
+            progressRequest = fetch(progressUrl)
+                .then((progressResponse) => (progressResponse.ok ? progressResponse.json() : null))
+                .then((progress) => {
+                    if (progress && progress.status === 'running') latestProgress = progress;
+                })
+                .catch(() => {})
+                .finally(() => { progressRequest = null; });
         }, 1000);
         const response = await fetch(`/translate_transcript/${encodeURIComponent(state.currentVideoId)}`, {
             method: 'POST',

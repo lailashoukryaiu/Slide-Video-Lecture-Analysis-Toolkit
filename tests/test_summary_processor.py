@@ -194,6 +194,78 @@ class SummaryProcessorTranslationTests(unittest.TestCase):
             [["segment-0"], ["segment-1", "segment-2"]],
         )
 
+    def test_fallback_keeps_finished_batches_and_reports_progress(self):
+        calls = []
+
+        def complete(provider, model, prompt, temperature, json_output=True, max_tokens=None, fast=False):
+            payload = json.loads(prompt.split("\n", 1)[1])
+            ids = [item["id"] for item in payload["lines"]]
+            calls.append((provider, ids, fast))
+            if provider == "gemini" and "segment-2" in ids:
+                raise RuntimeError("429 RESOURCE_EXHAUSTED: quota exceeded")
+            return json.dumps({"translations": [
+                {"id": item["id"], "text": f"{provider}: {item['text']}"}
+                for item in payload["lines"]
+            ]})
+
+        processor = SummaryProcessor.__new__(SummaryProcessor)
+        processor.model = True
+        processor.model_name = "gemini-test"
+        processor.openai_client = object()
+        processor.openai_model_name = "gpt-test"
+        processor._refresh_clients = lambda: None
+        processor._complete = complete
+        processor._translation_batches = lambda items, *args: [items[i:i + 2] for i in range(0, len(items), 2)]
+        progress = []
+        original_sleep = asyncio.sleep
+
+        async def no_sleep(seconds):
+            return None
+
+        asyncio.sleep = no_sleep
+        try:
+            with mock.patch("processors.summary_processor.GEMINI_FALLBACK_MODELS", ()):
+                result = asyncio.run(processor.translate_transcript(
+                    [{"start": i, "duration": 1, "text": f"line {i}"} for i in range(4)],
+                    "de", on_progress=progress.append,
+                ))
+        finally:
+            asyncio.sleep = original_sleep
+
+        self.assertEqual(
+            [item["text"] for item in result["transcript"]],
+            ["gemini: line 0", "gemini: line 1", "openai: line 2", "openai: line 3"],
+        )
+        self.assertEqual(result["provider"], "OpenAI fallback")
+        openai_ids = [ids for provider, ids, _ in calls if provider == "openai"]
+        self.assertEqual(openai_ids, [["segment-2", "segment-3"]], "Finished Gemini lines are not translated again")
+        self.assertTrue(all(fast for _, _, fast in calls), "Translation asks for minimal reasoning")
+        self.assertTrue(any("continuing the remaining 2 lines" in p["message"] for p in progress))
+        self.assertEqual(progress[-1]["completed_segments"], 4)
+        self.assertEqual(progress[-1]["total_segments"], 4)
+
+    def test_fast_gemini_requests_disable_thinking_and_recover_if_rejected(self):
+        configs = []
+
+        class Models:
+            def generate_content(self, **kwargs):
+                configs.append(kwargs["config"])
+                if len(configs) == 1:
+                    raise RuntimeError("400 INVALID_ARGUMENT: thinking_level is not supported")
+                return SimpleNamespace(text="{}")
+
+        processor = SummaryProcessor.__new__(SummaryProcessor)
+        processor.client = SimpleNamespace(models=Models())
+        thinking = object()
+        with mock.patch.object(SummaryProcessor, "_fast_thinking_config", staticmethod(lambda model: thinking)), \
+                mock.patch("processors.summary_processor.types.GenerateContentConfig", lambda **kwargs: kwargs, create=True):
+            self.assertEqual(processor._complete("gemini", "gemini-x", "p", 0.2, True, 100, True), "{}")
+            processor._complete("gemini", "gemini-x", "p", 0.2, True, 100, True)
+
+        self.assertIs(configs[0]["thinking_config"], thinking)
+        self.assertNotIn("thinking_config", configs[1])
+        self.assertNotIn("thinking_config", configs[2], "A model that rejects the setting is remembered")
+
 
 class SummaryProviderFallbackTests(unittest.TestCase):
     def test_summary_language_defaults_to_transcript_and_supports_selection(self):

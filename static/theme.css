@@ -1035,6 +1035,115 @@ body .search-highlight.active {
     border-radius: var(--radius-lg);
 }
 
+/* ---------- Saved exports ---------- */
+
+.saved-exports {
+    flex-shrink: 0;
+    margin: 6px 8px 8px;
+    padding: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.saved-exports-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.saved-exports-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+.saved-exports-header h3 i {
+    color: var(--brand);
+}
+
+.btn.btn-icon {
+    width: 28px;
+    min-height: 28px;
+    padding: 0;
+}
+
+.saved-exports-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 30dvh;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.saved-export-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+}
+
+.saved-export-row:hover {
+    border-color: var(--border-strong);
+}
+
+.saved-export-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.saved-export-title {
+    overflow: hidden;
+    color: var(--text-1);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.saved-export-date {
+    color: var(--text-3);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.saved-export-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 4px;
+}
+
+.saved-export-actions .btn {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+    text-decoration: none;
+}
+
+.saved-export-actions .btn.btn-icon {
+    padding: 0;
+}
+
+#savedExports > p {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
 /* ---------- Motion preferences ---------- */
 
 @media (prefers-reduced-motion: reduce) {
