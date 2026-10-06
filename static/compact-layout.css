@@ -324,9 +324,9 @@ input:checked + .toggle-slider:before {
     /*
      * Three resizable areas: player | visual timeline | side panel.
      * layout-resize.js sets --timeline-width and --side-panel-width when the
-     * user drags a splitter. The player column is never wider than the video
-     * at its current height, so extra width goes to the thumbnails instead of
-     * black bars.
+     * user drags a splitter. By default the player column is never wider than
+     * the video at its current height, so extra width goes to the thumbnails
+     * instead of black bars; a dragged timeline width takes precedence.
      */
     .main-content {
         grid-template-columns: minmax(0, 1fr) 12px var(--side-panel-width, clamp(260px, 24vw, 360px));
@@ -344,6 +344,12 @@ input:checked + .toggle-slider:before {
         column-gap: 0;
         /* Same height as the right panel, so the thumbnail list uses the full column. */
         min-height: max(360px, calc(100dvh - 80px));
+    }
+
+    /* Once the user drags the timeline splitter, the timeline keeps exactly that width
+       and the player takes the rest, even if the video then shows side bars. */
+    .video-container.timeline-sized {
+        grid-template-columns: minmax(0, 1fr) 8px var(--timeline-width);
     }
 
     .player-column {
@@ -649,6 +655,28 @@ input:checked + .toggle-slider:before {
 #thumbnailTimeline .timeline-item.grouping-hidden { display: none !important; }
 .timeline-item.chapter-card .chapter-badge { background: var(--accent, #4f46e5); color: #fff; }
 
+/* Sections sit indented under their chapter in the visual timeline. */
+.timeline-header .timeline-sections-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.timeline-header .timeline-sections-toggle[hidden] { display: none; }
+.timeline-header .timeline-sections-toggle label[for] { cursor: pointer; }
+#thumbnailTimeline .timeline-item.section-card {
+    margin-left: 14px;
+    border-left: 2px solid var(--accent, #4f46e5);
+    padding-left: 4px;
+}
+.timeline-item.section-card .chapter-badge {
+    background: #fff;
+    color: var(--accent, #4f46e5);
+    border: 1px solid var(--accent, #4f46e5);
+}
+
 /* Sections nested under generated chapters in the Summary tab. */
 .chapter-sections {
     list-style: none;
@@ -678,6 +706,40 @@ input:checked + .toggle-slider:before {
     font-size: 11px;
     opacity: 0.8;
 }
+
+/* Chapters start collapsed; the chevron reveals their sections. */
+.chapter-item.has-sections {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+.chapter-expand {
+    flex: 0 0 auto;
+    width: 18px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+}
+.chapter-expand::before {
+    content: "\25B8";
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+.chapter-item.expanded .chapter-expand::before { transform: rotate(90deg); }
+.chapter-expand:focus-visible { outline: 2px solid var(--brand, #4f46e5); border-radius: 3px; }
+.chapter-sections[hidden] { display: none; }
+
+/* Current chapter and section while playing, matching the active transcript line. */
+.chapter-item.active,
+.chapter-section.active {
+    background-color: var(--brand-soft, rgba(79, 70, 229, 0.12));
+    border-left: 3px solid var(--brand, #4f46e5);
+}
+.chapter-item.active { font-weight: 600; }
 
 .summary-options textarea {
     width: 100%;

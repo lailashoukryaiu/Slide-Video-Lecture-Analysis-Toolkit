@@ -3,7 +3,7 @@
     const STORAGE_KEY = 'slidedec-layout-sizes';
     const handles = {
         timelineSplitter: {
-            variable: '--timeline-width', min: 140, max: 420,
+            variable: '--timeline-width', min: 140, max: 420, sizedClass: 'timeline-sized',
             target: () => document.querySelector('.video-container'),
             // The timeline sits right of the handle, so it grows when dragging left.
             size: (target, x) => target.getBoundingClientRect().right - x - 12,
@@ -27,6 +27,7 @@
         const config = handles[id];
         const target = config.target();
         if (!target) return;
+        if (config.sizedClass) target.classList.toggle(config.sizedClass, value != null);
         if (value == null) {
             target.style.removeProperty(config.variable);
             return;

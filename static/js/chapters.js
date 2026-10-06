@@ -5,6 +5,7 @@ import { state } from './main.js';
 import { showError, showErrorWithActions, showNotification } from './ui.js';
 import { saveBlobToUserLocation } from './utils.js';
 import { conciseTitle } from './chapter-navigation.js';
+import { scrollWithinContainer } from './scroll-utils.js';
 
 let chapterMarkerGeneration = 0;
 
@@ -487,6 +488,7 @@ export function updateChapters(chapters) {
     chapters.forEach(chapter => {
         const div = document.createElement('div');
         div.className = 'chapter-item';
+        div.dataset.start = timestampSeconds(chapter.timestamp);
         const timestamp = document.createElement('span');
         timestamp.className = 'chapter-timestamp';
         timestamp.textContent = chapter.timestamp;
@@ -508,7 +510,11 @@ export function updateChapters(chapters) {
         };
         chaptersContainer.appendChild(div);
         if (Array.isArray(chapter.sections) && chapter.sections.length) {
-            chaptersContainer.appendChild(renderChapterSections(chapter.sections));
+            const sections = renderChapterSections(chapter.sections);
+            sections.hidden = true;
+            div.classList.add('has-sections');
+            div.prepend(sectionsToggle(div, sections));
+            chaptersContainer.appendChild(sections);
         }
     });
     
@@ -520,6 +526,61 @@ export function updateChapters(chapters) {
     
     // Add chapter markers to the timeline
     addChapterMarkersToTimeline(chapters);
+    activeChapterKey = '';
+    updateActiveChapter();
+}
+
+function sectionsToggle(chapterItem, sections) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chapter-expand';
+    const setExpanded = (expanded) => {
+        sections.hidden = !expanded;
+        chapterItem.classList.toggle('expanded', expanded);
+        button.setAttribute('aria-expanded', String(expanded));
+        button.title = expanded ? 'Hide sections' : `Show ${sections.children.length} sections`;
+        button.setAttribute('aria-label', button.title);
+    };
+    setExpanded(false);
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setExpanded(sections.hidden);
+        activeChapterKey = '';
+        updateActiveChapter();
+    });
+    return button;
+}
+
+let activeChapterKey = '';
+
+/** Highlights the chapter and section being played, like the active transcript line. */
+export function updateActiveChapter() {
+    const container = elements.chaptersContainer;
+    const time = elements.videoPlayer?.currentTime;
+    if (!container || !Number.isFinite(time)) return;
+    const latest = (items) => items.reduce((found, item) => (
+        Number(item.dataset.start) <= time + 0.01 ? item : found
+    ), null);
+    const chapter = latest([...container.querySelectorAll('.chapter-item')]);
+    const sectionList = chapter?.nextElementSibling?.classList.contains('chapter-sections') ? chapter.nextElementSibling : null;
+    const section = sectionList ? latest([...sectionList.querySelectorAll('.chapter-section')]) : null;
+    const key = `${chapter?.dataset.start ?? ''}|${section?.dataset.start ?? ''}|${sectionList?.hidden ?? ''}`;
+    if (key === activeChapterKey) return;
+    activeChapterKey = key;
+    container.querySelectorAll('.chapter-item.active, .chapter-section.active')
+        .forEach((item) => item.classList.remove('active'));
+    chapter?.classList.add('active');
+    section?.classList.add('active');
+    const visible = section && !sectionList.hidden ? section : chapter;
+    if (visible) scrollWithinContainer(scrollParent(container), visible);
+}
+
+function scrollParent(element) {
+    for (let node = element; node; node = node.parentElement) {
+        const overflow = getComputedStyle(node).overflowY;
+        if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+    }
+    return element;
 }
 
 function timestampSeconds(timestamp) {
@@ -533,6 +594,7 @@ function renderChapterSections(sections) {
         const item = document.createElement('li');
         item.className = 'chapter-section';
         item.tabIndex = 0;
+        item.dataset.start = timestampSeconds(section.timestamp);
         const timestamp = document.createElement('span');
         timestamp.className = 'chapter-timestamp';
         timestamp.textContent = section.timestamp;

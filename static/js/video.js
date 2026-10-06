@@ -6,6 +6,7 @@ import { state } from './main.js';
 import { updateActiveTranscript } from './transcript.js';
 import { navigationParts, activePart, conciseTitle, chapterStart } from './chapter-navigation.js';
 import { scrollWithinContainer } from './scroll-utils.js';
+import { updateActiveChapter } from './chapters.js';
 
 export function updateChapterCaptions() {
     const parts = navigationParts(state.videoChapters || [], state.videoScenes || [], state.chapterGrouping);
@@ -44,10 +45,24 @@ export function syncTimelineGrouping() {
     const scenes = state.videoScenes || [];
     const mode = state.chapterGrouping || 'topic';
     const chapters = (state.videoChapters || [])
-        .map((chapter) => ({ start: chapterStart(chapter), title: chapter.title || '' }))
+        .map((chapter) => ({
+            start: chapterStart(chapter),
+            title: chapter.title || '',
+            sections: (Array.isArray(chapter.sections) ? chapter.sections : [])
+                .map((section) => ({ start: chapterStart(section), title: section.title || '' }))
+                .filter((section) => Number.isFinite(section.start)),
+        }))
         .filter((chapter) => Number.isFinite(chapter.start))
         .sort((a, b) => a.start - b.start);
-    const signature = JSON.stringify([mode, scenes.length, chapters.map((c) => [c.start, c.title])]);
+    const hasSections = chapters.some((chapter) => chapter.sections.length > 0);
+    const sectionsToggle = document.getElementById('timelineSectionsToggle');
+    const sectionsControl = document.getElementById('timelineSectionsControl');
+    if (sectionsControl) sectionsControl.hidden = !hasSections || mode === 'slides';
+    const showSections = hasSections && Boolean(sectionsToggle?.checked);
+    const signature = JSON.stringify([
+        mode, scenes.length, showSections,
+        chapters.map((c) => [c.start, c.title, c.sections.map((s) => [s.start, s.title])]),
+    ]);
     if (timeline.dataset.groupingSignature === signature) return;
     timeline.dataset.groupingSignature = signature;
     timeline.querySelectorAll('.chapter-card').forEach((card) => card.remove());
@@ -57,34 +72,53 @@ export function syncTimelineGrouping() {
     sceneItems.forEach((item) => item.classList.toggle('grouping-hidden', hideSlides));
     if (!showChapters) return;
     const sceneTimes = sceneItems.map((item) => Number(item.querySelector('.timeline-thumbnail')?.dataset.time));
-    chapters.forEach((chapter, index) => {
-        if (mode === 'combined' && sceneTimes.some((time) => Math.abs(time - chapter.start) < 1)) return;
+    const screenshotAt = (start) => {
         let sourceIndex = 0;
-        sceneTimes.forEach((time, i) => { if (time <= chapter.start + 0.01) sourceIndex = i; });
-        const source = sceneItems[sourceIndex].querySelector('.timeline-thumbnail');
-        const card = document.createElement('div');
-        card.className = 'timeline-item chapter-card';
-        card.title = chapter.title;
-        const badge = document.createElement('div');
-        badge.className = 'detection-badge chapter-badge';
-        badge.textContent = `${index + 1}`;
-        badge.setAttribute('aria-label', `Chapter ${index + 1}`);
-        const img = document.createElement('img');
-        img.className = 'timeline-thumbnail';
-        img.src = source?.src || '';
-        img.alt = `Chapter ${index + 1}: ${chapter.title}`;
-        img.dataset.time = chapter.start;
-        const timestamp = document.createElement('div');
-        timestamp.className = 'timeline-timestamp';
-        timestamp.textContent = formatTime(chapter.start);
-        const caption = document.createElement('div');
-        caption.className = 'chapter-caption';
-        caption.textContent = conciseTitle(chapter.title);
-        card.append(badge, img, timestamp, caption);
-        card.onclick = () => { elements.videoPlayer.currentTime = chapter.start; };
-        const next = sceneItems.find((item, i) => sceneTimes[i] > chapter.start);
+        sceneTimes.forEach((time, i) => { if (time <= start + 0.01) sourceIndex = i; });
+        return sceneItems[sourceIndex].querySelector('.timeline-thumbnail')?.src || '';
+    };
+    const insertByTime = (card, start) => {
+        const next = [...timeline.querySelectorAll('.timeline-item')]
+            .find((item) => item !== card && Number(item.querySelector('.timeline-thumbnail')?.dataset.time) > start);
         timeline.insertBefore(card, next || null);
+    };
+    chapters.forEach((chapter, index) => {
+        const number = `${index + 1}`;
+        if (!(mode === 'combined' && sceneTimes.some((time) => Math.abs(time - chapter.start) < 1))) {
+            insertByTime(timelineCard('chapter-card', number, `Chapter ${number}`, chapter, screenshotAt(chapter.start)), chapter.start);
+        }
+        if (!showSections) return;
+        chapter.sections.forEach((section, sectionIndex) => {
+            // The chapter card already marks a section that starts with the chapter.
+            if (Math.abs(section.start - chapter.start) < 1) return;
+            const label = `${number}.${sectionIndex + 1}`;
+            insertByTime(timelineCard('chapter-card section-card', label, `Section ${label}`, section, screenshotAt(section.start)), section.start);
+        });
     });
+}
+
+function timelineCard(className, number, label, part, src) {
+    const card = document.createElement('div');
+    card.className = `timeline-item ${className}`;
+    card.title = part.title;
+    const badge = document.createElement('div');
+    badge.className = 'detection-badge chapter-badge';
+    badge.textContent = number;
+    badge.setAttribute('aria-label', label);
+    const img = document.createElement('img');
+    img.className = 'timeline-thumbnail';
+    img.src = src;
+    img.alt = `${label}: ${part.title}`;
+    img.dataset.time = part.start;
+    const timestamp = document.createElement('div');
+    timestamp.className = 'timeline-timestamp';
+    timestamp.textContent = formatTime(part.start);
+    const caption = document.createElement('div');
+    caption.className = 'chapter-caption';
+    caption.textContent = conciseTitle(part.title);
+    card.append(badge, img, timestamp, caption);
+    card.onclick = () => { elements.videoPlayer.currentTime = part.start; };
+    return card;
 }
 
 /**
@@ -110,6 +144,7 @@ export function setupVideoPlayer(videoPlayer) {
         timeupdate: () => {
             updateTimeMarker(videoPlayer);
             updateChapterCaptions();
+            updateActiveChapter();
         },
         timeline: updateTimelineHighlight,
         transcript: updateActiveTranscript

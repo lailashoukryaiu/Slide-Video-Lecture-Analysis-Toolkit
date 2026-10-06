@@ -330,6 +330,17 @@ function initApp() {
     };
     bind(navigationGrouping, 'change', (event) => setGrouping(event.target.value));
     bind(elements.chapterGrouping, 'change', (event) => setGrouping(event.target.value));
+    const timelineSectionsToggle = document.getElementById('timelineSectionsToggle');
+    if (timelineSectionsToggle) {
+        try {
+            const saved = localStorage.getItem('timelineSectionsV1');
+            if (saved !== null) timelineSectionsToggle.checked = saved === 'true';
+        } catch (error) { /* storage unavailable */ }
+        bind(timelineSectionsToggle, 'change', () => {
+            try { localStorage.setItem('timelineSectionsV1', String(timelineSectionsToggle.checked)); } catch (error) { /* storage unavailable */ }
+            updateChapterCaptions();
+        });
+    }
     document.addEventListener('chaptersUpdated', updateChapterCaptions);
     document.addEventListener('scenesLoaded', updateChapterCaptions);
     bind(elements.summaryOptionsBtn, 'click', () => {
