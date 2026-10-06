@@ -2075,9 +2075,10 @@ function updateDetectionOverlayContent(videoPlayer, overlay) {
         offsetX = (containerWidth - displayWidth) / 2;
     }
     
-    // Calculate scaling factors based on the actual displayed video size
-    const scaleX = displayWidth / videoWidth;
-    const scaleY = displayHeight / videoHeight;
+    // Detection boxes are in screenshot pixels, not video pixels.
+    const imageSize = detectionImageSize(currentScene, videoPlayer);
+    const scaleX = displayWidth / imageSize.width;
+    const scaleY = displayHeight / imageSize.height;
     
     console.log('Video dimensions:', videoWidth, 'x', videoHeight);
     console.log('Container dimensions:', containerWidth, 'x', containerHeight);
@@ -2237,6 +2238,33 @@ export function updateVideoDetectionOverlay() {
  * @param {number} time - The time in seconds
  * @returns {Object|null} The scene object or null if not found
  */
+const detectionImageSizes = new Map();
+
+/**
+ * Size of the screenshot the detections were made on. Detection boxes use screenshot
+ * pixels, which are usually smaller than the video (screenshots are at most 720 px high).
+ */
+export function detectionImageSize(scene, videoPlayer) {
+    const stored = scene?.yolo_detections?.image_size;
+    if (Array.isArray(stored) && stored[0] > 0 && stored[1] > 0) {
+        return { width: stored[0], height: stored[1] };
+    }
+    const source = scene?.fullsize || scene?.thumbnail;
+    const cached = source ? detectionImageSizes.get(source) : null;
+    if (cached) return cached;
+    if (source && !detectionImageSizes.has(source) && typeof Image !== 'undefined') {
+        detectionImageSizes.set(source, null);
+        const image = new Image();
+        image.onload = () => detectionImageSizes.set(source, { width: image.naturalWidth, height: image.naturalHeight });
+        image.src = source;
+    }
+    const videoWidth = videoPlayer?.videoWidth || 0;
+    const videoHeight = videoPlayer?.videoHeight || 0;
+    if (!videoWidth || !videoHeight) return { width: videoWidth || 1, height: videoHeight || 1 };
+    const height = Math.min(720, videoHeight);
+    return { width: Math.floor(videoWidth * height / videoHeight), height };
+}
+
 export function findSceneAtTime(time) {
     // Check cache first for exact match
     if (sceneCache.lastTime === time && sceneCache.lastScene) {
@@ -2388,23 +2416,18 @@ export function clearSceneCache() {
 function loadScenesAndUpdateOverlay() {
     console.log('Manually loading scenes and updating overlay');
     
-    // Try to get the video ID from the URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const videoId = urlParams.get('video');
-    
-    // if (!videoId) {
-    //     console.error('No video ID found in URL');
-    //     showNotification('Error: No video ID found', 'error');
-    //     return;
-    // }
+    const videoId = state.currentVideoId;
+    if (!videoId) {
+        showNotification('Load a video first.', 'error');
+        return;
+    }
     
     console.log('Loading scenes for video ID:', videoId);
     
     // Show loading notification
-    showNotification('Loading scene data...', 'info');
+    showNotification('Reloading slide changes...', 'info');
     
-    // Fetch scenes from the server
-    fetch(`/scenes/${videoId}`)
+    fetch(`/scenes/${encodeURIComponent(videoId)}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error ${response.status}`);
@@ -2412,6 +2435,12 @@ function loadScenesAndUpdateOverlay() {
             return response.json();
         })
         .then(data => {
+            if (state.currentVideoId !== videoId) return;
+            if (data.success && Array.isArray(data.scenes) && data.scenes.length === 0) {
+                // Never wipe slides already on screen because the server has none saved yet.
+                showNotification('No saved slide changes for this video yet. Run slide detection first.', 'info');
+                return;
+            }
             if (data.success && data.scenes) {
                 console.log('Successfully loaded scenes:', data.scenes.length);
                 
@@ -2427,7 +2456,7 @@ function loadScenesAndUpdateOverlay() {
                 forceImmediateOverlayUpdate();
                 
                 // Show success notification
-                showNotification(`Loaded ${data.scenes.length} scenes`, 'success');
+                showNotification(`Reloaded ${data.scenes.length} slide changes`, 'success');
                 
                 // Dispatch scenesLoaded event
                 const event = new CustomEvent('scenesLoaded', {

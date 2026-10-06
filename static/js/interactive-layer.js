@@ -2,7 +2,7 @@
 
 import { elements } from './elements.js';
 import { state } from './main.js';
-import { findSceneAtTime } from './scenes.js';
+import { findSceneAtTime, detectionImageSize } from './scenes.js';
 
 // Store extracted elements
 const extractedElements = [];
@@ -1650,6 +1650,9 @@ export function toggleInteractiveLayer() {
                         element.style.display = 'block';
                     }
                 });
+                // Auto-extract otherwise waits for playback; extract the paused frame right away.
+                const autoExtract = document.getElementById('autoExtractElements');
+                if (!sceneElements.length && autoExtract?.checked) extractAllElements();
             }
         }
         
@@ -3563,6 +3566,11 @@ function clearAllElements() {
  */
 function toggleBoundingBoxes() {
     const showBoxes = document.getElementById('showBoundingBoxes').checked;
+    const currentScene = findSceneAtTime(elements.videoPlayer.currentTime);
+    // Boxes outline extracted elements, so extract the current slide's elements first.
+    if (showBoxes && currentScene && !extractedElements.some(el => el.sceneIndex === currentScene.index)) {
+        extractAllElements();
+    }
     
     // Update all extracted elements
     document.querySelectorAll('.extracted-video-element').forEach(el => {
@@ -3747,15 +3755,15 @@ function resetDetectionBoxesSelectable() {
  * @param {HTMLVideoElement} videoPlayer - The video player element
  * @returns {Object} - A virtual detection box with necessary properties
  */
-function createVirtualDetectionBox(detection, videoPlayer) {
+function createVirtualDetectionBox(detection, videoPlayer, imageSize) {
     const videoRect = videoPlayer.getBoundingClientRect();
     const [x1, y1, x2, y2] = detection.bbox;
     
-    // Calculate relative coordinates (0-1)
-    const relativeX1 = x1 / videoPlayer.videoWidth;
-    const relativeY1 = y1 / videoPlayer.videoHeight;
-    const relativeX2 = x2 / videoPlayer.videoWidth;
-    const relativeY2 = y2 / videoPlayer.videoHeight;
+    // Detection boxes use screenshot pixels; convert them to relative coordinates (0-1).
+    const relativeX1 = x1 / imageSize.width;
+    const relativeY1 = y1 / imageSize.height;
+    const relativeX2 = x2 / imageSize.width;
+    const relativeY2 = y2 / imageSize.height;
     
     // Calculate pixel coordinates relative to the displayed video
     const pixelX1 = relativeX1 * videoRect.width + videoRect.left;
@@ -3800,14 +3808,14 @@ function createVirtualDetectionBox(detection, videoPlayer) {
  * @param {HTMLVideoElement} videoPlayer - The video player element
  * @returns {Object} - A virtual detection box with necessary properties
  */
-function createVirtualOCRBox(ocrResult, videoPlayer) {
+function createVirtualOCRBox(ocrResult, videoPlayer, imageSize) {
     const videoRect = videoPlayer.getBoundingClientRect();
     const [x1, y1, x2, y2] = ocrResult.bbox;
     
-    // Calculate relative coordinates (0-1)
-    const relativeX1 = x1 / videoPlayer.videoWidth;
-    const relativeY1 = y1 / videoPlayer.videoHeight;
-    const relativeX2 = x2 / videoPlayer.videoWidth;
+    // OCR boxes use screenshot pixels; convert them to relative coordinates (0-1).
+    const relativeX1 = x1 / imageSize.width;
+    const relativeY1 = y1 / imageSize.height;
+    const relativeX2 = x2 / imageSize.width;
     const relativeY2 = y2 / videoPlayer.videoHeight;
     
     // Calculate pixel coordinates relative to the displayed video
@@ -3929,11 +3937,12 @@ function extractAllElements() {
     
     // Create virtual detection boxes from scene data
     const virtualDetectionBoxes = [];
+    const imageSize = detectionImageSize(currentScene, videoPlayer);
     
     // Add YOLO detections if available
     if (currentScene.yolo_detections && currentScene.yolo_detections.success) {
         currentScene.yolo_detections.detections.forEach(detection => {
-            virtualDetectionBoxes.push(createVirtualDetectionBox(detection, videoPlayer));
+            virtualDetectionBoxes.push(createVirtualDetectionBox(detection, videoPlayer, imageSize));
         });
     }
     
@@ -3941,7 +3950,7 @@ function extractAllElements() {
     if (currentScene.surya_ocr && currentScene.surya_ocr.success) {
         currentScene.surya_ocr.results.forEach(result => {
             if (!result.matched && result.text && result.text.trim() && result.bbox && result.bbox.length === 4) {
-                virtualDetectionBoxes.push(createVirtualOCRBox(result, videoPlayer));
+                virtualDetectionBoxes.push(createVirtualOCRBox(result, videoPlayer, imageSize));
             }
         });
     }

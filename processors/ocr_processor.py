@@ -180,8 +180,12 @@ class OCRProcessor:
         try:
             results = self.__class__.yolo_model(image_path)
             detections = []
+            image_size = None
             
             for result in results:
+                if image_size is None and getattr(result, "orig_shape", None) is not None:
+                    height, width = result.orig_shape[:2]
+                    image_size = [int(width), int(height)]
                 boxes = result.boxes
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
@@ -204,10 +208,14 @@ class OCRProcessor:
             # Merge overlapping text detections
             detections = self.merge_overlapping_detections(detections)
             
-            return {
+            response = {
                 "success": True,
                 "detections": detections
             }
+            # Boxes are in screenshot pixels; the viewer needs this size to place them on the video.
+            if image_size:
+                response["image_size"] = image_size
+            return response
         except Exception as e:
             print(f"Error processing image with YOLO: {str(e)}")
             return {
