@@ -112,6 +112,27 @@ function renderExportSteps(status) {
     }
 }
 
+async function downloadSavedExport(item, link) {
+    link.classList.add('is-loading');
+    link.setAttribute('aria-busy', 'true');
+    try {
+        const response = await fetch(item.download_url);
+        if (!response.ok) throw new Error(`server answered ${response.status}`);
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition') || '';
+        const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plain = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = encoded ? decodeURIComponent(encoded[1]) : plain ? plain[1] : (item.filename || 'export.zip');
+        await saveBlobToUserLocation(blob, filename);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        showError(`Could not download saved export: ${error.message}`);
+    } finally {
+        link.classList.remove('is-loading');
+        link.removeAttribute('aria-busy');
+    }
+}
+
 export async function refreshSavedExports() {
     const container = document.getElementById('savedExports');
     if (!container) return;
@@ -171,6 +192,10 @@ export async function refreshSavedExports() {
             download.setAttribute('aria-label', `Download ${item.title}`);
             download.href = item.download_url;
             download.className = 'btn btn-secondary btn-icon';
+            download.addEventListener('click', (event) => {
+                event.preventDefault();
+                void downloadSavedExport(item, download);
+            });
             actions.appendChild(download);
             row.appendChild(actions);
             list.appendChild(row);

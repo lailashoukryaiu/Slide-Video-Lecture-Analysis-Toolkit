@@ -8,11 +8,15 @@ const element = () => ({
     children: [], textContent: '',
     appendChild(child) { this.children.push(child); },
     replaceChildren() { this.children = []; },
-    setAttribute() {},
+    setAttribute() {}, removeAttribute() {},
+    classList: {add() {}, remove() {}},
+    listeners: {},
+    addEventListener(type, handler) { this.listeners[type] = handler; },
 });
 const progress = element();
 const history = element();
 const errors = [];
+const saved = [];
 const context = vm.createContext({
     state: {currentVideoId: 'video'}, elements: {}, console, TypeError,
     document: {
@@ -20,6 +24,7 @@ const context = vm.createContext({
         getElementById: (id) => id === 'exportProgress' ? progress : history,
     },
     showError: (message) => errors.push(message),
+    saveBlobToUserLocation: async (blob, filename) => saved.push([blob, filename]),
     fetch: async () => ({
         ok: true, text: async () => JSON.stringify({exports: [{
             status: 'complete', title: '<unsafe title>', created_at: 100,
@@ -50,6 +55,17 @@ assert(progress.children[1].children[0].textContent.includes('running for 21s'))
     assert.equal(actions.children[0].rel, 'noopener');
     assert.equal(actions.children[1].title, 'Download');
     assert.equal(actions.children[1].href, '/export_jobs/test/download');
+    let prevented = false;
+    const listFetch = context.fetch;
+    context.fetch = async (url) => ({
+        ok: true, blob: async () => `blob:${url}`,
+        headers: {get: () => 'attachment; filename="Lecture.zip"'},
+    });
+    await actions.children[1].listeners.click({preventDefault() { prevented = true; }});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert(prevented, 'Download click does not navigate the page');
+    assert.deepEqual(saved, [['blob:/export_jobs/test/download', 'Lecture.zip']]);
+    context.fetch = listFetch;
     const goodFetch = context.fetch;
     context.fetch = async () => {throw new TypeError('Failed to fetch');};
     await context.refreshSavedExports();
