@@ -29,6 +29,9 @@ PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openai": "OpenAI"}
 # Concurrent translation requests for Gemini/OpenAI; Groq stays at one.
 # A model that ran out of quota is skipped by automatic selection for a while.
 QUOTA_COOLDOWN_SECONDS = max(60, int(os.getenv("AI_QUOTA_COOLDOWN_SECONDS", "3600")))
+CHAPTER_TIMEOUT_SECONDS = 90
+# About 4,000 tokens: one part plus its answer fits Groq's free 8,000 tokens per minute.
+GROQ_CHAPTER_CHUNK_CHARS = 16000
 TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 
 class SummaryProcessor:
@@ -302,19 +305,32 @@ Format each chapter exactly like this example:
             used_model = None
             for index, (candidate, model) in enumerate(chain):
                 try:
-                    response_text = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self._complete, candidate, model, prompt, 0.5,
-                            candidate == "gemini",
-                            2048 if candidate == "groq" else None,
-                        ),
-                        timeout=90,
-                    )
+                    if candidate == "groq" and len(full_text) > GROQ_CHAPTER_CHUNK_CHARS:
+                        # Groq's free tier rejects long prompts (tokens per minute),
+                        # so long lectures are split into parts that each fit.
+                        response_text = await self._chunked_chapters(
+                            candidate, model, transcript, language_instruction,
+                        )
+                    else:
+                        response_text = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._complete, candidate, model, prompt, 0.5,
+                                candidate == "gemini",
+                                2048 if candidate == "groq" else None,
+                            ),
+                            timeout=CHAPTER_TIMEOUT_SECONDS,
+                        )
                     provider = self._provider_label(candidate, index)
                     used_model = model
                     break
                 except Exception as error:
+                    if isinstance(error, asyncio.TimeoutError):
+                        error = RuntimeError(
+                            f"no answer within {CHAPTER_TIMEOUT_SECONDS} seconds (the model is busy or slow)"
+                        )
                     failures.append(f"{PROVIDER_LABELS[candidate]} {model}: {error}")
+                    if "timed out" in str(error).lower() or "no answer within" in str(error):
+                        continue
                     if self._is_model_unavailable(error):
                         self._mark_unavailable(candidate, model)
                         continue
@@ -367,6 +383,77 @@ Format each chapter exactly like this example:
                 "success": False,
                 "error": str(e)
             })
+
+    @staticmethod
+    def _parse_chapter_list(response_text):
+        try:
+            chapters = json.loads(response_text)
+        except json.JSONDecodeError:
+            match = re.search(r'\[.*\]', response_text.replace('\n', ' '), re.DOTALL)
+            if not match:
+                raise ValueError("Could not parse the AI response as JSON")
+            chapters = json.loads(match.group())
+        if isinstance(chapters, dict):
+            chapters = next((value for value in chapters.values() if isinstance(value, list)), [])
+        if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
+            chapters = [item for sublist in chapters for item in sublist]
+        return [item for item in chapters if isinstance(item, dict)]
+
+    async def _chunked_chapters(self, provider, model, transcript, language_instruction):
+        """Generate chapters part by part and return them as one JSON list."""
+        def stamp(seconds):
+            seconds = int(seconds)
+            return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+        parts, current, size = [], [], 0
+        for item in transcript:
+            line = f"{stamp(item['start'])}: {item['text']}\n"
+            if current and size + len(line) > GROQ_CHAPTER_CHUNK_CHARS:
+                parts.append(current)
+                current, size = [], 0
+            current.append(line)
+            size += len(line)
+        if current:
+            parts.append(current)
+
+        chapters = []
+        number = 0
+        while parts:
+            lines = parts.pop(0)
+            number += 1
+            total = number + len(parts)
+            prompt = f"""{language_instruction}
+This is part {number} of {total} of one lecture transcript, from {lines[0][:8]} to {lines[-1][:8]}.
+Create 2 to 6 chapters that outline the main topics of this part only.
+For each chapter, provide the timestamp where it starts (HH:MM:SS, taken from the transcript) and
+a concise title of at most 5 words: a specific noun phrase naming the topic, not a sentence, with no trailing punctuation and no filler such as "Introduction to" or "Discussion of".
+Return JSON exactly like this: {{"chapters": [{{"timestamp": "00:00:00", "title": "Course overview"}}]}}
+{''.join(lines)}"""
+            text = None
+            for attempt in range(6):
+                try:
+                    text = await asyncio.wait_for(
+                        asyncio.to_thread(self._complete, provider, model, prompt, 0.5, True, 1500),
+                        timeout=CHAPTER_TIMEOUT_SECONDS,
+                    )
+                    break
+                except Exception as error:
+                    message = str(error).lower()
+                    if "request too large" in message and len(lines) > 1:
+                        # Dense scripts use more tokens per character; split this part again.
+                        middle = len(lines) // 2
+                        parts[:0] = [lines[:middle], lines[middle:]]
+                        number -= 1
+                        break
+                    if "request too large" in message or attempt == 5 or not self._is_quota_error(error):
+                        raise
+                    delay = min(self._retry_delay(error) or 20.0, 65.0)
+                    print(f"{PROVIDER_LABELS[provider]} rate limit while generating chapters "
+                          f"(part {number}/{total}); waiting {delay:.0f}s")
+                    await asyncio.sleep(delay)
+            if text is not None:
+                chapters.extend(self._parse_chapter_list(text))
+        return json.dumps(chapters)
 
     async def translate_transcript(
         self, transcript, target_language, requested_model=None, _chain=None, _chain_offset=0,

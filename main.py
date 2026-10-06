@@ -1189,13 +1189,16 @@ def prepare_export_image(video_id, video_path, timestamp, scenes, destination, c
     key = round(timestamp * 1000)
     source = cache.get(key)
     if source is None:
-        matching = next((scene for scene in scenes if abs(export_slide_start(scene) - timestamp) < 0.001), None)
+        # Reuse the detected slide that is on screen at this time instead of
+        # decoding a new frame from the video.
+        shown = [scene for scene in scenes if export_slide_start(scene) <= timestamp + 0.5]
+        matching = max(shown, key=export_slide_start) if shown else None
         if matching is not None:
             saved = FULLSIZE_IMAGES_DIR / video_id / f"{matching['image_index']}.jpg"
             if saved.is_file():
                 source = saved
     if source is not None:
-        step(f"Reusing extracted slide image at {format_chapter_timestamp(timestamp)}")
+        step(f"Reusing detected slide image for {format_chapter_timestamp(timestamp)}")
         shutil.copy2(source, destination)
     else:
         step(f"Extracting missing export image at {format_chapter_timestamp(timestamp)}")

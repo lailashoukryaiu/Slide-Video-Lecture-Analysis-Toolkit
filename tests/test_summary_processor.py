@@ -401,6 +401,56 @@ class SummaryProviderFallbackTests(unittest.TestCase):
             SummaryProcessor._retry_delay(RuntimeError("try again in 500ms")), 1.5
         )
 
+    def test_long_transcript_is_split_into_parts_for_groq(self):
+        from processors import summary_processor as module
+        processor = self._processor(None, None, None)
+        prompts = []
+
+        def complete(provider, model, prompt, *args):
+            self.assertEqual(provider, "groq")
+            prompts.append(prompt)
+            if len(prompt) > 3000 and len(prompts) == 1:
+                raise RuntimeError("Error code: 413 Request too large for model on tokens per minute (TPM)")
+            if len(prompts) == 3:
+                raise RuntimeError("Error code: 429 rate_limit_exceeded. Please try again in 0.01s.")
+            stamp = prompt.split("from ", 1)[1][:8]
+            return '{"chapters": [{"timestamp": "%s", "title": "Part at %s"}]}' % (stamp, stamp)
+
+        processor._complete = complete
+        transcript = [{"start": index * 10, "text": "word " * 40} for index in range(60)]
+        sleeps = []
+
+        async def no_sleep(seconds):
+            sleeps.append(seconds)
+
+        with mock.patch.object(module, "GROQ_CHAPTER_CHUNK_CHARS", 6000), \
+                mock.patch.object(module.asyncio, "sleep", no_sleep):
+            response = asyncio.run(processor.generate_summary(transcript, "video"))
+
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(response.content["model"], "groq-test")
+        starts = [chapter["timestamp"] for chapter in response.content["chapters"]]
+        self.assertEqual(starts[0], "00:00")
+        self.assertEqual(len(starts), len(set(starts)))
+        self.assertGreaterEqual(len(starts), 3)
+        self.assertEqual(len(sleeps), 1)
+
+    def test_gemini_timeout_moves_on_with_a_clear_reason(self):
+        processor = self._processor(None, None, None)
+        processor.groq_client = None
+        calls = []
+
+        def complete(provider, model, *args):
+            calls.append(model)
+            if model == "gemini-3.6-flash":
+                raise asyncio.TimeoutError()
+            return '[{"timestamp": "00:00", "title": "Intro"}]'
+
+        processor._complete = complete
+        response = asyncio.run(processor.generate_summary([{"start": 0, "text": "Welcome"}], "video"))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(calls[:2], ["gemini-3.6-flash", "gemini-3.8-flash"])
+
     def test_summary_falls_back_to_second_gemini_model(self):
         class QuotaOnFirstModel:
             def __init__(self):

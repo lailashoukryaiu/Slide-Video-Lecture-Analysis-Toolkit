@@ -375,11 +375,12 @@ class ExportDocumentTests(unittest.TestCase):
                        for command in self.media_commands if command[-1].endswith(".jpg")]
         self.assertNotIn(0, image_times)
         self.assertNotIn(9, image_times)
-        self.assertEqual(len(image_times), 1, "Only the sentence-aligned chapter start needs a new capture")
+        self.assertEqual(image_times, [], "Chapter images reuse the slide on screen at the chapter start")
         with zipfile.ZipFile(response.path) as archive:
             self.assertEqual(archive.read("slide_0000000000.jpg"), (folder / "0.jpg").read_bytes())
             self.assertEqual(archive.read("slide_0000009000.jpg"), (folder / "1.jpg").read_bytes())
             self.assertEqual(archive.read("01_Neural_networks.jpg"), (folder / "0.jpg").read_bytes())
+            self.assertEqual(archive.read("02_Training_and_evaluation.jpg"), (folder / "0.jpg").read_bytes())
 
     def test_missing_saved_images_are_extracted_only_once_per_timestamp(self):
         self.run_export(include_webpage=True, subpart_mode="both")
