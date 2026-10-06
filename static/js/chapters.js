@@ -69,6 +69,8 @@ export function updateExportAvailability() {
     if (elements.exportOutline) {
         elements.exportOutline.disabled = !canBuildParts || !hasTranscript;
     }
+    const sectionClips = document.getElementById('exportSectionClips');
+    if (sectionClips) sectionClips.disabled = !canBuildParts || !hasTranscript;
 
     if (elements.exportAvailabilityNote) {
         if (!hasVideo) {
@@ -244,6 +246,8 @@ export async function exportChapters() {
             timestamp_mode: elements.timestampMode?.value || 'subpart',
             subpart_mode: elements.subpartMode?.value || 'points',
             clip_overlap: document.getElementById('exportClipOverlap')?.checked ?? true,
+            include_section_clips: !document.getElementById('exportSectionClips')?.disabled
+                && (document.getElementById('exportSectionClips')?.checked ?? false),
             include_slide_text: document.getElementById('exportSlideText')?.checked ?? false,
             document_title: elements.exportTitle?.value.trim() || '',
             export_filename: elements.exportFilename?.value.trim() || '',
@@ -328,6 +332,8 @@ export async function generateChapters() {
         generateSummaryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
         setSummaryStatus('generating', '<i class="fas fa-spinner fa-spin"></i> Generating summary and chapters. This may take a minute...');
         showError('');
+        const requestVideoId = state.currentVideoId;
+        const requestLanguage = state.currentTranslationLanguage || '';
         const response = await fetch('/generate_summary', {
             method: 'POST',
             headers: {
@@ -337,7 +343,10 @@ export async function generateChapters() {
                 transcript: state.currentTranscript,
                 video_id: state.currentVideoId,
                 model: elements.summaryModel?.value || null,
-                language: elements.summaryLanguage?.value || 'transcript'
+                transcript_language: requestLanguage,
+                structure: elements.chapterStructure?.value || 'sections',
+                detail: elements.chapterDetail?.value || 'balanced',
+                instructions: (elements.chapterInstructions?.value || '').trim(),
             })
         });
 
@@ -345,6 +354,11 @@ export async function generateChapters() {
 
         if (!data.success) {
             throw new Error(data.error);
+        }
+        if (requestVideoId !== state.currentVideoId || requestLanguage !== (state.currentTranslationLanguage || '')) {
+            // The user switched video or transcript meanwhile; the chapters stay saved with their transcript.
+            setSummaryStatus('complete', '<i class="fas fa-info-circle"></i> Chapters were saved for the transcript that was open when you started.');
+            return;
         }
 
         // Store the chapters in state
@@ -458,7 +472,7 @@ async function readJsonResponse(response, operation) {
 export function updateChapters(chapters) {
     const chaptersContainer = elements.chaptersContainer;
     const status = elements.summaryStatus;
-    chaptersContainer.querySelectorAll(':scope > .chapter-item, :scope > p').forEach(element => element.remove());
+    chaptersContainer.querySelectorAll(':scope > .chapter-item, :scope > .chapter-sections, :scope > p').forEach(element => element.remove());
     if (status) {
         status.hidden = false;
     }
@@ -481,6 +495,7 @@ export function updateChapters(chapters) {
         title.title = chapter.title;
         div.appendChild(timestamp);
         div.appendChild(title);
+        if (chapter.summary) div.title = chapter.summary;
         div.onclick = () => {
             const [minutes, seconds] = chapter.timestamp.split(':').map(Number);
             const time = minutes * 60 + seconds;
@@ -492,6 +507,9 @@ export function updateChapters(chapters) {
             });
         };
         chaptersContainer.appendChild(div);
+        if (Array.isArray(chapter.sections) && chapter.sections.length) {
+            chaptersContainer.appendChild(renderChapterSections(chapter.sections));
+        }
     });
     
     // Store the chapters in state
@@ -502,6 +520,43 @@ export function updateChapters(chapters) {
     
     // Add chapter markers to the timeline
     addChapterMarkersToTimeline(chapters);
+}
+
+function timestampSeconds(timestamp) {
+    return String(timestamp).split(':').map(Number).reduce((total, part) => total * 60 + part, 0);
+}
+
+function renderChapterSections(sections) {
+    const list = document.createElement('ol');
+    list.className = 'chapter-sections';
+    sections.forEach((section) => {
+        const item = document.createElement('li');
+        item.className = 'chapter-section';
+        item.tabIndex = 0;
+        const timestamp = document.createElement('span');
+        timestamp.className = 'chapter-timestamp';
+        timestamp.textContent = section.timestamp;
+        const title = document.createElement('span');
+        title.textContent = section.title;
+        item.appendChild(timestamp);
+        item.appendChild(title);
+        if (section.point) item.title = section.point;
+        const seek = () => {
+            elements.videoPlayer.currentTime = timestampSeconds(section.timestamp);
+            elements.videoPlayer.play().catch((error) => {
+                if (error.name !== 'AbortError') console.warn('Unable to play section:', error);
+            });
+        };
+        item.addEventListener('click', seek);
+        item.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                seek();
+            }
+        });
+        list.appendChild(item);
+    });
+    return list;
 }
 
 /**

@@ -3,6 +3,7 @@ import ast
 import asyncio
 from collections import Counter
 import html
+import os
 from io import BytesIO
 import json
 from pathlib import Path
@@ -22,7 +23,11 @@ from docx.image.exceptions import UnrecognizedImageError
 from docx.oxml import OxmlElement
 from PIL import Image as PillowImage, UnidentifiedImageError
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.utils import simpleSplit
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 from export_jobs import export_workspace
@@ -46,7 +51,8 @@ def load_export_functions():
         "build_export_subparts", "export_archive_paths", "prepare_export_image",
         "concise_export_title", "export_thumbnail", "strip_narration", "clean_outline_title", "build_slides_pdf",
         "create_combined_chapter_documents", "collapse_word_heading", "export_chapters",
-        "scene_slide_text", "chapter_slide_content", "add_word_slide_content",
+        "scene_slide_text", "chapter_slide_content", "add_word_slide_content", "saved_section_points",
+        "is_rtl_text", "make_word_rtl", "pdf_rtl_support",
     }
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
              and node.name in names]
@@ -531,6 +537,110 @@ class ExportDocumentTests(unittest.TestCase):
             in str(call.args[0])
             for call in paragraph.call_args_list
         ))
+
+    def test_saved_chapter_sections_are_reused_without_ai_calls(self):
+        self.functions["SUMMARIES_DIR"].joinpath("lecture.json").write_text(json.dumps([
+            {"timestamp": "00:00", "title": "Neural networks", "summary": "How networks learn from data.",
+             "sections": [
+                 {"timestamp": "00:00", "title": "Learning from examples",
+                  "point": "The speaker explains that networks learn from examples."},
+                 {"timestamp": "00:04", "title": "Weight updates", "point": "Training adjusts the weights."},
+             ]},
+            {"timestamp": "00:08", "title": "Evaluation", "summary": "Checking generalization.",
+             "sections": [{"timestamp": "00:08", "title": "Validation", "point": "Validation measures generalization."}]},
+        ]), encoding="utf-8")
+        processor = self.functions["summary_processor"]
+        processor._provider_chain = lambda: [("gemini", "test-model")]
+        processor._complete = mock.Mock(side_effect=AssertionError("export must reuse saved sections"))
+        response = self.run_export(include_webpage=True, include_word=True)
+        processor._complete.assert_not_called()
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+        self.assertIn("How networks learn from data.", webpage)
+        self.assertIn("1.2 Weight updates", webpage)
+        self.assertIn("2.1 Validation", webpage)
+        self.assertIn("<li>Networks learn from examples.</li>", webpage)
+
+    def write_sectioned_summary(self, name="lecture.json", chapters=None):
+        self.functions["SUMMARIES_DIR"].joinpath(name).write_text(json.dumps(chapters or [
+            {"timestamp": "00:00", "title": "Neural networks", "summary": "How networks learn from data.",
+             "sections": [
+                 {"timestamp": "00:00", "title": "Learning from examples", "point": "Networks learn from examples."},
+                 {"timestamp": "00:04", "title": "Weight updates", "point": "Training adjusts the weights."},
+             ]},
+            {"timestamp": "00:08", "title": "Evaluation", "summary": "Checking generalization.",
+             "sections": [{"timestamp": "00:08", "title": "Validation", "point": "Validation measures generalization."}]},
+        ], ensure_ascii=False), encoding="utf-8")
+
+    def test_section_clips_are_encoded_and_shown_under_each_section(self):
+        self.write_sectioned_summary()
+        response = self.run_export(include_webpage=True, include_section_clips=True)
+        section_commands = [command for command in self.media_commands if re.search(r"_\d\d\.mp4$", command[-1])]
+        self.assertEqual([Path(command[-1]).name for command in section_commands],
+                         ["01_Neural_networks_01.mp4", "01_Neural_networks_02.mp4"])
+        # The second section clip starts one second before its sentence (overlap).
+        start = float(section_commands[1][section_commands[1].index("-ss") + 1])
+        self.assertTrue(3.0 <= start < 5.0, start)
+        with zipfile.ZipFile(response.path) as archive:
+            names = archive.namelist()
+            webpage = archive.read("index.html").decode()
+        self.assertIn("01_Neural_networks_02.mp4", names)
+        self.assertIn('class="section-video" controls preload="none" src="01_Neural_networks_02.mp4"', webpage)
+        self.assertEqual(webpage.count('class="section-video"'), 2)
+
+        response = self.run_export(include_section_clips=True)
+        with zipfile.ZipFile(response.path) as archive:
+            self.assertIn("01_Neural_networks_01.mp4", archive.namelist())
+
+    def test_arabic_transcript_exports_right_to_left(self):
+        arabic = "\u0627\u0644\u0634\u0628\u0643\u0627\u062a \u0627\u0644\u0639\u0635\u0628\u064a\u0629 \u062a\u062a\u0639\u0644\u0645 \u0645\u0646 \u0627\u0644\u0623\u0645\u062b\u0644\u0629."
+        self.functions["TRANSCRIPTS_DIR"].joinpath("lecture_translated_ar.json").write_text(json.dumps([
+            {"start": 0, "duration": 8, "text": arabic},
+            {"start": 8, "duration": 8, "text": arabic},
+        ], ensure_ascii=False), encoding="utf-8")
+        self.write_sectioned_summary("lecture_summary_ar.json", [
+            {"timestamp": "00:00", "title": "\u0627\u0644\u0634\u0628\u0643\u0627\u062a", "summary": arabic,
+             "sections": [{"timestamp": "00:00", "title": "\u0627\u0644\u062a\u0639\u0644\u0645", "point": arabic}]},
+        ])
+        self.assertTrue(self.functions["is_rtl_text"](arabic))
+        self.assertTrue(self.functions["is_rtl_text"]("Hello", "ar"))
+        self.assertFalse(self.functions["is_rtl_text"]("Hello class"))
+        response = self.run_export(
+            include_webpage=True, include_word=True, include_pdf=True, include_outline=True, transcript_language="ar",
+        )
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+            word_xml = zipfile.ZipFile(BytesIO(archive.read("chapter_document.docx"))).read("word/document.xml").decode()
+            outline_xml = zipfile.ZipFile(BytesIO(archive.read("video_outline.docx"))).read("word/document.xml").decode()
+            pdf = archive.read("chapter_document.pdf")
+        self.assertIn('<html lang="ar" dir="rtl">', webpage)
+        self.assertIn("padding-inline-start", webpage)
+        for xml in (word_xml, outline_xml):
+            self.assertIn("<w:bidi/>", xml)
+            self.assertIn("<w:rtl/>", xml)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        if self.functions["pdf_rtl_support"]() is not None:
+            self.assertIn(b"FontFile2", pdf)
+
+    def test_translation_without_its_own_chapters_does_not_reuse_foreign_summaries(self):
+        self.write_sectioned_summary()
+        self.functions["TRANSCRIPTS_DIR"].joinpath("lecture_translated_de.json").write_text(json.dumps([
+            {"start": 0, "duration": 8, "text": "Neuronale Netze lernen aus Beispielen."},
+            {"start": 8, "duration": 8, "text": "Die Validierung misst die Generalisierung."},
+        ]), encoding="utf-8")
+        response = self.run_export(include_webpage=True, transcript_language="de")
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+        self.assertIn('<html lang="de">', webpage)
+        self.assertNotIn("How networks learn from data.", webpage)
+        self.assertNotIn("Training adjusts the weights.", webpage)
+
+    def test_learner_fillers_are_removed_from_export_text(self):
+        strip = self.functions["strip_narration"]
+        self.assertEqual(strip("The learner will learn how to plot data."), "How to plot data.")
+        self.assertEqual(strip("You will be introduced to linear models."), "Linear models.")
+        self.assertEqual(strip("Students understand that tests matter."), "Tests matter.")
+        self.assertEqual(strip("Data has noise."), "Data has noise.")
 
     def test_scorm_contains_manifest_without_internal_transcript_files(self):
         response = self.run_export(include_scorm=True)

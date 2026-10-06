@@ -32,6 +32,29 @@ QUOTA_COOLDOWN_SECONDS = max(60, int(os.getenv("AI_QUOTA_COOLDOWN_SECONDS", "360
 CHAPTER_TIMEOUT_SECONDS = 90
 # About 4,000 tokens: one part plus its answer fits Groq's free 8,000 tokens per minute.
 GROQ_CHAPTER_CHUNK_CHARS = 16000
+# Other providers accept long prompts, but very long single requests time out.
+CHAPTER_CHUNK_CHARS = 40000
+CHAPTER_INSTRUCTIONS_LIMIT = 1000
+TRANSCRIPT_LANGUAGES = {"de", "en", "ar", "pl"}
+# Openings that describe the lesson instead of stating its content.
+FILLER_OPENING = re.compile(
+    r"^\s*(?:(?:in|throughout)\s+this\s+(?:part|chapter|section|segment|lecture|video|session|lesson)\s*,?\s*)?"
+    r"(?:(?:the\s+)?(?:learners?|students?|participants?|viewers?|audience|you|we)\s+"
+    r"(?:will\s+|can\s+|are\s+going\s+to\s+|should\s+|get\s+to\s+)?(?:also\s+|then\s+|first\s+)?"
+    r"(?:be\s+introduced\s+to|be\s+shown|learns?(?:\s+about)?|understands?|discovers?|explores?|"
+    r"gets?\s+to\s+know|sees?|finds?\s+out(?:\s+about)?|are\s+introduced\s+to|is\s+introduced\s+to)"
+    r"|(?:the\s+|this\s+)?(?:lecture|lecturer|speaker|instructor|video|chapter|section|part|segment|lesson)\s+"
+    r"(?:also\s+)?(?:explains|points\s+out|covers|discusses|describes|introduces|presents|shows|outlines|highlights|"
+    r"focuses\s+on|talks\s+about|deals\s+with|is\s+about|goes\s+over|reviews))\s*(?:that\s+)?",
+    re.IGNORECASE,
+)
+# minutes: target chapter length; min_seconds/min_share: chapters shorter than
+# min(min_seconds, min_share * video length) are merged into a neighbour.
+CHAPTER_DETAIL_LEVELS = {
+    "brief": {"minutes": 12, "sections": "2 to 4", "min_seconds": 240, "min_share": 0.08},
+    "balanced": {"minutes": 6, "sections": "2 to 5", "min_seconds": 90, "min_share": 0.04},
+    "detailed": {"minutes": 3, "sections": "3 to 6", "min_seconds": 30, "min_share": 0.02},
+}
 TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 
 class SummaryProcessor:
@@ -246,7 +269,7 @@ class SummaryProcessor:
         )
     @staticmethod
     def _summary_language_instruction(language):
-        languages = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "ar": "Arabic"}
+        languages = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "ar": "Arabic", "pl": "Polish"}
         if language in (None, "", "transcript"):
             return (
                 "Write all chapter titles and summary text in the same language as "
@@ -255,15 +278,46 @@ class SummaryProcessor:
             )
         if language not in languages:
             raise ValueError(f"Unsupported summary language: {language}")
-        return f"Write all chapter titles and summary text in {languages[language]}."
+        return (
+            f"Write all chapter titles, summaries, section titles and points in {languages[language]}, "
+            "the language of the transcript."
+        )
+
+    @staticmethod
+    def _detect_transcript_language(transcript):
+        """Return "ar" for transcripts written mostly in Arabic script, else None."""
+        text = " ".join(str(item.get("text", "")) for item in transcript[:300] if isinstance(item, dict))
+        letters = [character for character in text if character.isalpha()]
+        arabic = sum(1 for character in letters if "\u0600" <= character <= "\u08ff")
+        return "ar" if letters and arabic / len(letters) > 0.3 else None
+
+    @staticmethod
+    def _filler_free(text):
+        """Drop openings such as 'The learner will learn' or 'This section covers'."""
+        text = " ".join(str(text or "").split())
+        stripped = FILLER_OPENING.sub("", text, count=1)
+        if stripped == text or len(stripped.split()) < 2:
+            return text
+        return stripped[0].upper() + stripped[1:]
 
     async def generate_summary(
         self, transcript: list, video_id: str = None, requested_model: str = None,
-        language: str = "transcript",
+        language: str = "transcript", structure: str = "sections", detail: str = "balanced",
+        instructions: str = "", transcript_language: str = "",
     ):
-        """Generate chapters, preferring configured Groq unless a model is selected."""
+        """Generate chapters (optionally with sections), preferring configured Groq.
+
+        transcript_language is set when a translated transcript is open; the
+        chapters are then written in that language and saved with the translation.
+        """
         try:
+            transcript_language = str(transcript_language or "").strip()
+            if transcript_language and transcript_language not in TRANSCRIPT_LANGUAGES:
+                raise ValueError(f"Unsupported transcript language: {transcript_language}")
+            if language in (None, "", "transcript"):
+                language = transcript_language or self._detect_transcript_language(transcript or []) or "transcript"
             language_instruction = self._summary_language_instruction(language)
+            settings = self._chapter_settings(structure, detail, instructions)
             self._refresh_clients()
             chain = self._provider_chain(requested_model, prefer_groq=True)
             if not transcript or not chain:
@@ -273,28 +327,13 @@ class SummaryProcessor:
                     else self._no_provider_message(),
                 })
 
-            # Combine transcript text with timestamps
-            full_text = ""
-            for item in transcript:
-                hours = int(item["start"] // 3600)
-                minutes = int((item["start"] % 3600) // 60)
-                seconds = int(item["start"] % 60)
-                timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}: "
-                full_text += timestamp + item["text"] + "\n"
-            
-
-            prompt = f"""{language_instruction}
-Based on the following transcript with timestamps, create chapters that outline the main topics.
-For each chapter, provide:
-The timestamp where the chapter starts (in MM:SS format)
-A concise title of at most 5 words: a specific noun phrase naming the topic, not a sentence, with no trailing punctuation and no filler such as "Introduction to" or "Discussion of"
-Format each chapter exactly like this example:
-[
-{{"timestamp": "00:00", "title": "Course overview"}},
-{{"timestamp": "02:30", "title": "Gradient descent"}},
-{{"timestamp": "05:45", "title": "Worked examples"}}
-]
-{full_text}"""
+            last = transcript[-1]
+            transcript_end = float(last.get("start", 0)) + float(last.get("duration", 0) or 0)
+            prompt = self._chapter_prompt(
+                [f"{self._stamp(item['start'])}: {item['text']}\n" for item in transcript],
+                float(transcript[0].get("start", 0)), transcript_end, 1, 1, None,
+                language_instruction, settings,
+            )
 
             # dump prompt into a debug file
             with open('debug.txt', 'w', encoding='utf-8') as f:
@@ -305,21 +344,11 @@ Format each chapter exactly like this example:
             used_model = None
             for index, (candidate, model) in enumerate(chain):
                 try:
-                    if candidate == "groq" and len(full_text) > GROQ_CHAPTER_CHUNK_CHARS:
-                        # Groq's free tier rejects long prompts (tokens per minute),
-                        # so long lectures are split into parts that each fit.
-                        response_text = await self._chunked_chapters(
-                            candidate, model, transcript, language_instruction,
-                        )
-                    else:
-                        response_text = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self._complete, candidate, model, prompt, 0.5,
-                                candidate == "gemini",
-                                2048 if candidate == "groq" else None,
-                            ),
-                            timeout=CHAPTER_TIMEOUT_SECONDS,
-                        )
+                    # Long lectures are split into parts: Groq's free tier rejects
+                    # long prompts (tokens per minute) and huge requests time out.
+                    response_text = await self._chunked_chapters(
+                        candidate, model, transcript, language_instruction, settings,
+                    )
                     provider = self._provider_label(candidate, index)
                     used_model = model
                     break
@@ -348,28 +377,18 @@ Format each chapter exactly like this example:
                              "Wait a while, or add GROQ_API_KEY (free) as another fallback. "
                              "Details: " + " | ".join(failures),
                 })
-            try:
-                # Try to parse the response as JSON
-                chapters = json.loads(response_text)
-                if isinstance(chapters, dict) and isinstance(chapters.get("chapters"), list):
-                    chapters = chapters["chapters"]
-            except json.JSONDecodeError:
-                # If parsing fails, try to extract JSON from the response text
-                match = re.search(r'\[.*\]', response_text.replace('\n', ' '), re.DOTALL)
-                if match:
-                    chapters = json.loads(match.group())
-                else:
-                    raise ValueError("Could not parse Gemini response as JSON")
-            
-            if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
-                chapters = [item for sublist in chapters for item in sublist]
-
-            chapters = self._normalize_chapters(chapters, transcript)
-            self._save_chapters(video_id, chapters)
+            chapters = self._parse_chapter_list(response_text)
+            chapters = self._normalize_chapters(
+                chapters, transcript,
+                min_seconds=min(settings["min_seconds"], transcript_end * settings["min_share"]),
+                end=transcript_end, sectioned=settings["sections"],
+            )
+            self._save_chapters(video_id, chapters, transcript_language, transcript)
 
             return JSONResponse({
                 "success": True,
                 "chapters": chapters,
+                "language": transcript_language or None,
                 "provider": provider,
                 "model": used_model,
                 "notice": (
@@ -394,66 +413,197 @@ Format each chapter exactly like this example:
                 raise ValueError("Could not parse the AI response as JSON")
             chapters = json.loads(match.group())
         if isinstance(chapters, dict):
-            chapters = next((value for value in chapters.values() if isinstance(value, list)), [])
+            chapters = chapters["chapters"] if isinstance(chapters.get("chapters"), list) else next(
+                (value for key, value in chapters.items() if isinstance(value, list) and key != "continued_sections"), []
+            )
         if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
             chapters = [item for sublist in chapters for item in sublist]
         return [item for item in chapters if isinstance(item, dict)]
 
-    async def _chunked_chapters(self, provider, model, transcript, language_instruction):
+    @staticmethod
+    def _chapter_settings(structure="sections", detail="balanced", instructions=""):
+        if structure not in {"sections", "flat"}:
+            raise ValueError(f"Unsupported chapter structure: {structure}")
+        if detail not in CHAPTER_DETAIL_LEVELS:
+            raise ValueError(f"Unsupported chapter detail level: {detail}")
+        return {
+            **CHAPTER_DETAIL_LEVELS[detail],
+            "sections": structure == "sections",
+            "instructions": " ".join(str(instructions or "").split())[:CHAPTER_INSTRUCTIONS_LIMIT],
+        }
+
+    @staticmethod
+    def _stamp(seconds):
+        seconds = int(float(seconds))
+        return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+    @classmethod
+    def _chapter_prompt(cls, lines, start, end, number, total, previous_title, language_instruction, settings):
+        count = max(1, round(max(0.0, end - start) / 60 / settings["minutes"]))
+        scope = (
+            f"This is part {number} of {total} of one lecture transcript, from {cls._stamp(start)} to {cls._stamp(end)}."
+            if total > 1 else
+            f"This is a lecture transcript from {cls._stamp(start)} to {cls._stamp(end)}."
+        )
+        title_rule = (
+            "a concise title of at most 5 words: a specific noun phrase naming the topic, not a sentence, "
+            "with no trailing punctuation and no filler such as \"Introduction to\" or \"Discussion of\""
+        )
+        guidance = [
+            scope,
+            language_instruction,
+            f"Divide it into about {count} chapter{'s' if count != 1 else ''} that outline the main topics "
+            f"(fewer if the topic does not change); a chapter normally covers {settings['minutes']} minutes or more. "
+            "Never make a chapter out of a brief remark such as a greeting or an organisational note: "
+            + ("make it a section of the neighbouring chapter instead." if settings["sections"]
+               else "include it in the neighbouring chapter instead."),
+        ]
+        if settings["sections"]:
+            guidance.append(
+                f"Each chapter has: timestamp (HH:MM:SS where it starts, taken from the transcript); title ({title_rule}); "
+                "summary (one short sentence that states the content itself); "
+                f"sections ({settings['sections']} sections in time order, the first starting with the chapter). "
+                f"Each section has timestamp (HH:MM:SS from the transcript), title ({title_rule}) and point "
+                "(one concise complete sentence with the key takeaway, grounded only in the transcript). "
+                "State content directly and concisely: write 'Gradient descent minimizes the loss.' and never "
+                "'The lecture explains that...', 'The speaker points out that...', 'The learner will learn...', "
+                "'You will be introduced to...' or 'This section covers...' (nor such phrases in any other "
+                "language). Do not invent facts."
+            )
+            example = {"chapters": [{
+                "timestamp": "00:00:00", "title": "Course overview",
+                "summary": "Course goals, schedule and grading rules.",
+                "sections": [
+                    {"timestamp": "00:00:00", "title": "Learning goals",
+                     "point": "The course builds practical data analysis skills."},
+                    {"timestamp": "00:03:10", "title": "Grading scheme",
+                     "point": "The final exam counts for 60 percent of the grade."},
+                ],
+            }]}
+        else:
+            guidance.append(
+                f"For each chapter provide the timestamp where it starts (HH:MM:SS, taken from the transcript) and {title_rule}."
+            )
+            example = {"chapters": [{"timestamp": "00:00:00", "title": "Course overview"}]}
+        if previous_title:
+            if settings["sections"]:
+                example["continued_sections"] = []
+                guidance.append(
+                    f"The previous part ended inside the chapter \"{previous_title}\". If this part begins by "
+                    "continuing that topic, return those sections in continued_sections instead of starting "
+                    "a new chapter at the very beginning."
+                )
+            else:
+                guidance.append(
+                    f"The previous part ended inside the chapter \"{previous_title}\". If this part begins by "
+                    "continuing that topic, start the first chapter only where a new topic begins."
+                )
+        guidance.append("Return JSON exactly like this example: " + json.dumps(example, ensure_ascii=False))
+        if settings["instructions"]:
+            guidance.append(
+                "Additional instructions from the user (follow them while keeping the JSON format above): "
+                + settings["instructions"]
+            )
+        return (
+            "\n".join(guidance) + "\nTranscript:\n" + "".join(lines)
+            + "\nReminder: " + language_instruction
+        )
+
+    @staticmethod
+    def _parse_chapter_response(response_text):
+        """Return (chapters, continued_sections) from one chapter answer."""
+        continued = []
+        try:
+            data = json.loads(response_text)
+            if isinstance(data, dict) and isinstance(data.get("continued_sections"), list):
+                continued = [item for item in data["continued_sections"] if isinstance(item, dict)]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return SummaryProcessor._parse_chapter_list(response_text), continued
+
+    async def _chunked_chapters(self, provider, model, transcript, language_instruction, settings=None):
         """Generate chapters part by part and return them as one JSON list."""
-        def stamp(seconds):
-            seconds = int(seconds)
-            return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+        settings = settings or self._chapter_settings()
+        chunk_chars = (
+            int(GROQ_CHAPTER_CHUNK_CHARS * (0.75 if settings["sections"] else 1))
+            if provider == "groq" else CHAPTER_CHUNK_CHARS
+        )
+        max_tokens = (3000 if settings["sections"] else 1500) if provider == "groq" else None
 
         parts, current, size = [], [], 0
         for item in transcript:
-            line = f"{stamp(item['start'])}: {item['text']}\n"
-            if current and size + len(line) > GROQ_CHAPTER_CHUNK_CHARS:
+            line = f"{self._stamp(item['start'])}: {item['text']}\n"
+            if current and size + len(line) > chunk_chars:
                 parts.append(current)
                 current, size = [], 0
-            current.append(line)
+            current.append((item, line))
             size += len(line)
         if current:
             parts.append(current)
 
+        def part_end(items):
+            last = items[-1][0]
+            return float(last.get("start", 0)) + float(last.get("duration", 0) or 0)
+
         chapters = []
         number = 0
         while parts:
-            lines = parts.pop(0)
+            items = parts.pop(0)
             number += 1
             total = number + len(parts)
-            prompt = f"""{language_instruction}
-This is part {number} of {total} of one lecture transcript, from {lines[0][:8]} to {lines[-1][:8]}.
-Create 2 to 6 chapters that outline the main topics of this part only.
-For each chapter, provide the timestamp where it starts (HH:MM:SS, taken from the transcript) and
-a concise title of at most 5 words: a specific noun phrase naming the topic, not a sentence, with no trailing punctuation and no filler such as "Introduction to" or "Discussion of".
-Return JSON exactly like this: {{"chapters": [{{"timestamp": "00:00:00", "title": "Course overview"}}]}}
-{''.join(lines)}"""
+            prompt = self._chapter_prompt(
+                [line for _, line in items], float(items[0][0].get("start", 0)), part_end(items),
+                number, total, chapters[-1]["title"] if chapters and chapters[-1].get("title") else None,
+                language_instruction, settings,
+            )
             text = None
+            invalid_json = 0
             for attempt in range(6):
                 try:
+                    # Low reasoning keeps gpt-oss from spending the token budget
+                    # on thinking and returning an empty or cut-off JSON answer.
                     text = await asyncio.wait_for(
-                        asyncio.to_thread(self._complete, provider, model, prompt, 0.5, True, 1500),
+                        asyncio.to_thread(self._complete, provider, model, prompt, 0.4, True, max_tokens, True),
                         timeout=CHAPTER_TIMEOUT_SECONDS,
                     )
                     break
                 except Exception as error:
                     message = str(error).lower()
-                    if "request too large" in message and len(lines) > 1:
+                    if "json_validate_failed" in message or "failed to generate json" in message:
+                        invalid_json += 1
+                        if invalid_json == 1 and attempt < 5:
+                            continue
+                        if len(items) > 1:
+                            middle = len(items) // 2
+                            parts[:0] = [items[:middle], items[middle:]]
+                            number -= 1
+                            break
+                        raise
+                    if "request too large" in message and len(items) > 1:
                         # Dense scripts use more tokens per character; split this part again.
-                        middle = len(lines) // 2
-                        parts[:0] = [lines[:middle], lines[middle:]]
+                        middle = len(items) // 2
+                        parts[:0] = [items[:middle], items[middle:]]
                         number -= 1
                         break
-                    if "request too large" in message or attempt == 5 or not self._is_quota_error(error):
+                    wait = re.search(r"try again in\s+(?:(\d+)m)?[\d.]+(?:ms|s)", message)
+                    # Only wait for short per-minute limits; daily limits fall through to the next model.
+                    if (
+                        attempt == 5 or not self._is_quota_error(error) or "request too large" in message
+                        or not wait or int(wait.group(1) or 0) > 1
+                    ):
                         raise
-                    delay = min(self._retry_delay(error) or 20.0, 65.0)
+                    delay = self._retry_delay(error)
                     print(f"{PROVIDER_LABELS[provider]} rate limit while generating chapters "
                           f"(part {number}/{total}); waiting {delay:.0f}s")
                     await asyncio.sleep(delay)
             if text is not None:
-                chapters.extend(self._parse_chapter_list(text))
-        return json.dumps(chapters)
+                part_chapters, continued = self._parse_chapter_response(text)
+                if continued and chapters:
+                    chapters[-1].setdefault("sections", [])
+                    if isinstance(chapters[-1]["sections"], list):
+                        chapters[-1]["sections"].extend(continued)
+                chapters.extend(part_chapters)
+        return json.dumps(chapters, ensure_ascii=False)
 
     async def translate_transcript(
         self, transcript, target_language, requested_model=None, _chain=None, _chain_offset=0,
@@ -792,26 +942,29 @@ Return JSON exactly like this: {{"chapters": [{{"timestamp": "00:00:00", "title"
         return chapters or [{"timestamp": "00:00", "title": "Lecture"}]
 
     @staticmethod
-    def _normalize_chapters(chapters: list, transcript: list) -> list:
-        """Ensure every chapter has a usable timestamp and title."""
-        if not isinstance(chapters, list):
-            raise ValueError("Gemini returned chapters in an invalid format")
+    def _timestamp_or_none(value):
+        try:
+            return SummaryProcessor._timestamp_seconds(str(value))
+        except (TypeError, ValueError):
+            return None
 
-        normalized = []
+    @staticmethod
+    def _normalize_chapters(chapters: list, transcript: list, min_seconds=0, end=None, sectioned=True) -> list:
+        """Ensure every chapter has a usable timestamp and title; tidy sections.
+
+        Chapters shorter than min_seconds are merged into a neighbour (as a
+        section when sectioned is true).
+        """
+        if not isinstance(chapters, list):
+            raise ValueError("The AI returned chapters in an invalid format")
+
+        entries = []
         for index, chapter in enumerate(chapters):
             if not isinstance(chapter, dict):
                 continue
-            raw_timestamp = chapter.get("timestamp", "00:00")
             raw_title = " ".join(str(chapter.get("title", "")).split()).strip()
-            try:
-                timestamp_parts = [int(float(part)) for part in str(raw_timestamp).split(":")]
-                if len(timestamp_parts) == 2:
-                    total_seconds = timestamp_parts[0] * 60 + timestamp_parts[1]
-                elif len(timestamp_parts) == 3:
-                    total_seconds = timestamp_parts[0] * 3600 + timestamp_parts[1] * 60 + timestamp_parts[2]
-                else:
-                    raise ValueError
-            except (TypeError, ValueError):
+            total_seconds = SummaryProcessor._timestamp_or_none(chapter.get("timestamp", "00:00"))
+            if total_seconds is None:
                 total_seconds = int(float(transcript[index].get("start", 0))) if index < len(transcript) else 0
 
             if not raw_title:
@@ -825,20 +978,101 @@ Return JSON exactly like this: {{"chapters": [{{"timestamp": "00:00:00", "title"
                 )
                 raw_title = " ".join(matching_text.split()[:6]).strip(".,!?") or f"Chapter {index + 1}"
 
-            normalized.append({
-                "timestamp": f"{total_seconds // 60:02d}:{total_seconds % 60:02d}",
-                "title": raw_title,
+            sections = []
+            for section in chapter.get("sections") or [] if isinstance(chapter.get("sections"), list) else []:
+                if not isinstance(section, dict):
+                    continue
+                title = " ".join(str(section.get("title", "")).split()).strip(" .,:;")
+                start = SummaryProcessor._timestamp_or_none(section.get("timestamp"))
+                if not title or start is None:
+                    continue
+                point = SummaryProcessor._filler_free(section.get("point"))
+                sections.append({"start": start, "title": title, **({"point": point} if point else {})})
+            summary = SummaryProcessor._filler_free(chapter.get("summary"))
+            entries.append({
+                "start": total_seconds, "title": raw_title, "sections": sections,
+                **({"summary": summary} if summary else {}),
             })
-        if not normalized:
-            raise ValueError("Gemini returned no valid chapters")
+        if not entries:
+            raise ValueError("The AI returned no valid chapters")
+
+        entries.sort(key=lambda entry: entry["start"])
+        merged = []
+        for entry in entries:
+            if merged and entry["start"] == merged[-1]["start"]:
+                merged[-1]["sections"].extend(entry["sections"])
+                continue
+            merged.append(entry)
+
+        while min_seconds > 0 and len(merged) > 1:
+            short = next((
+                index for index, entry in enumerate(merged)
+                if (merged[index + 1]["start"] if index + 1 < len(merged) else end) is not None
+                and (merged[index + 1]["start"] if index + 1 < len(merged) else end) - entry["start"] < min_seconds
+            ), None)
+            if short is None:
+                break
+            entry = merged.pop(short)
+            moved = []
+            if sectioned:
+                moved = entry["sections"] or [{
+                    "start": entry["start"], "title": entry["title"],
+                    **({"point": entry["summary"]} if entry.get("summary") else {}),
+                }]
+            if short > 0:
+                merged[short - 1]["sections"].extend(moved)
+            else:
+                merged[0]["sections"][:0] = moved
+                merged[0]["start"] = entry["start"]
+
+        normalized = []
+        for index, entry in enumerate(merged):
+            following = merged[index + 1]["start"] if index + 1 < len(merged) else None
+            sections, seen = [], set()
+            for section in sorted(entry["sections"], key=lambda item: item["start"]):
+                if section["start"] < entry["start"] - 5 or (following is not None and section["start"] >= following):
+                    continue
+                if section["start"] in seen:
+                    continue
+                seen.add(section["start"])
+                sections.append(section)
+            if sections and sections[0]["start"] != entry["start"]:
+                sections[0] = {**sections[0], "start": entry["start"]}
+            item = {
+                "timestamp": f"{entry['start'] // 60:02d}:{entry['start'] % 60:02d}",
+                "title": entry["title"],
+            }
+            if entry.get("summary"):
+                item["summary"] = entry["summary"]
+            if sections:
+                item["sections"] = [
+                    {
+                        "timestamp": f"{section['start'] // 60:02d}:{section['start'] % 60:02d}",
+                        "title": section["title"],
+                        **({"point": section["point"]} if section.get("point") else {}),
+                    }
+                    for section in sections
+                ]
+            normalized.append(item)
         return normalized
 
     @staticmethod
-    def _save_chapters(video_id: str, chapters: list):
-        if video_id:
-            summary_path = SUMMARIES_DIR / f"{video_id}.json"
-            with summary_path.open("w", encoding="utf-8") as file:
-                json.dump(chapters, file)
+    def _save_chapters(video_id: str, chapters: list, transcript_language: str = "", transcript=None):
+        if not video_id:
+            return
+        if transcript_language:
+            # Chapters of a translated transcript belong to that translation.
+            summary_path = SUMMARIES_DIR / f"{video_id}_summary_{transcript_language}.json"
+            summary_path.write_text(json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
+            if transcript:
+                from processors import transcript_versions
+                transcript_versions.save_version(
+                    video_id, "translation", transcript, language=transcript_language, chapters=chapters,
+                )
+            return
+        summary_path = SUMMARIES_DIR / f"{video_id}.json"
+        with summary_path.open("w", encoding="utf-8") as file:
+            json.dump(chapters, file)
 
     @staticmethod
     def _looks_like_legacy_fallback(chapters: list) -> bool:

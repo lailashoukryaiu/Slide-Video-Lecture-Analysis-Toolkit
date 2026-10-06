@@ -8,6 +8,9 @@ google-genai
 openai
 python-docx
 reportlab
+# Right-to-left (Arabic) text in PDF exports
+arabic-reshaper
+python-bidi
 python-dotenv
 scenedetect
 opencv-python

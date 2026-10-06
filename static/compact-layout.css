@@ -641,3 +641,40 @@ input:checked + .toggle-slider:before {
 /* Thumbnails follow the navigation grouping (slides, content chapters, or both). */
 #thumbnailTimeline .timeline-item.grouping-hidden { display: none !important; }
 .timeline-item.chapter-card .chapter-badge { background: var(--accent, #4f46e5); color: #fff; }
+
+/* Sections nested under generated chapters in the Summary tab. */
+.chapter-sections {
+    list-style: none;
+    margin: 0 0 4px 22px;
+    padding: 0 0 0 8px;
+    border-left: 2px solid var(--border-color, #d0d7de);
+}
+
+.chapter-section {
+    display: flex;
+    gap: 6px;
+    padding: 2px 6px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    cursor: pointer;
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+}
+
+.chapter-section:hover,
+.chapter-section:focus-visible {
+    background: var(--hover-bg, rgba(0, 0, 0, 0.05));
+    outline: none;
+}
+
+.chapter-section .chapter-timestamp {
+    font-size: 11px;
+    opacity: 0.8;
+}
+
+.summary-options textarea {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+    box-sizing: border-box;
+}

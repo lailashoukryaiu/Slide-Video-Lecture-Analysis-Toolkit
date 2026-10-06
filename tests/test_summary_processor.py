@@ -299,7 +299,7 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         processor._refresh_gemini_client = lambda: None
         processor._refresh_openai_client = lambda: None
         processor._refresh_groq_client = lambda: None
-        processor._save_chapters = lambda video_id, chapters: None
+        processor._save_chapters = lambda *args: None
         return processor
 
     def test_summary_default_prefers_groq_and_preserves_explicit_choice(self):
@@ -434,6 +434,141 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         self.assertEqual(len(starts), len(set(starts)))
         self.assertGreaterEqual(len(starts), 3)
         self.assertEqual(len(sleeps), 1)
+
+    def test_chapters_with_sections_merge_short_chapters_and_keep_options(self):
+        processor = self._processor(None, None, None)
+        prompts = []
+
+        def complete(provider, model, prompt, *args):
+            prompts.append(prompt)
+            return json.dumps({"chapters": [
+                {"timestamp": "00:00:00", "title": "Greeting", "summary": "Welcome."},
+                {"timestamp": "00:00:30", "title": "Gradient descent", "summary": "How models learn.",
+                 "sections": [
+                     {"timestamp": "00:00:40", "title": "Loss functions", "point": "Loss measures error."},
+                     {"timestamp": "00:03:00", "title": "Step size", "point": "Small steps are stable."},
+                 ]},
+                {"timestamp": "00:06:00", "title": "Aside", "summary": "A short remark."},
+                {"timestamp": "00:06:20", "title": "Evaluation", "sections": [
+                    {"timestamp": "00:06:20", "title": "Test data", "point": "Test data stays unseen."},
+                ]},
+            ]})
+
+        processor._complete = complete
+        transcript = [{"start": index * 10, "duration": 10, "text": "word"} for index in range(300)]
+        response = asyncio.run(processor.generate_summary(
+            transcript, None, detail="balanced", instructions="Focus on   exam topics",
+        ))
+        self.assertTrue(response.content["success"], response.content)
+        chapters = response.content["chapters"]
+        self.assertEqual([chapter["title"] for chapter in chapters], ["Gradient descent", "Evaluation"])
+        self.assertEqual(chapters[0]["timestamp"], "00:00")
+        self.assertEqual(
+            [section["title"] for section in chapters[0]["sections"]],
+            ["Greeting", "Loss functions", "Step size", "Aside"],
+        )
+        self.assertEqual(chapters[0]["sections"][0]["point"], "Welcome.")
+        self.assertIn("Focus on exam topics", prompts[0])
+        self.assertIn("sections", prompts[0])
+
+    def test_flat_structure_and_detail_level_change_the_prompt(self):
+        processor = self._processor(None, None, None)
+        prompts = []
+        processor._complete = lambda provider, model, prompt, *args: (
+            prompts.append(prompt) or '{"chapters": [{"timestamp": "00:00:00", "title": "Intro"}]}'
+        )
+        transcript = [{"start": index * 60, "duration": 60, "text": "word"} for index in range(36)]
+        asyncio.run(processor.generate_summary(transcript, None, structure="flat", detail="brief"))
+        asyncio.run(processor.generate_summary(transcript, None, structure="sections", detail="detailed"))
+        self.assertIn("about 3 chapters", prompts[0])
+        self.assertNotIn('"sections"', prompts[0])
+        self.assertIn("about 12 chapters", prompts[1])
+        self.assertIn('"sections"', prompts[1])
+        response = asyncio.run(processor.generate_summary(transcript, None, detail="huge"))
+        self.assertFalse(response.content["success"])
+
+    def test_continued_sections_join_the_previous_chapter(self):
+        from processors import summary_processor as module
+        processor = self._processor(None, None, None)
+        answers = iter([
+            '{"chapters": [{"timestamp": "00:00:00", "title": "Basics", "sections": '
+            '[{"timestamp": "00:00:00", "title": "Terms", "point": "Terms matter."}]}]}',
+            '{"continued_sections": [{"timestamp": "00:05:00", "title": "More terms", "point": "More."}], '
+            '"chapters": [{"timestamp": "00:08:00", "title": "Practice", "sections": []}]}',
+        ])
+        prompts = []
+        processor._complete = lambda provider, model, prompt, *args: prompts.append(prompt) or next(answers)
+        transcript = [{"start": index * 30, "duration": 30, "text": "word " * 40} for index in range(24)]
+        with mock.patch.object(module, "GROQ_CHAPTER_CHUNK_CHARS", 3500):
+            response = asyncio.run(processor.generate_summary(transcript, None))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertIn('ended inside the chapter "Basics"', prompts[1])
+        chapters = response.content["chapters"]
+        self.assertEqual([section["title"] for section in chapters[0]["sections"]], ["Terms", "More terms"])
+        self.assertEqual(chapters[1]["title"], "Practice")
+
+    def test_invalid_json_is_retried_with_low_reasoning_then_split(self):
+        from processors import summary_processor as module
+        processor = self._processor(None, None, None)
+        calls = []
+
+        def complete(provider, model, prompt, temperature, json_output, max_tokens, fast=False):
+            calls.append((len(prompt), fast))
+            if len(calls) <= 2:
+                raise RuntimeError("Error code: 400 json_validate_failed: Failed to generate JSON")
+            stamp = prompt.split("from ", 1)[1][:8]
+            return '{"chapters": [{"timestamp": "%s", "title": "Topic at %s"}]}' % (stamp, stamp)
+
+        processor._complete = complete
+        transcript = [{"start": index * 60, "text": "word " * 20} for index in range(20)]
+        with mock.patch.object(module, "GROQ_CHAPTER_CHUNK_CHARS", 100000):
+            response = asyncio.run(processor.generate_summary(transcript, "video"))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertTrue(all(fast for _, fast in calls))
+        # Two failures on the whole part, then the two halves succeed.
+        self.assertEqual(len(calls), 4)
+        self.assertLess(calls[2][0], calls[0][0])
+        self.assertEqual(len(response.content["chapters"]), 2)
+
+    def test_chapters_follow_the_open_translation_and_are_saved_with_it(self):
+        processor = self._processor(None, None, None)
+        saved, prompts = [], []
+        processor._save_chapters = lambda *args: saved.append(args)
+
+        def complete(provider, model, prompt, *args):
+            prompts.append(prompt)
+            return '{"chapters": [{"timestamp": "00:00:00", "title": "Einf\u00fchrung", "summary": "Die Lernenden werden in Python eingef\u00fchrt."}]}'
+
+        processor._complete = complete
+        transcript = [{"start": 0, "duration": 5, "text": "Willkommen"}]
+        response = asyncio.run(processor.generate_summary(transcript, "video", transcript_language="de"))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(response.content["language"], "de")
+        self.assertIn("German", prompts[0])
+        self.assertTrue(prompts[0].rstrip().endswith("the language of the transcript."))
+        self.assertEqual(saved[0][2], "de")
+        response = asyncio.run(processor.generate_summary(transcript, "video", transcript_language="xx"))
+        self.assertFalse(response.content["success"])
+
+    def test_arabic_transcript_is_detected_and_fillers_are_removed(self):
+        arabic = [{"start": 0, "text": "\u0645\u0631\u062d\u0628\u0627 \u0628\u0643\u0645 \u0641\u064a \u0627\u0644\u0645\u062d\u0627\u0636\u0631\u0629"}]
+        self.assertEqual(SummaryProcessor._detect_transcript_language(arabic), "ar")
+        self.assertIsNone(SummaryProcessor._detect_transcript_language([{"start": 0, "text": "Hello class"}]))
+        self.assertIn("Arabic", SummaryProcessor._summary_language_instruction("ar"))
+        for text, expected in (
+            ("The learner will learn how to submit assignments.", "How to submit assignments."),
+            ("You will be introduced to the concept of entropy.", "The concept of entropy."),
+            ("This section covers grading rules.", "Grading rules."),
+            ("Learners understand that tests matter.", "Tests matter."),
+            ("Gradient descent minimizes the loss.", "Gradient descent minimizes the loss."),
+        ):
+            self.assertEqual(SummaryProcessor._filler_free(text), expected)
+        chapters = SummaryProcessor._normalize_chapters([{
+            "timestamp": "00:00", "title": "Intro", "summary": "The learner will learn the course rules.",
+            "sections": [{"timestamp": "00:00", "title": "Rules", "point": "Students will learn that exams are oral."}],
+        }], [])
+        self.assertEqual(chapters[0]["summary"], "The course rules.")
+        self.assertEqual(chapters[0]["sections"][0]["point"], "Exams are oral.")
 
     def test_gemini_timeout_moves_on_with_a_clear_reason(self):
         processor = self._processor(None, None, None)

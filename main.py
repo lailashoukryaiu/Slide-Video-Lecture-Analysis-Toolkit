@@ -21,8 +21,12 @@ from docx.shared import Inches
 from docx.image.exceptions import UnrecognizedImageError
 from docx.oxml import OxmlElement
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.lib.utils import simpleSplit
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
@@ -271,14 +275,22 @@ async def translate_transcript(video_id: str, request: Request):
                 if isinstance(chapter_group, list)
                 for chapter in chapter_group
             ]
+    chapter_fields = []
+    for chapter_index, chapter in enumerate(chapters):
+        if not isinstance(chapter, dict):
+            continue
+        for field in ("title", "summary"):
+            if str(chapter.get(field) or "").strip():
+                chapter_fields.append((chapter_index, None, field, str(chapter[field])))
+        for section_index, section in enumerate(chapter.get("sections") or []):
+            if not isinstance(section, dict):
+                continue
+            for field in ("title", "point"):
+                if str(section.get(field) or "").strip():
+                    chapter_fields.append((chapter_index, section_index, field, str(section[field])))
     chapter_segments = [
-        {
-            "start": index,
-            "duration": 0,
-            "text": str(chapter.get("title", "")),
-        }
-        for index, chapter in enumerate(chapters)
-        if isinstance(chapter, dict) and str(chapter.get("title", "")).strip()
+        {"start": index, "duration": 0, "text": text}
+        for index, (_, _, _, text) in enumerate(chapter_fields)
     ]
     progress_key = f"{video_id}:{target}"
     translation_progress[progress_key] = {
@@ -322,19 +334,17 @@ async def translate_transcript(video_id: str, request: Request):
     (TRANSCRIPTS_DIR / f"{video_id}_translated_{target}.json").write_text(
         json.dumps(translated, ensure_ascii=False), encoding="utf-8"
     )
-    translated_chapters = []
-    title_by_index = {
+    text_by_index = {
         int(item.get("start", index)): str(item.get("text", "")).strip()
         for index, item in enumerate(translated_title_segments)
         if isinstance(item, dict) and str(item.get("text", "")).strip()
     }
-    for index, chapter in enumerate(chapters):
-        if not isinstance(chapter, dict):
-            continue
-        translated_chapter = dict(chapter)
-        if index in title_by_index:
-            translated_chapter["title"] = title_by_index[index]
-        translated_chapters.append(translated_chapter)
+    copies = json.loads(json.dumps(chapters, ensure_ascii=False))
+    for index, (chapter_index, section_index, field, _) in enumerate(chapter_fields):
+        if index in text_by_index:
+            target_item = copies[chapter_index] if section_index is None else copies[chapter_index]["sections"][section_index]
+            target_item[field] = text_by_index[index]
+    translated_chapters = [chapter for chapter in copies if isinstance(chapter, dict)]
     if translated_chapters:
         (SUMMARIES_DIR / f"{video_id}_summary_{target}.json").write_text(
             json.dumps(translated_chapters, ensure_ascii=False), encoding="utf-8"
@@ -1021,7 +1031,9 @@ async def generate_summary(request: Request):
         transcript = data.get("transcript", [])
         video_id = data.get("video_id")
         return await summary_processor.generate_summary(
-            transcript, video_id, data.get("model"), data.get("language", "transcript")
+            transcript, video_id, data.get("model"), data.get("language", "transcript"),
+            structure=data.get("structure", "sections"), detail=data.get("detail", "balanced"),
+            instructions=str(data.get("instructions") or ""),
         )
     except Exception as e:
         return JSONResponse({
@@ -1089,11 +1101,38 @@ def format_chapter_timestamp(seconds: float) -> str:
 
 
 def chapter_boundaries_from_topics(chapters):
-    return [
-        {"timestamp": str(chapter["timestamp"]), "title": str(chapter.get("title", f"Chapter {index + 1}"))}
-        for index, chapter in enumerate(chapters)
-        if isinstance(chapter, dict) and "timestamp" in chapter
-    ]
+    boundaries = []
+    for index, chapter in enumerate(chapters):
+        if not isinstance(chapter, dict) or "timestamp" not in chapter:
+            continue
+        boundary = {"timestamp": str(chapter["timestamp"]), "title": str(chapter.get("title", f"Chapter {index + 1}"))}
+        if str(chapter.get("summary") or "").strip():
+            boundary["summary"] = str(chapter["summary"]).strip()
+        if isinstance(chapter.get("sections"), list):
+            boundary["sections"] = [
+                section for section in chapter["sections"]
+                if isinstance(section, dict) and section.get("timestamp") is not None
+            ]
+        boundaries.append(boundary)
+    return boundaries
+
+
+def saved_section_points(chapter):
+    """Turn sections saved with generated chapters into export key points."""
+    points = []
+    for section in chapter.get("sections") or []:
+        title = clean_outline_title(section.get("title"))
+        text = strip_narration(section.get("point"))
+        if not title or not text:
+            return []
+        try:
+            start = parse_chapter_timestamp(str(section["timestamp"]))
+        except (KeyError, TypeError, ValueError):
+            return []
+        if chapter["end"] is not None and start >= chapter["end"]:
+            continue
+        points.append({"start": max(start, chapter["start"]), "title": title, "text": text})
+    return sorted(points, key=lambda point: point["start"])
 
 
 def scene_slide_text(scene):
@@ -1288,6 +1327,7 @@ def align_export_chapters(chapters, sentences):
         result.append({
             "index": len(result) + 1, "title": chapter["title"],
             "start": start, "source_start": source_start, "end": None,
+            **{key: chapter[key] for key in ("summary", "sections") if chapter.get(key)},
         })
     for current, following in zip(result, result[1:]):
         current["end"] = following["start"]
@@ -1308,8 +1348,18 @@ def strip_narration(text):
         r"goes\s+over|is\s+about|deals\s+with)\s*(?:that\s+)?",
         re.IGNORECASE,
     )
+    learner = re.compile(
+        r"^\s*(?:(?:in|throughout)\s+this\s+(?:part|chapter|section|segment|lecture|video|session|lesson)\s*,?\s*)?"
+        r"(?:the\s+)?(?:learners?|students?|participants?|viewers?|audience|you|we)\s+"
+        r"(?:will\s+|can\s+|are\s+going\s+to\s+|should\s+|get\s+to\s+)?(?:also\s+|then\s+|first\s+)?"
+        r"(?:be\s+introduced\s+to|be\s+shown|learns?(?:\s+about)?|understands?|discovers?|explores?|"
+        r"gets?\s+to\s+know|sees?|finds?\s+out(?:\s+about)?|are\s+introduced\s+to|is\s+introduced\s+to)\s*(?:that\s+)?",
+        re.IGNORECASE,
+    )
     text = " ".join(str(text or "").split())
     stripped = narration.sub("", text, count=1)
+    if stripped == text:
+        stripped = learner.sub("", text, count=1)
     if stripped == text or len(stripped.split()) < 2:
         return text
     return stripped[0].upper() + stripped[1:]
@@ -1507,23 +1557,117 @@ def export_archive_paths(directory, flags):
     return [
         path for path in directory.iterdir() if path.name in names
         or (path.suffix == ".jpg" and (flags["include_images"] or webpage))
-        or (path.suffix == ".mp4" and (flags["include_clips"] or webpage))
+        or (path.suffix == ".mp4" and (flags["include_clips"] or webpage or flags.get("include_section_clips")))
         or (path.suffix == ".txt" and flags["include_transcripts"])
     ]
+
+
+def is_rtl_text(text, language=""):
+    """True for right-to-left languages or text written mostly in Arabic/Hebrew script."""
+    if str(language or "").split("-")[0].lower() in {"ar", "fa", "he", "ur"}:
+        return True
+    letters = [character for character in str(text or "") if character.isalpha()]
+    if not letters:
+        return False
+    rtl_letters = sum(1 for character in letters if "\u0590" <= character <= "\u08ff" or "\ufb1d" <= character <= "\ufeff")
+    return rtl_letters / len(letters) > 0.3
+
+
+def make_word_rtl(document):
+    """Mark every paragraph and run of a python-docx document as right-to-left."""
+    from docx.oxml.ns import qn
+    successors = (
+        "w:adjustRightInd", "w:snapToGrid", "w:spacing", "w:ind", "w:contextualSpacing",
+        "w:mirrorIndents", "w:suppressOverlap", "w:jc", "w:textDirection", "w:textAlignment",
+        "w:textboxTightWrap", "w:outlineLvl", "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr", "w:pPrChange",
+    )
+    for paragraph in document.element.body.iter(qn("w:p")):
+        properties = paragraph.get_or_add_pPr()
+        if properties.find(qn("w:bidi")) is None:
+            properties.insert_element_before(OxmlElement("w:bidi"), *successors)
+        for run in paragraph.iter(qn("w:r")):
+            run_properties = run.get_or_add_rPr()
+            if run_properties.find(qn("w:rtl")) is None:
+                run_properties.get_or_add_rtl()
+
+
+_pdf_rtl_support = None
+
+
+def pdf_rtl_support():
+    """Return (font name, reshape, get_display) for Arabic PDFs, or None when unavailable."""
+    global _pdf_rtl_support
+    cached = globals().get("_pdf_rtl_support")
+    if cached is not None:
+        return cached or None
+    _pdf_rtl_support = False
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+    except ImportError:
+        return None
+    candidates = [os.environ.get("EXPORT_RTL_FONT", "")]
+    windows_fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    candidates += [str(windows_fonts / name) for name in ("arial.ttf", "tahoma.ttf", "segoeui.ttf")]
+    candidates += [
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+    ]
+    try:
+        import matplotlib
+        candidates.append(str(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"))
+    except ImportError:
+        pass
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            try:
+                pdfmetrics.registerFont(TTFont("ExportRTL", candidate))
+            except Exception:
+                continue
+            _pdf_rtl_support = ("ExportRTL", arabic_reshaper.reshape, get_display)
+            return _pdf_rtl_support
+    return None
 
 
 def create_combined_chapter_documents(
     chapters, chapter_files, pdf_path=None, docx_path=None,
     pdf_text=True, pdf_images=True, word_text=True, word_images=True,
-    document_title="Lecture Chapters", document_subtitle=None, timestamp_mode="subpart",
+    document_title="Lecture Chapters", document_subtitle=None, timestamp_mode="subpart", rtl=False,
 ):
     """Create title, screenshot, and transcript documents for all chapters."""
     if not pdf_path and not docx_path:
         return
     styles = getSampleStyleSheet()
-    pdf_story = [Paragraph(html.escape(document_title), styles["Title"])] if pdf_path else None
+    rtl_pdf = pdf_rtl_support() if rtl and pdf_path else None
+    rtl_styles = {}
+
+    def pdf_paragraph(text, style_name, label="", indent=0):
+        text = str(text)
+        if rtl_pdf is None:
+            body = html.escape(text).replace("\n", "<br/>")
+            return Paragraph((f"<b>{html.escape(label)}</b> " if label else "") + body, styles[style_name])
+        # ReportLab has no bidi layout: wrap the shaped logical text first, then
+        # reorder each line so wrapped Arabic lines keep their reading order.
+        font_name, reshape, get_display = rtl_pdf
+        if style_name not in rtl_styles:
+            rtl_styles[style_name] = ParagraphStyle(
+                f"{style_name}RTL", parent=styles[style_name], fontName=font_name, alignment=TA_RIGHT,
+            )
+        style = rtl_styles[style_name]
+        width = letter[0] - 1.2 * inch - indent - 4
+        lines = []
+        for raw_line in ((f"{label} " if label else "") + text).split("\n"):
+            shaped = reshape(raw_line)
+            lines.extend(
+                html.escape(get_display(line, base_dir="R"))
+                for line in (simpleSplit(shaped, font_name, style.fontSize, width) or [""])
+            )
+        return Paragraph("<br/>".join(lines), style)
+
+    pdf_story = [pdf_paragraph(document_title, "Title")] if pdf_path else None
     if pdf_story is not None and document_subtitle:
-        pdf_story.append(Paragraph(html.escape(document_subtitle), styles["Italic"]))
+        pdf_story.append(pdf_paragraph(document_subtitle, "Italic"))
     word_document = Document() if docx_path else None
     if word_document:
         word_document.add_heading(document_title, level=0)
@@ -1550,27 +1694,26 @@ def create_combined_chapter_documents(
 
         if pdf_story is not None:
             pdf_story.extend([
-            Paragraph(html.escape(heading), styles["Heading1"]),
-            Paragraph(f"Starts at {timestamp}", styles["Normal"]),
+            pdf_paragraph(heading, "Heading1"),
+            pdf_paragraph(f"Starts at {timestamp}", "Normal"),
             Spacer(1, 0.15 * inch),
             ])
             if pdf_text and chapter_summary:
-                pdf_story.append(Paragraph(
-                    f"<b>Summary:</b> {html.escape(chapter_summary)}",
-                    styles["BodyText"],
-                ))
+                pdf_story.append(pdf_paragraph(chapter_summary, "BodyText", label="Summary:"))
                 pdf_story.append(Spacer(1, 0.1 * inch))
             if pdf_text and files.get("slide_content"):
-                pdf_story.append(Paragraph("Slide content", styles["Heading2"]))
+                pdf_story.append(pdf_paragraph("Slide content", "Heading2"))
                 for slide in files["slide_content"]:
-                    pdf_story.append(Paragraph(
-                        f"<b>Slide {slide['number']}</b> ({format_chapter_timestamp(slide['start'])})",
-                        styles["Normal"],
+                    pdf_story.append(pdf_paragraph(
+                        f"({format_chapter_timestamp(slide['start'])})", "Normal", label=f"Slide {slide['number']}",
                     ))
-                    pdf_story.append(ListFlowable(
-                        [ListItem(Paragraph(html.escape(line), styles["BodyText"])) for line in slide["lines"]],
-                        bulletType="bullet", leftIndent=14,
-                    ))
+                    if rtl_pdf is not None:
+                        pdf_story.extend(pdf_paragraph(f"? {line}", "BodyText") for line in slide["lines"])
+                    else:
+                        pdf_story.append(ListFlowable(
+                            [ListItem(Paragraph(html.escape(line), styles["BodyText"])) for line in slide["lines"]],
+                            bulletType="bullet", leftIndent=14,
+                        ))
                 pdf_story.append(Spacer(1, 0.1 * inch))
         if pdf_story is not None and pdf_images and image_path is not None:
             pdf_story.extend([
@@ -1579,29 +1722,25 @@ def create_combined_chapter_documents(
             ])
         if pdf_story is not None and pdf_text:
             for subpart_index, subpart in enumerate(files.get("subparts", []), start=1):
-                pdf_story.append(Paragraph(
-                    html.escape(f"{index + 1}.{subpart_index} " + subpart["title"] + (
+                pdf_story.append(pdf_paragraph(
+                    f"{index + 1}.{subpart_index} " + subpart["title"] + (
                         f" ({format_chapter_timestamp(subpart['start'])})" if timestamp_mode != "part" else ""
-                    )),
-                    styles["Heading2"],
+                    ),
+                    "Heading2",
                 ))
                 for scene in subpart["slides"]:
-                    pdf_story.append(Paragraph(
-                        f"Slide at {format_chapter_timestamp(export_slide_start(scene))}",
-                        styles["Normal"],
+                    pdf_story.append(pdf_paragraph(
+                        f"Slide at {format_chapter_timestamp(export_slide_start(scene))}", "Normal",
                     ))
                     if pdf_images and scene["image"].is_file():
                         pdf_story.append(PdfImage(str(scene["image"]), width=6.5 * inch,
                                                   height=3.65 * inch, kind="proportional"))
                 for point in subpart["points"]:
-                    pdf_story.append(Paragraph(html.escape(point["text"]), styles["BodyText"]))
-                pdf_story.append(Paragraph(
-                    html.escape(subpart["transcript"]).replace("\n", "<br/>"), styles["BodyText"]
-                ))
+                    pdf_story.append(pdf_paragraph(point["text"], "BodyText"))
+                pdf_story.append(pdf_paragraph(subpart["transcript"], "BodyText"))
             if not files.get("subparts"):
-                pdf_story.append(Paragraph(
-                    html.escape(transcript or "No transcript available for this chapter.")
-                    .replace("\n", "<br/>"), styles["BodyText"],
+                pdf_story.append(pdf_paragraph(
+                    transcript or "No transcript available for this chapter.", "BodyText",
                 ))
         if word_document:
             word_document.add_heading(heading, level=1)
@@ -1639,12 +1778,14 @@ def create_combined_chapter_documents(
                 word_document.add_paragraph(transcript or "No transcript available for this chapter.")
     footnote = "Transcription model: faster-whisper turbo."
     if pdf_story is not None:
-        pdf_story.extend([Spacer(1, 0.3 * inch), Paragraph(footnote, styles["Italic"])])
+        pdf_story.extend([Spacer(1, 0.3 * inch), pdf_paragraph(footnote, "Italic")])
         SimpleDocTemplate(str(pdf_path), pagesize=letter, rightMargin=0.6 * inch,
                       leftMargin=0.6 * inch, topMargin=0.6 * inch,
                       bottomMargin=0.6 * inch).build(pdf_story)
     if word_document:
         word_document.add_paragraph(footnote, style="Caption")
+        if rtl:
+            make_word_rtl(word_document)
         word_document.save(str(docx_path))
 
 def add_word_slide_content(document, slides, level):
@@ -1751,6 +1892,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
     export_flags = {name: bool(options.get(name, not format_selected and name == "include_webpage")) for name in (
         "include_images", "include_transcripts", "include_clips",
         "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
+        "include_section_clips",
     )}
     if not any(export_flags.values()):
         raise HTTPException(status_code=400, detail="Select at least one export option")
@@ -1796,6 +1938,13 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             if summary_path.is_file():
                 with summary_path.open("r", encoding="utf-8") as file:
                     topic_chapters = chapter_boundaries_from_topics(json.load(file))
+                if translated_summary_path and summary_path != translated_summary_path:
+                    # The saved chapters are in another language: keep their
+                    # timestamps, but let the export rewrite summaries and sections.
+                    step("Chapters are not available in the transcript language; writing sections from the transcript")
+                    for chapter in topic_chapters:
+                        chapter.pop("summary", None)
+                        chapter.pop("sections", None)
             if scene_path.is_file():
                 with scene_path.open("r", encoding="utf-8") as file:
                     scene_chapters = chapter_boundaries_from_scenes(json.load(file))
@@ -1985,16 +2134,24 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                 )
                 needs_structure = any(export_flags[name] for name in (
                     "include_word", "include_pdf", "include_webpage", "include_outline", "include_scorm",
+                    "include_section_clips",
                 ))
                 if needs_structure:
-                    step(f"Part {number}/{len(chapter_data)}: generating title, summary and key points")
                     chapter_slides = [
                         export_slide_start(scene) for scene in files["slide_subparts"]
                     ] if subpart_mode in {"slides", "both"} else []
                     ai_extras = {}
-                    points, point_method, chapter["summary"] = await export_key_points(
-                        chapter_transcript, [chapter["start"], *chapter_slides], ai_extras,
-                    )
+                    saved_points = saved_section_points(chapter) if not chapter_slides else []
+                    if saved_points:
+                        # Sections were already written when chapters were generated; reuse them.
+                        step(f"Part {number}/{len(chapter_data)}: using the saved chapter sections")
+                        points, point_method = saved_points, "Saved chapter sections"
+                        chapter["summary"] = chapter.get("summary")
+                    else:
+                        step(f"Part {number}/{len(chapter_data)}: generating title, summary and key points")
+                        points, point_method, chapter["summary"] = await export_key_points(
+                            chapter_transcript, [chapter["start"], *chapter_slides], ai_extras,
+                        )
                     if ai_extras.get("title"):
                         chapter["original_title"] = chapter["title"]
                         chapter["title"] = ai_extras["title"]
@@ -2022,6 +2179,24 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                                     video_id, video_path, slide_start, scene_chapters,
                                     scene["image"], image_cache, step,
                                 )
+                    if export_flags["include_section_clips"] and len(files["subparts"]) > 1:
+                        for subpart_index, subpart in enumerate(files["subparts"], start=1):
+                            section_end = (
+                                files["subparts"][subpart_index]["start"]
+                                if subpart_index < len(files["subparts"]) else chapter["end"]
+                            )
+                            section_start = max(0.0, subpart["start"] - overlap_seconds)
+                            section_clip = temp_dir / f"{base_name}_{subpart_index:02d}.mp4"
+                            command = [
+                                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                                "-ss", str(section_start), "-i", str(video_path),
+                            ]
+                            if section_end is not None:
+                                command.extend(["-t", str(max(0.1, section_end - section_start))])
+                            command.extend(["-c:v", "libx264", "-c:a", "aac", str(section_clip)])
+                            step(f"Part {number}/{len(chapter_data)}: encoding section {number}.{subpart_index} clip")
+                            subprocess.run(command, check=True)
+                            subpart["clip"] = section_clip
                 chaptered_lines.extend([
                     f"## Part {number}: {chapter['title']}",
                     f"Start: {format_chapter_timestamp(chapter['start'])}",
@@ -2034,8 +2209,13 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                 (temp_dir / "transcript_by_chapter.md").write_text("\n".join(chaptered_lines), encoding="utf-8")
             if export_flags["include_transcripts"]:
                 (temp_dir / "chapters.json").write_text(json.dumps(chapter_data, indent=2), encoding="utf-8")
+            export_rtl = is_rtl_text(
+                " ".join(item.get("text", "") for item in transcript[:200]), transcript_language,
+            )
             if export_flags["include_word"] or export_flags["include_pdf"]:
                 step("Building Word/PDF documents")
+                if export_rtl and export_flags["include_pdf"] and pdf_rtl_support() is None:
+                    step("PDF: right-to-left text support is missing (install arabic-reshaper and python-bidi)")
             create_combined_chapter_documents(
                 chapter_data, chapter_files,
                 temp_dir / "chapter_document.pdf" if export_flags["include_pdf"] else None,
@@ -2045,6 +2225,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                 document_title=document_title,
                 document_subtitle=document_subtitle,
                 timestamp_mode=timestamp_mode,
+                rtl=export_rtl,
             )
             if export_flags["include_webpage"] or export_flags["include_scorm"]:
                 step("Building HTML webpage")
@@ -2058,8 +2239,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                         f"data-video=\"video-{clip_index}\" data-t=\"{offset:.3f}\">{label}</a>"
                     )
 
+                html_language = html.escape(transcript_language or ("ar" if export_rtl else "en"))
+                html_direction = ' dir="rtl"' if export_rtl else ""
                 webpage_parts = [
-                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+                    f"<!doctype html><html lang=\"{html_language}\"{html_direction}><head><meta charset=\"utf-8\">",
                     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
                     f"<title>{html.escape(document_title)}</title>",
                     "<style>:root{--brand:#4f46e5;--text:#1f2330;--muted:#5d6475;--line:#e3e6ee;--soft:#f5f6fb}"
@@ -2068,8 +2251,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "h1{font-size:1.9rem;margin:0 0 .25rem}h2{font-size:1.35rem;margin:0}h3{font-size:1rem;margin:0;display:inline}"
                     ".subtitle{color:var(--muted);margin:0 0 1.5rem}"
                     ".outline{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:1rem 1.25rem;margin:1.5rem 0 2rem}"
-                    ".outline h2{font-size:1.05rem;margin-bottom:.5rem}.outline ol{margin:0;padding-left:1.4rem}"
-                    ".outline li{margin:.2rem 0}.outline ol ol{list-style:none;padding-left:1rem;font-size:.92rem}"
+                    ".outline h2{font-size:1.05rem;margin-bottom:.5rem}.outline ol{margin:0;padding-inline-start:1.4rem}"
+                    ".outline li{margin:.2rem 0}.outline ol ol{list-style:none;padding-inline-start:1rem;font-size:.92rem}"
                     ".outline a{color:var(--text);text-decoration:none}.outline a:hover{color:var(--brand);text-decoration:underline}"
                     ".outline-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.5rem}"
                     ".outline-head h2{margin:0}.outline-toggle{font:inherit;font-size:.82rem;color:var(--brand);background:none;"
@@ -2087,10 +2270,10 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     ".export-thumbnail{margin:.5rem 0;width:120px;flex-shrink:0}"
                     ".export-thumbnail img{width:120px;height:68px;object-fit:contain;margin:0;cursor:zoom-in;border-radius:6px;border:1px solid var(--line)}"
                     ".export-thumbnail figcaption{font-size:.78rem;color:var(--muted);overflow-wrap:anywhere;margin:.25rem 0}"
-                    ".chapter-subparts{margin:1rem 0 0 1.5rem;padding-left:1rem;border-left:3px solid var(--line)}"
+                    ".chapter-subparts{margin-block:1rem 0;margin-inline:1.5rem 0;padding-inline-start:1rem;border-inline-start:3px solid var(--line)}"
                     ".chapter-subparts>summary{font-weight:600;cursor:pointer;color:var(--brand)}"
-                    ".subpart{margin:.35rem 0 .35rem 1rem;padding:.35rem 0}.subpart>summary{cursor:pointer}"
-                    ".subpart ul{margin:.5rem 0}.seek{color:var(--brand);text-decoration:none;font-size:.9rem;margin-right:.75rem}"
+                    ".subpart{margin-block:.35rem;margin-inline:1rem 0;padding:.35rem 0}.subpart>summary{cursor:pointer}"
+                    ".subpart ul{margin:.5rem 0}.seek{color:var(--brand);text-decoration:none;font-size:.9rem;margin-inline-end:.75rem}"
                     ".seek:hover{text-decoration:underline}.transcript>summary{cursor:pointer;color:var(--muted);font-size:.9rem}"
                     "pre{white-space:pre-wrap;font-family:inherit;background:var(--soft);padding:.75rem 1rem;border-radius:8px;margin:.5rem 0}"
                     "@media print{details{display:block}video{display:none}}</style></head><body>",
@@ -2191,6 +2374,11 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                                 f"Slide {scene['image_index'] + 1}: {format_chapter_timestamp(slide_start)}",
                             ))
                         webpage_parts.append("</p>")
+                        if subpart.get("clip"):
+                            webpage_parts.append(
+                                f"<video class=\"section-video\" controls preload=\"none\" "
+                                f"src=\"{html.escape(subpart['clip'].name, quote=True)}\"></video>"
+                            )
                         webpage_parts.append(
                             "<details class=\"transcript\"><summary>Transcript</summary>"
                             f"<pre>{html.escape(subpart['transcript'])}</pre></details></details>"
@@ -2267,6 +2455,8 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                             files["transcript"].read_text(encoding="utf-8").strip()
                             or "No transcript available for this part."
                         )
+                if export_rtl:
+                    make_word_rtl(outline_document)
                 outline_document.save(str(temp_dir / "video_outline.docx"))
             if export_flags["include_scorm"]:
                 (temp_dir / "scorm_api.js").write_text(
@@ -2305,13 +2495,13 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
             only_outline = export_flags["include_outline"] and not any(
                 export_flags[name] for name in (
                     "include_word", "include_pdf", "include_webpage", "include_scorm",
-                    "include_images", "include_transcripts", "include_clips",
+                    "include_images", "include_transcripts", "include_clips", "include_section_clips",
                 )
             )
             no_extra_files = not any(
                 export_flags[name] for name in (
                     "include_images", "include_transcripts", "include_clips",
-                    "include_webpage", "include_outline", "include_scorm",
+                    "include_webpage", "include_outline", "include_scorm", "include_section_clips",
                 )
             )
             if no_extra_files and (only_word or only_pdf):

@@ -220,6 +220,13 @@ function setupKeyboardControls() {
 async function loadExportSuggestions() {
     if (!state.currentVideoId) return;
     const fallbackSuggestion = state.currentVideoId;
+    // A title or file name typed for another video must not be reused for this one.
+    for (const input of [elements.exportTitle, elements.exportFilename]) {
+        if (input.dataset.videoId !== state.currentVideoId) {
+            input.value = '';
+            input.dataset.videoId = state.currentVideoId;
+        }
+    }
     const titleWasEmpty = !elements.exportTitle.value.trim();
     const filenameWasEmpty = !elements.exportFilename.value.trim();
     if (!elements.exportTitle.value.trim()) {
@@ -327,6 +334,24 @@ function initApp() {
     document.addEventListener('scenesLoaded', updateChapterCaptions);
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
+    });
+    [
+        [elements.chapterStructure, 'chapterStructureV1'],
+        [elements.chapterDetail, 'chapterDetailV1'],
+        [elements.chapterInstructions, 'chapterInstructionsV1'],
+    ].forEach(([control, key]) => {
+        if (!control) return;
+        try {
+            const saved = localStorage.getItem(key);
+            if (saved !== null && (control.tagName !== 'SELECT' || [...control.options].some((option) => option.value === saved))) {
+                control.value = saved;
+            }
+        } catch (error) {
+            console.warn('Chapter options could not be restored:', error);
+        }
+        bind(control, 'change', () => {
+            try { localStorage.setItem(key, control.value); } catch (error) { /* storage unavailable */ }
+        });
     });
     bind(elements.exportChaptersBtn, 'click', () => {
         if (!elements.exportOptionsDialog.open) {

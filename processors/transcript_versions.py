@@ -212,6 +212,9 @@ def activate_version(video_id, version_id):
         _write_json(TRANSCRIPTS_DIR / f"{video_id}_translated_{language}.json", segments)
         if payload.get("chapters"):
             _write_json(SUMMARIES_DIR / f"{video_id}_summary_{language}.json", payload["chapters"])
+        else:
+            # Chapters of another translation must not be shown or exported with this one.
+            (SUMMARIES_DIR / f"{video_id}_summary_{language}.json").unlink(missing_ok=True)
     elif entry.get("source") == "uploaded":
         _write_json(TRANSCRIPTS_DIR / f"{video_id}_uploaded.json", segments)
     else:

@@ -2,7 +2,7 @@
 
 import { state } from './main.js';
 import { loadTranscript } from './transcript.js';
-import { updateChapters } from './chapters.js';
+import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { showError, showNotification } from './ui.js';
 
 let versions = [];
@@ -99,13 +99,24 @@ export async function refreshTranscriptVersions() {
     render();
 }
 
+// Chapters belong to one transcript language; never keep showing another version's chapters.
+function showNoChapters() {
+    state.videoChapters = [];
+    clearChapterMarkers();
+    updateChapters([]);
+    document.dispatchEvent(new CustomEvent('chaptersUpdated', { detail: [] }));
+}
+
 async function loadOriginalChapters(videoId) {
     try {
         const response = await fetch(`/summary/${encodeURIComponent(videoId)}`);
         const data = await response.json();
-        if (videoId === state.currentVideoId && data.success && data.exists) {
+        if (videoId !== state.currentVideoId) return;
+        if (data.success && data.exists && Array.isArray(data.chapters) && data.chapters.length) {
             state.videoChapters = data.chapters;
             updateChapters(data.chapters);
+        } else {
+            showNoChapters();
         }
     } catch (error) {
         console.warn('Could not reload chapters:', error);
@@ -142,7 +153,9 @@ export async function chooseTranscriptVersion(versionId) {
         if (version.kind === 'translation' && Array.isArray(data.chapters) && data.chapters.length) {
             state.videoChapters = data.chapters;
             updateChapters(data.chapters);
-        } else if (version.kind !== 'translation') {
+        } else if (version.kind === 'translation') {
+            showNoChapters();
+        } else {
             await loadOriginalChapters(videoId);
         }
         showNotification(`Switched to: ${version.label}`, 'success');
