@@ -38,6 +38,21 @@ from processors.transcript_processor import TranscriptProcessor
 
 
 class TranscriptProcessorReuseTests(unittest.TestCase):
+    def test_interrupted_speaker_job_restores_transcript(self):
+        with tempfile.TemporaryDirectory() as directory:
+            working_dir = Path(directory)
+            with mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", working_dir):
+                segments = [{"start": 0, "duration": 1, "text": "Hallo"}]
+                (working_dir / "vid_whisper_before_speakers.json").write_text(json.dumps(segments), encoding="utf-8")
+                (working_dir / "vid_whisper_progress.txt").write_text("100", encoding="utf-8")
+                (working_dir / "kept_whisper.json").write_text("[]", encoding="utf-8")
+                (working_dir / "kept_whisper_before_speakers.json").write_text("[]", encoding="utf-8")
+                TranscriptProcessor()
+                self.assertEqual(json.loads((working_dir / "vid_whisper.json").read_text(encoding="utf-8")), segments)
+                self.assertFalse((working_dir / "vid_whisper_progress.txt").exists())
+                self.assertFalse((working_dir / "vid_whisper_before_speakers.json").exists())
+                self.assertFalse((working_dir / "kept_whisper_before_speakers.json").exists())
+
     def test_heartbeat_refreshes_progress_marker(self):
         class StopAfterOneHeartbeat:
             def __init__(self):

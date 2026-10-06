@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import time
 import asyncio
 import threading
@@ -106,6 +107,31 @@ class TranscriptProcessor:
             os.getenv("WHISPER_MANUAL_RETRY_STALE_SECONDS", "90")
         )
         self.heartbeat_seconds = int(os.getenv("WHISPER_HEARTBEAT_SECONDS", "15"))
+        self.restore_interrupted_speaker_jobs()
+
+    @staticmethod
+    def _speaker_backup_path(video_id):
+        return TRANSCRIPTS_DIR / f"{video_id}_whisper_before_speakers.json"
+
+    def restore_interrupted_speaker_jobs(self):
+        """Put back transcripts whose speaker identification was cut off by a server restart."""
+        try:
+            backups = list(TRANSCRIPTS_DIR.glob("*_whisper_before_speakers.json"))
+        except OSError:
+            return
+        for backup in backups:
+            video_id = backup.name[: -len("_whisper_before_speakers.json")]
+            transcript = TRANSCRIPTS_DIR / f"{video_id}_whisper.json"
+            try:
+                if not transcript.exists():
+                    os.replace(backup, transcript)
+                    (TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt").unlink(missing_ok=True)
+                    self._remove_whisper_phase(video_id)
+                    print(f"Restored the transcript of {video_id} after interrupted speaker identification")
+                else:
+                    backup.unlink()
+            except OSError as error:
+                print(f"Could not restore the transcript of {video_id}: {error}")
 
     async def get_transcript(self, video_id: str, source: str):
         """Get a specific transcript by source."""
@@ -303,6 +329,9 @@ class TranscriptProcessor:
             
             # Start background task to generate transcript
             if os.path.exists(output_path):
+                if existing_transcript:
+                    # Kept until speaker identification ends, in case the server stops meanwhile.
+                    shutil.copyfile(output_path, self._speaker_backup_path(video_id))
                 os.remove(output_path)
             progress_path.write_text(
                 "100" if existing_transcript else "0",
@@ -612,6 +641,7 @@ class TranscriptProcessor:
             if os.path.exists(progress_file):
                 os.remove(progress_file)
             self._remove_whisper_phase(video_id)
+            self._speaker_backup_path(video_id).unlink(missing_ok=True)
 
         except Exception as e:
             print(f"Error generating Whisper transcript: {str(e)}")
@@ -625,6 +655,7 @@ class TranscriptProcessor:
             if original_transcript:
                 with open(output_path, "w", encoding="utf-8") as file:
                     json.dump(original_transcript, file, ensure_ascii=False)
+                self._speaker_backup_path(video_id).unlink(missing_ok=True)
             with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                 f.write(str(e))
 
@@ -873,7 +904,23 @@ class TranscriptProcessor:
             + (" (much slower without a GPU)" if device == "CPU" else "")
         )
         started = time.monotonic()
-        result = pipeline(audio)
+        reported = {}
+
+        def hook(step_name, step_artifact=None, file=None, total=None, completed=None):
+            # Report each pyannote stage and every 10% within it, so long CPU runs show progress.
+            percent = min(100, int(100 * completed / total)) if total and completed is not None else None
+            key = (step_name, None if percent is None else percent // 10)
+            if reported.get("key") != key:
+                reported["key"] = key
+                label = str(step_name).replace("_", " ")
+                step(f"Detecting speakers: {label}" + (f" {percent}%" if percent is not None else ""))
+
+        try:
+            result = pipeline(audio, hook=hook)
+        except TypeError as error:
+            if "hook" not in str(error):
+                raise
+            result = pipeline(audio)
         # pyannote.audio 4 returns an object whose speaker_diarization is the annotation.
         annotation = getattr(result, "speaker_diarization", result)
         step(f"Speaker detection finished in {time.monotonic() - started:.0f}s")
