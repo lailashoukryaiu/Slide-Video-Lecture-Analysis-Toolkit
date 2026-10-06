@@ -93,6 +93,34 @@
         });
     }
 
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
-    else start();
+    // Minimize buttons collapse the video, the visual timeline or the side panel to a thin strip.
+    const MINIMIZED_KEY = 'slidedec-minimized-panes';
+
+    function setMinimized(pane, minimized) {
+        const element = document.querySelector(`[data-pane="${pane}"]:not(button)`);
+        const layout = document.querySelector('.main-content');
+        if (!element || !layout) return;
+        element.classList.toggle('pane-minimized', minimized);
+        layout.classList.toggle(`min-${pane}`, minimized);
+    }
+
+    function startMinimize() {
+        let minimized = [];
+        try { minimized = JSON.parse(localStorage.getItem(MINIMIZED_KEY)) || []; } catch { minimized = []; }
+        minimized.forEach((pane) => setMinimized(pane, true));
+        document.addEventListener('click', (event) => {
+            const button = event.target.closest('.pane-minimize, .pane-restore');
+            if (!button) return;
+            const pane = button.dataset.pane;
+            const minimize = button.classList.contains('pane-minimize');
+            setMinimized(pane, minimize);
+            minimized = minimized.filter((item) => item !== pane).concat(minimize ? [pane] : []);
+            try { localStorage.setItem(MINIMIZED_KEY, JSON.stringify(minimized)); } catch { /* storage unavailable */ }
+            window.dispatchEvent(new Event('resize'));
+        });
+    }
+
+    const init = () => { start(); startMinimize(); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
 })();

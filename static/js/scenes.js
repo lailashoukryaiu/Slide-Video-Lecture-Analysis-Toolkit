@@ -357,6 +357,7 @@ export function updateScenes(scenes, videoPlayer) {
     // Add timeupdate listener to highlight current thumbnail
     videoPlayer.addEventListener('timeupdate', updateTimelineHighlight);
     updateChapterCaptions();
+    document.dispatchEvent(new CustomEvent('slidesUpdated'));
 }
 
 /**

@@ -677,6 +677,9 @@ function createInteractiveLayerContainer() {
         // Add buttons to tab buttons container
         tabButtons.appendChild(normalTabBtn);
         tabButtons.appendChild(interactiveTabBtn);
+        // The video's minimize button sits at the end of this row rather than among the controls.
+        const minimizeVideo = document.querySelector('.pane-minimize[data-pane="player"]');
+        if (minimizeVideo) tabButtons.appendChild(minimizeVideo);
         
         // Add tab buttons to tab container
         tabContainer.appendChild(tabButtons);

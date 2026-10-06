@@ -4,7 +4,7 @@ import { setupVideoPlayer, updateTimeMarker, updateChapterCaptions } from './vid
 import { navigationParts } from './chapter-navigation.js';
 import { loadTranscript, updateTranscriptDisplay, updateActiveTranscript } from './transcript.js';
 import { checkSceneDetection, updateScenes, toggleSceneMarkers, findSceneAtTime, downloadSceneScreenshots, downloadSlidesPdf } from './scenes.js';
-import { generateChapters, updateChapters, exportChapters, updateExportAvailability, refreshSavedExports } from './chapters.js';
+import { generateChapters, updateChapters, exportChapters, updateExportAvailability, refreshSavedExports, attachChapterSlides } from './chapters.js';
 import { setupSearch, setupSlideSearch, toggleTimestamps, toggleFuzzySearch } from './search.js';
 import { fetchOcrResults, updateSlideContentDisplay } from './ocr.js';
 import { setupTabs, showError, showLoading, showNotification, openSettingsModal, closeSettingsModal, saveSettings, generateWhisperTranscript } from './ui.js';
@@ -224,30 +224,40 @@ async function loadExportSuggestions() {
     for (const input of [elements.exportTitle, elements.exportFilename]) {
         if (input.dataset.videoId !== state.currentVideoId) {
             input.value = '';
+            input.dataset.autoValue = '';
             input.dataset.videoId = state.currentVideoId;
         }
     }
-    const titleWasEmpty = !elements.exportTitle.value.trim();
-    const filenameWasEmpty = !elements.exportFilename.value.trim();
-    if (!elements.exportTitle.value.trim()) {
-        elements.exportTitle.value = fallbackSuggestion;
-    }
-    if (!elements.exportFilename.value.trim()) {
-        elements.exportFilename.value = fallbackSuggestion;
-    }
+    // Values the user has not edited follow the suggestion, e.g. after switching language.
+    const isAuto = (input) => !input.value.trim() || input.value === input.dataset.autoValue;
+    const setAuto = (input, value) => {
+        input.value = value;
+        input.dataset.autoValue = value;
+    };
+    if (!elements.exportTitle.value.trim()) setAuto(elements.exportTitle, fallbackSuggestion);
+    if (!elements.exportFilename.value.trim()) setAuto(elements.exportFilename, fallbackSuggestion);
+    const titleSuggestionHint = document.getElementById('exportTitleSuggestion');
+    if (titleSuggestionHint) titleSuggestionHint.textContent = 'Suggesting a title...';
     try {
         const response = await fetch(
-            `/export_suggestions/${encodeURIComponent(state.currentVideoId)}`
+            `/export_suggestions/${encodeURIComponent(state.currentVideoId)}`,
+            {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({chapters: (state.videoChapters || []).map((chapter) => ({
+                    title: chapter.title, summary: chapter.summary || '',
+                }))}),
+            }
         );
         if (!response.ok) {
             throw new Error(`Could not load export suggestions (${response.status})`);
         }
         const suggestions = await response.json();
-        if (suggestions.title_suggestion && (titleWasEmpty || elements.exportTitle.value === fallbackSuggestion)) {
-            elements.exportTitle.value = suggestions.title_suggestion;
+        if (suggestions.title_suggestion && isAuto(elements.exportTitle)) {
+            setAuto(elements.exportTitle, suggestions.title_suggestion);
         }
-        if (suggestions.filename_suggestion && (filenameWasEmpty || elements.exportFilename.value === fallbackSuggestion)) {
-            elements.exportFilename.value = suggestions.filename_suggestion;
+        if (suggestions.filename_suggestion && isAuto(elements.exportFilename)) {
+            setAuto(elements.exportFilename, suggestions.filename_suggestion);
         }
         const titleSuggestion = document.getElementById('exportTitleSuggestion');
         const filenameSuggestion = document.getElementById('exportFilenameSuggestion');
@@ -258,6 +268,7 @@ async function loadExportSuggestions() {
             filenameSuggestion.textContent = `Suggestion: ${suggestions.filename_suggestion}`;
         }
     } catch (error) {
+        if (titleSuggestionHint) titleSuggestionHint.textContent = '';
         showError(`Could not load export suggestions: ${error.message}`);
     }
 }
@@ -330,19 +341,22 @@ function initApp() {
     };
     bind(navigationGrouping, 'change', (event) => setGrouping(event.target.value));
     bind(elements.chapterGrouping, 'change', (event) => setGrouping(event.target.value));
-    const timelineSectionsToggle = document.getElementById('timelineSectionsToggle');
-    if (timelineSectionsToggle) {
+    [['timelineSectionsToggle', 'timelineSectionsV1'], ['timelineSlidesToggle', 'timelineSlidesV1']].forEach(([id, key]) => {
+        const toggle = document.getElementById(id);
+        if (!toggle) return;
         try {
-            const saved = localStorage.getItem('timelineSectionsV1');
-            if (saved !== null) timelineSectionsToggle.checked = saved === 'true';
+            const saved = localStorage.getItem(key);
+            if (saved !== null) toggle.checked = saved === 'true';
         } catch (error) { /* storage unavailable */ }
-        bind(timelineSectionsToggle, 'change', () => {
-            try { localStorage.setItem('timelineSectionsV1', String(timelineSectionsToggle.checked)); } catch (error) { /* storage unavailable */ }
+        bind(toggle, 'change', () => {
+            try { localStorage.setItem(key, String(toggle.checked)); } catch (error) { /* storage unavailable */ }
             updateChapterCaptions();
         });
-    }
+    });
     document.addEventListener('chaptersUpdated', updateChapterCaptions);
     document.addEventListener('scenesLoaded', updateChapterCaptions);
+    document.addEventListener('scenesLoaded', () => attachChapterSlides());
+    document.addEventListener('slidesUpdated', () => attachChapterSlides());
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });
@@ -381,7 +395,8 @@ function initApp() {
     initTranscriptVersions();
     document.addEventListener('chaptersUpdated', () => void refreshSavedExports());
     bind(document.getElementById('refreshSavedExportsBtn'), 'click', refreshSavedExports);
-    bind(elements.regenerateTranscriptBtn, 'click', regenerateTranscript);
+    bind(elements.regenerateTranscriptBtn, 'click', () => regenerateTranscript());
+    bind(document.getElementById('identifySpeakersBtn'), 'click', () => regenerateTranscript({speakersOnly: true}));
     bind(elements.uploadTranscriptBtn, 'click', () => void uploadTranscriptFile().catch((error) => showError(error.message)));
     bind(elements.translateTranscriptBtn, 'click', () => void translateTranscript().catch((error) => showError(error.message)));
     bind(elements.translationTarget, 'change', (event) => {

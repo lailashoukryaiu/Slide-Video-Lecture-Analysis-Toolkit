@@ -30,6 +30,24 @@ class TranscriptVersionsTest(unittest.TestCase):
     def read(self, name, directory=None):
         return json.loads((directory or self.transcripts).joinpath(name).read_text(encoding="utf-8"))
 
+    def test_speakers_are_copied_to_translations(self):
+        source = [
+            {"start": 0, "duration": 2, "text": "Hallo", "speaker": "SPEAKER_00"},
+            {"start": 2.5, "duration": 2, "text": "Frage", "speaker": "SPEAKER_01"},
+        ]
+        self.write("vid_translated_en.json", [
+            {"start": 0, "duration": 2, "text": "Hello"},
+            {"start": 2.5, "duration": 2, "text": "Question"},
+        ])
+        updated = transcript_versions.copy_speakers_to_translations(
+            "vid", source, {"SPEAKER_00": "Laila", "SPEAKER_01": "Speaker 01"}
+        )
+        self.assertEqual(updated, 1)
+        translated = self.read("vid_translated_en.json")
+        self.assertEqual([item["speaker"] for item in translated], ["SPEAKER_00", "SPEAKER_01"])
+        self.assertEqual(translated[0]["speaker_name"], "Laila")
+        self.assertEqual(transcript_versions.copy_speakers_to_translations("vid", source, {"SPEAKER_00": "Laila", "SPEAKER_01": "Speaker 01"}), 0)
+
     def test_regenerated_transcripts_are_kept_and_can_be_restored(self):
         first = [{"start": 0, "duration": 2, "text": "First take"}]
         second = [{"start": 0, "duration": 2, "text": "Second take"}]

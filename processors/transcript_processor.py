@@ -198,9 +198,22 @@ class TranscriptProcessor:
 
     async def generate_whisper_transcript(
         self, video_id: str, background_tasks, diarization=False, force=False,
-        model="turbo", prompt=None,
+        model="turbo", prompt=None, speakers_only=False,
     ):
-        """Generate a transcript using local Whisper or an online model."""
+        """Generate a transcript using local Whisper or an online model.
+
+        speakers_only identifies speakers in the existing transcript without transcribing again.
+        """
+        if speakers_only:
+            if not (TRANSCRIPTS_DIR / f"{video_id}_whisper.json").is_file():
+                return JSONResponse({
+                    "success": False,
+                    "error": "Generate a transcript first; speakers are identified in an existing transcript.",
+                })
+            metadata = self._read_whisper_metadata(video_id) or {}
+            model = metadata.get("model") or model
+            prompt = metadata.get("prompt") or None
+            diarization = force = True
         model = model or default_transcription_model()
         prompt = str(prompt or "").strip()[:2000] or None
         if model not in TRANSCRIPTION_MODELS:
@@ -280,11 +293,13 @@ class TranscriptProcessor:
                 diarization
                 and force
                 and os.path.exists(output_path)
-                and self._can_reuse_whisper_transcript(video_id, model, prompt)
+                and (speakers_only or self._can_reuse_whisper_transcript(video_id, model, prompt))
             ):
                 existing_transcript = self._read_transcript(video_id)
                 if not existing_transcript:
                     existing_transcript = None
+            if speakers_only and not existing_transcript:
+                return JSONResponse({"success": False, "error": "The existing transcript could not be read."})
             
             # Start background task to generate transcript
             if os.path.exists(output_path):
@@ -579,6 +594,13 @@ class TranscriptProcessor:
                     "speaker_names": speaker_names,
                     "generated_at": generated_at,
                 }, f)
+            if speaker_names:
+                try:
+                    updated = transcript_versions.copy_speakers_to_translations(video_id, transcript, speaker_names)
+                    if updated:
+                        step(f"Speakers added to {updated} translated transcript(s)")
+                except Exception as error:
+                    print(f"Could not add speakers to translations: {error}")
             try:
                 transcript_versions.sync_existing(video_id)
             except Exception as error:
@@ -780,6 +802,26 @@ class TranscriptProcessor:
 
     @staticmethod
     def _load_pyannote_pipeline(Pipeline, token):
+        """Load the diarization pipeline; retry with plain HTTPS downloads if the Xet CDN is blocked."""
+        try:
+            return TranscriptProcessor._load_pyannote_pipeline_once(Pipeline, token)
+        except RuntimeError as error:
+            message = str(error).lower()
+            if "cas client" not in message and "xet" not in message:
+                raise
+            try:
+                from huggingface_hub import constants
+            except ImportError:
+                raise error
+            if constants.HF_HUB_DISABLE_XET:
+                raise
+            # Some networks block the Xet CDN; normal Hugging Face downloads still work there.
+            constants.HF_HUB_DISABLE_XET = True
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+            return TranscriptProcessor._load_pyannote_pipeline_once(Pipeline, token)
+
+    @staticmethod
+    def _load_pyannote_pipeline_once(Pipeline, token):
         """Load the diarization pipeline with pyannote.audio 3.x or 4.x."""
         errors = []
         for name in ("pyannote/speaker-diarization-3.1", "pyannote/speaker-diarization-community-1"):

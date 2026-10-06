@@ -9,9 +9,9 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=sections-20261007">
-    <link rel="stylesheet" href="/static/compact-layout.css?v=sections-20261007">
-    <link rel="stylesheet" href="/static/theme.css?v=sections-20261007">
+    <link rel="stylesheet" href="/static/styles.css?v=panes-20261008">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=panes-20261008">
+    <link rel="stylesheet" href="/static/theme.css?v=panes-20261008">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -77,7 +77,8 @@
         <div class="main-content">
             <!-- Left column: Video player and timeline -->
             <div class="video-container">
-                <div class="player-column">
+                <div class="player-column" data-pane="player">
+                <button class="pane-restore" type="button" data-pane="player" title="Show the video again"><i class="fas fa-window-maximize"></i><span>Video</span></button>
                 <div class="video-wrapper">
                     <video id="videoPlayer" preload="auto" controls crossorigin="anonymous" style="cursor: pointer;">
                         Your browser does not support the video tag.
@@ -113,6 +114,7 @@
                         </label>
                         <label for="sceneToggle">Slide marks</label>
                     </div>
+                    <button class="pane-minimize" type="button" data-pane="player" title="Minimize the video" aria-label="Minimize the video"><i class="fas fa-window-minimize"></i></button>
                 </div>
                 
                 <div id="videoProgress" class="video-progress-container">
@@ -122,15 +124,24 @@
                 </div>
                 </div>
                 <div class="layout-splitter" id="timelineSplitter" role="separator" aria-orientation="vertical" aria-label="Resize visual timeline" title="Drag to resize. Double-click to reset." tabindex="0"></div>
-                <div class="timeline-container">
+                <div class="timeline-container" data-pane="timeline">
+                    <button class="pane-restore" type="button" data-pane="timeline" title="Show the visual timeline again"><i class="fas fa-window-maximize"></i><span>Visual timeline</span></button>
                     <div class="timeline-header">
                         <h3><i class="fas fa-film"></i> Visual Timeline</h3>
+                        <button class="pane-minimize" type="button" data-pane="timeline" title="Minimize the visual timeline" aria-label="Minimize the visual timeline"><i class="fas fa-window-minimize"></i></button>
                         <div class="toggle-container timeline-sections-toggle" id="timelineSectionsControl" hidden title="Show the sections inside each chapter">
                             <label class="toggle-switch">
                                 <input type="checkbox" id="timelineSectionsToggle" checked>
                                 <span class="toggle-slider"></span>
                             </label>
                             <label for="timelineSectionsToggle">Sections</label>
+                        </div>
+                        <div class="toggle-container timeline-sections-toggle" id="timelineSlidesControl" hidden title="Show the slide changes inside each chapter and section">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="timelineSlidesToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <label for="timelineSlidesToggle">Slides</label>
                         </div>
                     </div>
                     <div class="timeline" id="thumbnailTimeline">
@@ -141,7 +152,8 @@
             
             <div class="layout-splitter" id="panelSplitter" role="separator" aria-orientation="vertical" aria-label="Resize side panel" title="Drag to resize. Double-click to reset." tabindex="0"></div>
             <!-- Right column: Tabs for transcript, chapters, and scenes -->
-            <div class="content-tabs">
+            <div class="content-tabs" data-pane="panel">
+                <button class="pane-restore" type="button" data-pane="panel" title="Show the side panel again"><i class="fas fa-window-maximize"></i><span>Side panel</span></button>
                 <div class="tabs-header">
                     <button class="tab-btn active" data-tab="transcript">
                         <i class="fas fa-closed-captioning"></i> Transcript
@@ -155,6 +167,7 @@
                     <button class="tab-btn" data-tab="slides">
                         <i class="fas fa-file-alt"></i> Slide Content
                     </button>
+                    <button class="pane-minimize" type="button" data-pane="panel" title="Minimize the side panel" aria-label="Minimize the side panel"><i class="fas fa-window-minimize"></i></button>
                 </div>
                 
                 <div class="tab-content">
@@ -226,7 +239,8 @@
                                 <label for="transcriptPrompt">Context or spelling prompt (optional)</label>
                                 <textarea id="transcriptPrompt" rows="2" maxlength="2000" placeholder="Example: SAP lecture about S/4HANA and Fiori; lecturer Dr. MÃ¼ller. Preserve acronyms and product names."></textarea>
                                 <small>Helps the model recognize names, technical terms and the lecture's language. Local Whisper and Groq use roughly the last 800 characters.</small>
-                                <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers</label>
+                                <label><input type="checkbox" id="transcriptDiarization"> Identify different speakers when regenerating</label>
+                                <button id="identifySpeakersBtn" class="btn btn-secondary" type="button" title="Keeps the current transcript text and only adds speaker labels (also to its translations)">Identify speakers in the current transcript</button>
                                 <small id="speakerDiarizationHelp">
                                     <strong id="speakerDiarizationTokenStatus"></strong>
                                     <span id="speakerDiarizationSetup">
@@ -345,7 +359,7 @@
                                 </select>
                                 <label title="Each clip starts 1 second early so the first words of a sentence are not cut off"><input type="checkbox" id="exportClipOverlap" checked> Start each clip 1 second early (avoids cut-off words)</label>
                                 <label title="Adds the text read from each slide (OCR) as a bullet list under its chapter. Run text extraction on the slides first."><input type="checkbox" id="exportSlideText"> Add slide content as bullet lists under each chapter (needs slide text extraction)</label>
-                                <label for="exportTitle">Title inside the Word/PDF files:</label>
+                                <label for="exportTitle">Title inside exported summary files (HTML, SCORM, Word, PDF):</label>
                                 <input type="text" id="exportTitle" placeholder="Suggested title will be used if left blank">
                                 <small id="exportTitleSuggestion">Suggestion: determined from the video and chapter topics</small>
                                 <label for="exportFilename">Export filename:</label>
@@ -618,9 +632,9 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/popup-placement.js?v=sections-20261007"></script>
-    <script src="/static/js/layout-resize.js?v=sections-20261007"></script>
-    <script type="module" src="/static/js/index.js?v=sections-20261007"></script>
+    <script src="/static/js/popup-placement.js?v=panes-20261008"></script>
+    <script src="/static/js/layout-resize.js?v=panes-20261008"></script>
+    <script type="module" src="/static/js/index.js?v=panes-20261008"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

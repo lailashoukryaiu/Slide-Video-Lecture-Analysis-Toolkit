@@ -728,6 +728,7 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
         bool(options.get("force", False)),
         str(options.get("model") or "") or None,
         str(options.get("prompt") or "").strip() or None,
+        speakers_only=bool(options.get("speakers_only", False)),
     )
 
 @app.get("/whisper_transcript_status/{video_id}")
@@ -1045,8 +1046,32 @@ async def generate_summary(request: Request):
 async def get_summary(video_id: str):
     return await summary_processor.get_summary(video_id)
 
+def ascii_filename(text: str) -> str:
+    import unicodedata
+    text = str(text or "")
+    for source, target in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("Ä", "Ae"), ("Ö", "Oe"), ("Ü", "Ue"), ("ß", "ss")):
+        text = text.replace(source, target)
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("._-")[:80]
+
+
+@app.post("/export_suggestions/{video_id}")
+async def post_export_suggestions(video_id: str, request: Request):
+    """Suggest a short title for the chapters currently shown (in their language)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    chapters = data.get("chapters") if isinstance(data, dict) else None
+    return await build_export_suggestions(video_id, chapters if isinstance(chapters, list) else None)
+
+
 @app.get("/export_suggestions/{video_id}")
 async def get_export_suggestions(video_id: str):
+    return await build_export_suggestions(video_id)
+
+
+async def build_export_suggestions(video_id: str, chapters=None):
     metadata_path = VIDEO_DIR / "metadata.json"
     source_title = video_id
     if metadata_path.is_file():
@@ -1060,9 +1085,21 @@ async def get_export_suggestions(video_id: str):
 
     title_suggestion = source_title
     summary_path = SUMMARIES_DIR / f"{video_id}.json"
-    if summary_path.is_file():
+    if chapters is None and summary_path.is_file():
         try:
             chapters = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            chapters = None
+    ai_suggestion = None
+    if chapters:
+        try:
+            ai_suggestion = await summary_processor.suggest_title(chapters, video_id, source_title)
+        except Exception as error:
+            print(f"AI title suggestion failed: {error}")
+    if ai_suggestion:
+        title_suggestion = ai_suggestion["title"]
+    elif chapters:
+        try:
             title_suggestion = next(
                 (
                     str(chapter.get("title", "")).strip()
@@ -1073,12 +1110,12 @@ async def get_export_suggestions(video_id: str):
                 ),
                 source_title,
             )
-        except (OSError, json.JSONDecodeError, TypeError):
+        except (TypeError, AttributeError):
             pass
 
-    filename_suggestion = re.sub(
-        r"[^A-Za-z0-9._-]+", "_", title_suggestion
-    ).strip("._-") or f"video_{video_id}"
+    filename_suggestion = (
+        (ai_suggestion or {}).get("filename") or ascii_filename(title_suggestion) or f"video_{video_id}"
+    )
     return {
         "title_suggestion": title_suggestion,
         "filename_suggestion": filename_suggestion,

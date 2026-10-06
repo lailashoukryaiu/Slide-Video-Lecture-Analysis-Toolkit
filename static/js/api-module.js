@@ -10,7 +10,8 @@ import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { checkSceneDetection, updateScenes, stopDetectionPolling } from './scenes.js';
 import { fetchOcrResults, resetOcrStatus } from './ocr.js';
 
-export async function regenerateTranscript() {
+export async function regenerateTranscript(options = {}) {
+    const speakersOnly = options?.speakersOnly === true;
     const videoId = getActiveVideoId();
     if (!videoId) {
         showError('Load a video before regenerating its transcript.');
@@ -19,14 +20,15 @@ export async function regenerateTranscript() {
     state.currentVideoId = videoId;
     const originalTranscript = state.currentTranscript.map((item) => ({ ...item }));
 
-    const diarization = elements.transcriptDiarization?.checked || false;
+    const diarization = speakersOnly || elements.transcriptDiarization?.checked || false;
     const model = elements.transcriptModel?.value || '';
     if (model) sessionStorage.setItem('transcriptModelSessionV1', model);
     const prompt = elements.transcriptPrompt?.value.trim() || '';
-    const button = elements.regenerateTranscriptBtn;
+    const button = speakersOnly ? document.getElementById('identifySpeakersBtn') : elements.regenerateTranscriptBtn;
+    const idleLabel = button?.textContent;
     if (button) {
         button.disabled = true;
-        button.textContent = 'Regenerating...';
+        button.textContent = speakersOnly ? 'Identifying speakers...' : 'Regenerating...';
     }
     const pollGeneration = ++state.whisperTranscriptPollGeneration;
     const startedAt = Date.now();
@@ -39,7 +41,8 @@ export async function regenerateTranscript() {
                 diarization,
                 model,
                 prompt,
-                force: true
+                force: true,
+                speakers_only: speakersOnly,
             })
         });
         const data = await readJsonResponse(response, 'Transcript regeneration');
@@ -100,7 +103,7 @@ export async function regenerateTranscript() {
     } finally {
         if (button && state.whisperTranscriptPollGeneration === pollGeneration) {
             button.disabled = false;
-            button.textContent = 'Regenerate transcript';
+            button.textContent = idleLabel;
         }
     }
 }

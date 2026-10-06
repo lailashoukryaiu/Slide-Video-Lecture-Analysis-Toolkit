@@ -180,6 +180,40 @@ def sync_existing(video_id):
             )
 
 
+def copy_speakers_to_translations(video_id, segments, speaker_names=None):
+    """Give translated transcripts the speakers of the transcript they were translated from."""
+    names = speaker_names or {}
+    by_start = {}
+    for item in segments:
+        if isinstance(item, dict) and item.get("speaker"):
+            by_start.setdefault(round(float(item.get("start", 0) or 0), 2), item["speaker"])
+    if not by_start:
+        return 0
+    updated = 0
+    for path in TRANSCRIPTS_DIR.glob(f"{video_id}_translated_*.json"):
+        translated = _read_json(path, [])
+        if not isinstance(translated, list) or not translated:
+            continue
+        same_length = len(translated) == len(segments)
+        changed = False
+        for index, item in enumerate(translated):
+            if not isinstance(item, dict):
+                continue
+            speaker = by_start.get(round(float(item.get("start", 0) or 0), 2))
+            if speaker is None and same_length and isinstance(segments[index], dict):
+                speaker = segments[index].get("speaker")
+            if speaker and item.get("speaker") != speaker:
+                item["speaker"] = speaker
+                changed = True
+            if speaker and names.get(speaker) and item.get("speaker_name") != names[speaker]:
+                item["speaker_name"] = names[speaker]
+                changed = True
+        if changed:
+            _write_json(path, translated)
+            updated += 1
+    return updated
+
+
 def list_versions(video_id):
     sync_existing(video_id)
     whisper = _read_json(TRANSCRIPTS_DIR / f"{video_id}_whisper.json", [])

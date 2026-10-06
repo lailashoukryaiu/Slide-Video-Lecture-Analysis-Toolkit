@@ -513,10 +513,11 @@ export function updateChapters(chapters) {
             const sections = renderChapterSections(chapter.sections);
             sections.hidden = true;
             div.classList.add('has-sections');
-            div.prepend(sectionsToggle(div, sections));
+            div.prepend(expandToggle(div, sections, 'sections'));
             chaptersContainer.appendChild(sections);
         }
     });
+    attachChapterSlides();
     
     // Store the chapters in state
     state.videoChapters = chapters;
@@ -530,25 +531,116 @@ export function updateChapters(chapters) {
     updateActiveChapter();
 }
 
-function sectionsToggle(chapterItem, sections) {
+function expandToggle(row, list, noun) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'chapter-expand';
     const setExpanded = (expanded) => {
-        sections.hidden = !expanded;
-        chapterItem.classList.toggle('expanded', expanded);
+        list.hidden = !expanded;
+        row.classList.toggle('expanded', expanded);
         button.setAttribute('aria-expanded', String(expanded));
-        button.title = expanded ? 'Hide sections' : `Show ${sections.children.length} sections`;
+        const count = list.querySelectorAll('.chapter-section, .chapter-slide').length;
+        button.title = expanded ? `Hide ${noun}` : `Show ${count} ${count === 1 ? noun.replace(/s$/, '') : noun}`;
         button.setAttribute('aria-label', button.title);
     };
     setExpanded(false);
     button.addEventListener('click', (event) => {
         event.stopPropagation();
-        setExpanded(sections.hidden);
+        setExpanded(list.hidden);
         activeChapterKey = '';
         updateActiveChapter();
     });
+    button.addEventListener('keydown', (event) => event.stopPropagation());
     return button;
+}
+
+/** Lists the detected slide changes beneath each section (or each chapter without sections). */
+export function attachChapterSlides() {
+    const container = elements.chaptersContainer;
+    if (!container) return;
+    container.querySelectorAll('.chapter-slides, .chapter-slides-wrap').forEach((element) => element.remove());
+    container.querySelectorAll('.has-slides').forEach((row) => {
+        row.classList.remove('has-slides', 'expanded');
+        row.querySelector(':scope > .chapter-expand')?.remove();
+    });
+    const scenes = (state.videoScenes || [])
+        .map((scene, index) => ({ scene, index, time: Number(scene.time_seconds) }))
+        .filter((slide) => Number.isFinite(slide.time));
+    const rows = [];
+    container.querySelectorAll(':scope > .chapter-item').forEach((chapter) => {
+        const list = chapter.nextElementSibling?.classList.contains('chapter-sections') ? chapter.nextElementSibling : null;
+        const sections = list ? [...list.querySelectorAll(':scope > .chapter-section')] : [];
+        if (!sections.length) {
+            rows.push({ row: chapter, start: Number(chapter.dataset.start) });
+            return;
+        }
+        sections.forEach((section, index) => rows.push({
+            row: section,
+            start: index === 0 ? Math.min(Number(chapter.dataset.start), Number(section.dataset.start)) : Number(section.dataset.start),
+        }));
+    });
+    if (!scenes.length || !rows.length) return;
+    rows.sort((a, b) => a.start - b.start);
+    rows.forEach(({ row, start }, rowIndex) => {
+        const end = rowIndex + 1 < rows.length ? rows[rowIndex + 1].start : Infinity;
+        // Slides shown before the first chapter belong to it; a slide counts from half a second early.
+        const inside = scenes.filter(({ time }) => (rowIndex === 0 || time >= start - 0.5) && time < end - 0.5);
+        if (!inside.length) return;
+        const list = document.createElement('ol');
+        list.className = 'chapter-slides';
+        inside.forEach(({ scene, index, time }) => list.appendChild(slideRow(scene, index, time)));
+        row.classList.add('has-slides');
+        row.prepend(expandToggle(row, list, 'slides'));
+        if (row.tagName === 'LI') {
+            const wrap = document.createElement('li');
+            wrap.className = 'chapter-slides-wrap';
+            wrap.appendChild(list);
+            row.after(wrap);
+        } else {
+            row.after(list);
+        }
+    });
+    activeChapterKey = '';
+    updateActiveChapter();
+}
+
+function slideRow(scene, index, time) {
+    const item = document.createElement('li');
+    item.className = 'chapter-slide';
+    item.tabIndex = 0;
+    item.dataset.start = time;
+    if (scene.thumbnail) {
+        const image = document.createElement('img');
+        image.src = scene.thumbnail;
+        image.alt = '';
+        image.loading = 'lazy';
+        item.appendChild(image);
+    }
+    const timestamp = document.createElement('span');
+    timestamp.className = 'chapter-timestamp';
+    timestamp.textContent = scene.timestamp || formatClock(time);
+    const title = document.createElement('span');
+    title.textContent = `Slide ${index + 1}`;
+    item.append(timestamp, title);
+    const seek = (event) => {
+        event.stopPropagation();
+        elements.videoPlayer.currentTime = time;
+    };
+    item.addEventListener('click', seek);
+    item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            seek(event);
+        }
+    });
+    return item;
+}
+
+function formatClock(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(total / 3600);
+    const clock = `${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    return hours ? `${hours}:${clock}` : clock;
 }
 
 let activeChapterKey = '';
@@ -564,14 +656,18 @@ export function updateActiveChapter() {
     const chapter = latest([...container.querySelectorAll('.chapter-item')]);
     const sectionList = chapter?.nextElementSibling?.classList.contains('chapter-sections') ? chapter.nextElementSibling : null;
     const section = sectionList ? latest([...sectionList.querySelectorAll('.chapter-section')]) : null;
-    const key = `${chapter?.dataset.start ?? ''}|${section?.dataset.start ?? ''}|${sectionList?.hidden ?? ''}`;
+    const slide = latest([...container.querySelectorAll('.chapter-slide')]);
+    const slideList = slide?.closest('.chapter-slides');
+    const slideVisible = Boolean(slide && slideList && !slideList.hidden && !slideList.closest('[hidden]'));
+    const key = `${chapter?.dataset.start ?? ''}|${section?.dataset.start ?? ''}|${sectionList?.hidden ?? ''}|${slide?.dataset.start ?? ''}|${slideVisible}`;
     if (key === activeChapterKey) return;
     activeChapterKey = key;
-    container.querySelectorAll('.chapter-item.active, .chapter-section.active')
+    container.querySelectorAll('.chapter-item.active, .chapter-section.active, .chapter-slide.active')
         .forEach((item) => item.classList.remove('active'));
     chapter?.classList.add('active');
     section?.classList.add('active');
-    const visible = section && !sectionList.hidden ? section : chapter;
+    slide?.classList.add('active');
+    const visible = slideVisible ? slide : section && !sectionList.hidden ? section : chapter;
     if (visible) scrollWithinContainer(scrollParent(container), visible);
 }
 

@@ -403,6 +403,67 @@ class SummaryProcessor:
                 "error": str(e)
             })
 
+    async def suggest_title(self, chapters, video_id="", source_title=""):
+        """Return {"title", "filename"} summarising the video in the chapters' language, or None."""
+        lines = []
+        for index, chapter in enumerate(chapters or []):
+            if not isinstance(chapter, dict) or not str(chapter.get("title") or "").strip():
+                continue
+            summary = " ".join(str(chapter.get("summary") or "").split())[:220]
+            lines.append(f"{index + 1}. {str(chapter['title']).strip()}" + (f" - {summary}" if summary else ""))
+        if not lines:
+            return None
+        outline = "\n".join(lines)[:7000]
+        import hashlib
+        key = hashlib.sha1(f"{source_title}\n{outline}".encode("utf-8")).hexdigest()[:16]
+        cache_path = SUMMARIES_DIR / f"{video_id}_titles.json" if video_id else None
+        cache = {}
+        if cache_path and cache_path.is_file():
+            try:
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                cache = {}
+            if isinstance(cache, dict) and isinstance(cache.get(key), dict):
+                return cache[key]
+        prompt = (
+            "Write a short title for this lecture video, suitable as the title of a course outline. "
+            "It must capture the topic of the whole video, not one chapter. "
+            "Use 3 to 8 words, in the same language as the chapter titles below. "
+            "No quotes, no trailing punctuation, and no words such as 'Lecture', 'Video', "
+            "'Recording', 'Overview' or 'Introduction to' unless essential.\n"
+            "Also give a file name: the title in ASCII letters and digits only "
+            "(transliterate non-Latin script, replace umlauts such as ae/oe/ue), words joined by underscores, "
+            "at most 60 characters.\n"
+            'Return JSON: {"title": "...", "filename": "..."}\n\n'
+            f"Original file name (may be uninformative): {source_title}\n"
+            f"Chapters:\n{outline}"
+        )
+        for provider, model in self._provider_chain(prefer_groq=True):
+            try:
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(self._complete, provider, model, prompt, 0.3, True, 800, True),
+                    timeout=30,
+                )
+                data = json.loads(re.sub(r"^```(?:json)?|```$", "", (text or "").strip()).strip())
+                title = " ".join(str(data.get("title") or "").split()).strip(" .:;\"'")
+                filename = re.sub(r"[^A-Za-z0-9_-]+", "_", str(data.get("filename") or "")).strip("_-")[:60]
+                if not title:
+                    continue
+                result = {"title": title[:120], "filename": filename}
+                if cache_path:
+                    cache = cache if isinstance(cache, dict) else {}
+                    cache[key] = result
+                    try:
+                        cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+                    except OSError:
+                        pass
+                return result
+            except Exception as error:
+                if self._is_quota_error(error):
+                    self._mark_quota_exhausted(provider, model)
+                print(f"Title suggestion with {provider} {model} failed: {error}")
+        return None
+
     @staticmethod
     def _parse_chapter_list(response_text):
         try:

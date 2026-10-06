@@ -59,8 +59,11 @@ export function syncTimelineGrouping() {
     const sectionsControl = document.getElementById('timelineSectionsControl');
     if (sectionsControl) sectionsControl.hidden = !hasSections || mode === 'slides';
     const showSections = hasSections && Boolean(sectionsToggle?.checked);
+    const slidesControl = document.getElementById('timelineSlidesControl');
+    if (slidesControl) slidesControl.hidden = mode !== 'topic' || !chapters.length || !scenes.length;
+    const nestSlides = mode === 'topic' && Boolean(document.getElementById('timelineSlidesToggle')?.checked);
     const signature = JSON.stringify([
-        mode, scenes.length, showSections,
+        mode, scenes.length, showSections, nestSlides,
         chapters.map((c) => [c.start, c.title, c.sections.map((s) => [s.start, s.title])]),
     ]);
     if (timeline.dataset.groupingSignature === signature) return;
@@ -68,8 +71,16 @@ export function syncTimelineGrouping() {
     timeline.querySelectorAll('.chapter-card').forEach((card) => card.remove());
     const sceneItems = [...timeline.querySelectorAll('.timeline-item:not(.chapter-card)')];
     const showChapters = mode !== 'slides' && chapters.length > 0 && sceneItems.length > 0;
-    const hideSlides = mode === 'topic' && showChapters;
-    sceneItems.forEach((item) => item.classList.toggle('grouping-hidden', hideSlides));
+    const hideSlides = mode === 'topic' && showChapters && !nestSlides;
+    sceneItems.forEach((item) => {
+        item.classList.toggle('grouping-hidden', hideSlides);
+        // Slide changes listed beneath their chapter (and section) cards.
+        const time = Number(item.querySelector('.timeline-thumbnail')?.dataset.time);
+        const chapter = chapters.filter((candidate) => candidate.start <= time + 0.01).at(-1);
+        item.classList.toggle('nested-slide', showChapters && nestSlides);
+        item.classList.toggle('under-section', showChapters && nestSlides && showSections
+            && Boolean(chapter?.sections.some((section) => section.start <= time + 0.01)));
+    });
     if (!showChapters) return;
     const sceneTimes = sceneItems.map((item) => Number(item.querySelector('.timeline-thumbnail')?.dataset.time));
     const screenshotAt = (start) => {
