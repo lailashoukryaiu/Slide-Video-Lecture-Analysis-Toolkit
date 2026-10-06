@@ -1269,6 +1269,10 @@ export async function detectScenes() {
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Detecting Slides...';
     state.sceneDetectionStartedAt = Date.now();
+    // New detection replaces the slides, so OCR controls for the old slides no longer apply.
+    document.getElementById('startOcrBtn')?.remove();
+    document.getElementById('processSuryaBtn')?.remove();
+    resetOcrStatus();
     elements.scenesContainer.innerHTML = '<p>Detecting scene changes...</p><p class="scene-progress-status"><i class="fas fa-spinner fa-spin"></i> Analysis is running...</p>';
     try {
         const response = await fetch(`/detect_scenes/${videoId}`, {

@@ -677,7 +677,11 @@ class OCRProcessor:
         """Queue OCR work for completed scene detections."""
         scene_path = str(SCENES_DIR / f"{video_id}.json")
         if not os.path.exists(scene_path):
-            return JSONResponse({"success": False, "error": "Scene data not found"})
+            return JSONResponse({
+                "success": False,
+                "error": "No detected slides yet. Slide detection is still running or has not been run; "
+                         "start OCR when the slides appear.",
+            })
         use_tesseract = self.ocr_preference in ("tesseract", "both")
         use_surya = self.ocr_preference in ("surya", "both") and SURYA_AVAILABLE
         if use_tesseract and not tesseract_available():
