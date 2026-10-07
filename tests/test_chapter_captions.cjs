@@ -2,6 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
+const template = fs.readFileSync(path.join(__dirname, '..', 'templates', 'index.html'), 'utf8');
+for (const id of ['timelineSectionsToggle', 'timelineSlidesToggle']) {
+    const input = template.match(new RegExp(`<input\\b[^>]*\\bid="${id}"[^>]*>`));
+    assert(input, `${id} exists`);
+    assert(!/\bchecked\b/.test(input[0]), `${id} is off by default`);
+}
 const read = (name) => fs.readFileSync(path.join(__dirname, '..', 'static', 'js', name), 'utf8')
     .replace(/^import .*;\r?$/gm, '').replace(/^export /gm, '');
 const caption = {textContent: ''};

@@ -9,9 +9,9 @@
     <title>SlideDec - YouTube Video Analysis Tool</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=panes-20261008">
-    <link rel="stylesheet" href="/static/compact-layout.css?v=panes-20261008">
-    <link rel="stylesheet" href="/static/theme.css?v=panes-20261008">
+    <link rel="stylesheet" href="/static/styles.css?v=chaptersonly-20261008">
+    <link rel="stylesheet" href="/static/compact-layout.css?v=chaptersonly-20261008">
+    <link rel="stylesheet" href="/static/theme.css?v=chaptersonly-20261008">
     <style>
         /* Styles for fuzzy search highlighting */
         .search-highlight {
@@ -131,7 +131,7 @@
                         <button class="pane-minimize" type="button" data-pane="timeline" title="Minimize the visual timeline" aria-label="Minimize the visual timeline"><i class="fas fa-window-minimize"></i></button>
                         <div class="toggle-container timeline-sections-toggle" id="timelineSectionsControl" hidden title="Show the sections inside each chapter">
                             <label class="toggle-switch">
-                                <input type="checkbox" id="timelineSectionsToggle" checked>
+                                <input type="checkbox" id="timelineSectionsToggle">
                                 <span class="toggle-slider"></span>
                             </label>
                             <label for="timelineSectionsToggle">Sections</label>
@@ -632,9 +632,9 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/popup-placement.js?v=panes-20261008"></script>
-    <script src="/static/js/layout-resize.js?v=panes-20261008"></script>
-    <script type="module" src="/static/js/index.js?v=panes-20261008"></script>
+    <script src="/static/js/popup-placement.js?v=chaptersonly-20261008"></script>
+    <script src="/static/js/layout-resize.js?v=chaptersonly-20261008"></script>
+    <script type="module" src="/static/js/index.js?v=chaptersonly-20261008"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {

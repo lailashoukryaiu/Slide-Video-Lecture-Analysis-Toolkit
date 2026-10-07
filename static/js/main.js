@@ -341,7 +341,7 @@ function initApp() {
     };
     bind(navigationGrouping, 'change', (event) => setGrouping(event.target.value));
     bind(elements.chapterGrouping, 'change', (event) => setGrouping(event.target.value));
-    [['timelineSectionsToggle', 'timelineSectionsV1'], ['timelineSlidesToggle', 'timelineSlidesV1']].forEach(([id, key]) => {
+    [['timelineSectionsToggle', 'timelineSectionsV2'], ['timelineSlidesToggle', 'timelineSlidesV2']].forEach(([id, key]) => {
         const toggle = document.getElementById(id);
         if (!toggle) return;
         try {
