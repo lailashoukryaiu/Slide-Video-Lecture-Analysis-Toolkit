@@ -357,6 +357,7 @@ function initApp() {
     document.addEventListener('scenesLoaded', updateChapterCaptions);
     document.addEventListener('scenesLoaded', () => attachChapterSlides());
     document.addEventListener('slidesUpdated', () => attachChapterSlides());
+    bind(document.getElementById('chapterSlidesToggle'), 'change', attachChapterSlides);
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });

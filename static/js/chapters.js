@@ -566,6 +566,7 @@ export function attachChapterSlides() {
         row.classList.remove('has-slides', 'expanded');
         row.querySelector(':scope > .chapter-expand')?.remove();
     });
+    if (!document.getElementById('chapterSlidesToggle')?.checked) return;
     const scenes = (state.videoScenes || [])
         .map((scene, index) => ({ scene, index, time: Number(scene.time_seconds) }))
         .filter((slide) => Number.isFinite(slide.time));
