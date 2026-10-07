@@ -107,7 +107,6 @@ class TranscriptProcessor:
             os.getenv("WHISPER_MANUAL_RETRY_STALE_SECONDS", "90")
         )
         self.heartbeat_seconds = int(os.getenv("WHISPER_HEARTBEAT_SECONDS", "15"))
-        self.restore_interrupted_speaker_jobs()
 
     @staticmethod
     def _speaker_backup_path(video_id):
@@ -713,7 +712,12 @@ class TranscriptProcessor:
 
             progress_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
             if os.path.exists(progress_path):
-                progress_age = time.time() - os.path.getmtime(progress_path)
+                try:
+                    with open(progress_path, 'r') as f:
+                        progress = float(f.read().strip() or "0")
+                        progress_age = time.time() - os.fstat(f.fileno()).st_mtime
+                except FileNotFoundError:
+                    return await self._get_whisper_status(video_id)
                 phase = self._read_whisper_phase(video_id)
                 stale_seconds = (
                     max(self.progress_stale_seconds, 3600)
@@ -725,7 +729,7 @@ class TranscriptProcessor:
                         "Transcript processing stopped responding. "
                         "The previous job was marked stale and can be retried."
                     )
-                    os.remove(progress_path)
+                    Path(progress_path).unlink(missing_ok=True)
                     self._remove_whisper_phase(video_id)
                     with open(str(TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt"), 'w') as f:
                         f.write(stale_message)
@@ -734,8 +738,6 @@ class TranscriptProcessor:
                         "status": "error",
                         "error": stale_message
                     })
-                with open(progress_path, 'r') as f:
-                    progress = float(f.read())
                 return JSONResponse({
                     "success": True,
                     "status": "in_progress",
@@ -827,7 +829,9 @@ class TranscriptProcessor:
         progress_path = TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt"
         while not stop_event.wait(self.heartbeat_seconds):
             try:
-                progress_path.touch(exist_ok=True)
+                os.utime(progress_path, None)
+            except FileNotFoundError:
+                return
             except OSError:
                 return
 

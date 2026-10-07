@@ -47,11 +47,57 @@ class TranscriptProcessorReuseTests(unittest.TestCase):
                 (working_dir / "vid_whisper_progress.txt").write_text("100", encoding="utf-8")
                 (working_dir / "kept_whisper.json").write_text("[]", encoding="utf-8")
                 (working_dir / "kept_whisper_before_speakers.json").write_text("[]", encoding="utf-8")
-                TranscriptProcessor()
+                TranscriptProcessor().restore_interrupted_speaker_jobs()
                 self.assertEqual(json.loads((working_dir / "vid_whisper.json").read_text(encoding="utf-8")), segments)
                 self.assertFalse((working_dir / "vid_whisper_progress.txt").exists())
                 self.assertFalse((working_dir / "vid_whisper_before_speakers.json").exists())
                 self.assertFalse((working_dir / "kept_whisper_before_speakers.json").exists())
+
+    def test_constructing_worker_preserves_active_speaker_job(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)):
+            working_dir = Path(directory)
+            backup = working_dir / "vid_whisper_before_speakers.json"
+            progress = working_dir / "vid_whisper_progress.txt"
+            backup.write_text('[{"text": "Hallo"}]', encoding="utf-8")
+            progress.write_text("100", encoding="utf-8")
+            with mock.patch.object(TranscriptProcessor, "_process_whisper_transcript_sync") as process:
+                transcript_module._run_whisper_worker(
+                    "vid", "video.mp4", str(working_dir / "vid_whisper.json"),
+                    True, [{"text": "Hallo"}],
+                )
+                process.assert_called_once()
+            self.assertTrue(backup.exists())
+            self.assertEqual(progress.read_text(), "100")
+            self.assertFalse((working_dir / "vid_whisper.json").exists())
+
+    def test_heartbeat_does_not_recreate_completed_job_marker(self):
+        class StopAfterOneHeartbeat:
+            def wait(self, timeout):
+                return False
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)):
+            TranscriptProcessor()._heartbeat_whisper_job("video", StopAfterOneHeartbeat())
+            self.assertFalse((Path(directory) / "video_whisper_progress.txt").exists())
+
+    def test_status_handles_progress_removed_after_existence_check(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)):
+            progress = str(Path(directory) / "video_whisper_progress.txt")
+            original_exists = os.path.exists
+            checks = []
+
+            def exists(path):
+                if str(path) == progress:
+                    checks.append(path)
+                    return len(checks) == 1
+                return original_exists(path)
+
+            with mock.patch.object(transcript_module.os.path, "exists", side_effect=exists):
+                response = asyncio.run(TranscriptProcessor().get_whisper_status("video"))
+            self.assertEqual(response.content["status"], "queued")
+            self.assertTrue(response.content["success"])
 
     def test_heartbeat_refreshes_progress_marker(self):
         class StopAfterOneHeartbeat:

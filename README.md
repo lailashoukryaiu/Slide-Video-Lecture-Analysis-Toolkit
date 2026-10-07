@@ -22,6 +22,9 @@
 - **Visual Timeline**: Thumbnails follow the Navigate by setting (content chapters, slide changes, or both); the minimum slide duration is a percentage of the video length (2 s floor)
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
+- **Speaker Identification**: Add speakers to the current transcript without
+  re-transcribing. Interrupted speaker jobs restore the original transcript
+  on server startup; worker initialization leaves active jobs untouched.
 - **Gemini Transcript Formatting**: Structured JSON output with one visible retry
   per audio part if the response is unreadable; malformed output is not saved
   as a partial transcript.

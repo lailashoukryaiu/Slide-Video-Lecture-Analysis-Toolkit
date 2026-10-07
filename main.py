@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any, Union
 from pathlib import Path
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 import glob
 import subprocess
 import tempfile
@@ -54,7 +55,13 @@ from processors import transcript_versions
 load_dotenv()
 
 # Initialize FastAPI app
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app):
+    transcript_processor.restore_interrupted_speaker_jobs()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 ensure_app_directories()
 
