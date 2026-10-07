@@ -33,6 +33,14 @@ export function updateChapterCaptions() {
         title.title = text;
         if (title.textContent !== shown) title.textContent = shown;
     });
+    document.querySelectorAll('.scene-item .scene-label').forEach((label) => {
+        const time = Number(label.closest('.scene-item').dataset.time);
+        const title = activePart(parts, time)?.title || '';
+        const name = title.replace(/^\d+:\s*/, '').replace(/^\d+$/, '');
+        const text = `Scene ${label.dataset.number}` + (name ? ` - ${name}` : '');
+        label.title = name;
+        if (label.textContent !== text) label.textContent = text;
+    });
 }
 
 /**

@@ -280,10 +280,12 @@ export function updateScenes(scenes, videoPlayer) {
     scenes.forEach((scene, index) => {
         const div = document.createElement('div');
         div.className = 'scene-item';
+        div.dataset.time = scene.time_seconds;
         div.innerHTML = `
             <span class="scene-timestamp">${scene.timestamp}</span>
-            <span>Scene ${index + 1}</span>
+            <span class="scene-label">Scene ${index + 1}</span>
         `;
+        div.querySelector('.scene-label').dataset.number = index + 1;
         div.appendChild(createSlideDownloadButton([index], `Download slide ${index + 1}`));
         div.onclick = () => {
             videoPlayer.currentTime = scene.time_seconds;

@@ -11,6 +11,10 @@ for (const id of ['timelineSectionsToggle', 'timelineSlidesToggle']) {
 const read = (name) => fs.readFileSync(path.join(__dirname, '..', 'static', 'js', name), 'utf8')
     .replace(/^import .*;\r?$/gm, '').replace(/^export /gm, '');
 const caption = {textContent: ''};
+const sceneLabel = {
+    dataset: {number: '2'}, textContent: '',
+    closest() { return {dataset: {time: '25'}}; },
+};
 const items = [5, 25].map((time) => ({
     image: {dataset: {time}}, caption: null,
     querySelector(selector) { return selector === '.timeline-thumbnail' ? this.image : this.caption; },
@@ -26,7 +30,7 @@ const context = vm.createContext({
     state, elements, console,
     document: {
         getElementById: () => caption,
-        querySelectorAll: () => items,
+        querySelectorAll: (selector) => selector === '.scene-item .scene-label' ? [sceneLabel] : items,
         createElement: () => ({textContent: ''}),
     },
 });
@@ -35,6 +39,7 @@ context.updateChapterCaptions();
 assert.equal(caption.textContent, '<Learning>');
 assert.equal(items[0].caption.textContent, 'Introduction');
 assert.equal(items[1].caption.textContent, '<Learning>', 'Timeline titles omit the number already shown in the badge');
+assert.equal(sceneLabel.textContent, 'Scene 2 - <Learning>', 'Scene list reuses the timeline name safely');
 assert.equal(context.navigationParts(state.videoChapters, state.videoScenes).length, 2, 'Default navigation uses content chapters only');
 assert.equal(context.navigationParts(state.videoChapters, state.videoScenes, 'combined').length, 3);
 assert.equal(JSON.stringify(context.navigationParts([], state.videoScenes).map((part) => part.start)), '[0,25]', 'Without chapters, content mode falls back to slides');
@@ -57,4 +62,5 @@ state.videoScenes = [];
 context.updateChapterCaptions();
 assert(caption.textContent.includes('No chapter'));
 assert(items[0].caption.textContent.includes('No chapter'));
+assert.equal(sceneLabel.textContent, 'Scene 2', 'No invented scene name when no titles exist');
 console.log('PASS: screenshot/video titles, grouping boundaries, safe text and reset');
