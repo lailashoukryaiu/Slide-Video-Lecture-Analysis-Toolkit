@@ -38,6 +38,7 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from dotenv import load_dotenv
 from export_jobs import ExportJobStore, export_workspace, cleanup_export_workspace
 from starlette.background import BackgroundTask
+from ffmpeg_tools import media_executable
 
 from project_paths import STATIC_DIR, VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR, THUMBNAILS_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR, EXPORTS_DIR, DETECTIONS_DIR, OCR_RESULTS_DIR, ensure_app_directories
 
@@ -636,6 +637,56 @@ async def download_scene_screenshots(video_id: str):
         filename=f"{video_id}_slide_screenshots.zip"
     )
 
+# Slide downloads are independent of chapter clip/transcript export jobs.
+@app.get("/download_slide/{video_id}/{scene_index}")
+async def download_slide(video_id: str, scene_index: int):
+    from slide_exports import SlideExportError, load_download_slides, slide_image_path, slide_filename
+    try:
+        scenes = load_download_slides(video_id, SCENES_DIR)
+        source = slide_image_path(video_id, scene_index, scenes, FULLSIZE_IMAGES_DIR)
+        filename = slide_filename(scene_index, scenes[scene_index])
+    except SlideExportError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    return FileResponse(source, media_type="image/jpeg", filename=filename)
+
+
+@app.post("/download_slides/{video_id}")
+async def download_selected_slides(video_id: str, request: Request):
+    from slide_exports import SlideExportError, build_slide_archive
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise SlideExportError(400, "Invalid slide selection")
+        archive = await asyncio.to_thread(
+            build_slide_archive, video_id, data.get("indices"), SCENES_DIR, FULLSIZE_IMAGES_DIR,
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise HTTPException(status_code=400, detail="Invalid slide selection") from error
+    except SlideExportError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    return StreamingResponse(
+        iter([archive.getvalue()]), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{video_id}_slides.zip"'},
+    )
+
+
+@app.get("/download_slide_text_docx/{video_id}")
+async def download_slide_text_docx(video_id: str, transcript_language: str = ""):
+    from slide_exports import SlideExportError, build_slide_text_document
+    try:
+        document = await asyncio.to_thread(
+            build_slide_text_document, video_id, SCENES_DIR, FULLSIZE_IMAGES_DIR, SUMMARIES_DIR,
+            transcript_language=transcript_language,
+        )
+    except SlideExportError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    return StreamingResponse(
+        iter([document.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{video_id}_slide_text.docx"'},
+    )
+
+
 @app.get("/ocr_text/{video_id}")
 async def get_ocr_text(video_id: str):
     return await ocr_processor.get_ocr_text(video_id)
@@ -835,13 +886,16 @@ def _move_moov_atom_to_front(video_path: Path) -> None:
     metadata. On a slow connection that routinely exceeded the frontend's
     video-preview timeout even though the download itself had succeeded.
     """
-    if shutil.which("ffmpeg") is None:
+    try:
+        ffmpeg = media_executable("ffmpeg")
+    except RuntimeError as error:
+        print(f"faststart remux skipped: {error}")
         return
     temp_path = video_path.with_name(f"{video_path.stem}.faststart{video_path.suffix}")
     try:
         result = subprocess.run(
             [
-                "ffmpeg", "-y", "-loglevel", "error",
+                ffmpeg, "-y", "-loglevel", "error",
                 "-i", str(video_path),
                 "-c", "copy", "-movflags", "+faststart",
                 str(temp_path),
@@ -1286,7 +1340,7 @@ def prepare_export_image(video_id, video_path, timestamp, scenes, destination, c
     else:
         step(f"Extracting missing export image at {format_chapter_timestamp(timestamp)}")
         subprocess.run([
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            media_executable("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
             "-ss", str(timestamp), "-i", str(video_path),
             "-frames:v", "1", str(destination),
         ], check=True)
@@ -2118,6 +2172,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     ffmpeg_clip.extend(["-t", str(chapter["end"] - chapter["clip_start"])])
                 ffmpeg_clip.extend(["-c:v", "libx264", "-c:a", "aac", str(clip_path)])
                 if export_flags["include_clips"] or export_flags["include_webpage"] or export_flags["include_scorm"]:
+                    ffmpeg_clip[0] = media_executable("ffmpeg")
                     step(f"Part {number}/{len(chapter_data)}: encoding video clip with FFmpeg")
                     if chapter["clip_start"] < chapter["start"]:
                         step(f"Clip starts {chapter['start'] - chapter['clip_start']:.1f}s early to preserve speech at the boundary")
@@ -2232,7 +2287,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                             section_start = max(0.0, subpart["start"] - overlap_seconds)
                             section_clip = temp_dir / f"{base_name}_{subpart_index:02d}.mp4"
                             command = [
-                                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                                media_executable("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                                 "-ss", str(section_start), "-i", str(video_path),
                             ]
                             if section_end is not None:
@@ -2592,7 +2647,7 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
         )
     except HTTPException:
         raise
-    except (ValueError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         raise HTTPException(status_code=500, detail=f"Chapter export failed: {error}")
     except Exception as error:
         error_type = type(error).__name__

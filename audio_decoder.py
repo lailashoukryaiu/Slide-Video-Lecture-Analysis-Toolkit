@@ -1,6 +1,7 @@
 import subprocess
 
 import numpy as np
+from ffmpeg_tools import media_executable
 
 
 def decode_audio_samples(media_path):
@@ -8,7 +9,7 @@ def decode_audio_samples(media_path):
     try:
         result = subprocess.run(
             [
-                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                media_executable("ffmpeg"), "-nostdin", "-hide_banner", "-loglevel", "error",
                 "-i", str(media_path), "-vn", "-ac", "1", "-ar", "16000",
                 "-f", "f32le", "pipe:1",
             ],

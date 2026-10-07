@@ -3,11 +3,11 @@ import json
 import math
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+from ffmpeg_tools import media_executable
 
 CLOUD_TRANSCRIPTION_MODELS = {
     "gemini:gemini-3.8-flash": {
@@ -88,15 +88,15 @@ def describe_cloud_method(model):
 
 
 def _require_ffmpeg():
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        raise RuntimeError("Online transcription requires ffmpeg and ffprobe on the server.")
+    media_executable("ffmpeg")
+    media_executable("ffprobe")
 
 
 def media_duration(path):
     _require_ffmpeg()
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            media_executable("ffprobe"), "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", str(path),
         ],
         capture_output=True, text=True, check=True,
@@ -108,7 +108,7 @@ def extract_audio_chunk(video_path, output_path, start, duration):
     _require_ffmpeg()
     subprocess.run(
         [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            media_executable("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
             "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video_path),
             "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(output_path),
         ],

@@ -40,6 +40,11 @@ const state = {
 let payload;
 const errors = [];
 let downloads = 0;
+let dialogClosures = 0;
+elements.exportOptionsDialog = {
+    open: true,
+    close() { this.open = false; dialogClosures++; },
+};
 let jobFails = false;
 const context = vm.createContext({
     elements, state, console,
@@ -58,6 +63,7 @@ const context = vm.createContext({
             headers: {get: () => 'attachment; filename="lecture.zip"'},
         };
         assert.equal(url, '/export_jobs/lecture');
+        assert.equal(elements.exportOptionsDialog.open, false, 'Dialog closes before the export request');
         payload = JSON.parse(options.body);
         return {
             ok: true, text: async () => JSON.stringify({status_url: '/job-status'}),
@@ -74,6 +80,7 @@ assert.equal(elements.exportWebpage.disabled, false);
 
 (async () => {
     await context.exportChapters();
+    assert.equal(dialogClosures, 1);
     assert.equal(payload.chapter_grouping, 'topic');
     assert.equal(payload.subpart_mode, 'points');
     assert.equal(payload.timestamp_mode, 'subpart');

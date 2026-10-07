@@ -1,4 +1,5 @@
 // ocr.js - OCR functionality
+import { createSlideDownloadButton } from './slide-downloads.js';
 
 import { elements } from './elements.js';
 import { state } from './main.js';
@@ -514,6 +515,12 @@ export function updateSlideContentDisplay(pendingOcrCount = null) {
             <span class="ocr-scene-timestamp">${timestamp}</span>
             <span>Scene ${parseInt(sceneIndex) + 1} (${sceneResults.length} text elements)</span>
         `;
+        const downloadIndex = Number(sceneIndex);
+        if (Number.isInteger(downloadIndex) && downloadIndex >= 0
+            && downloadIndex < (state.videoScenes || []).length) {
+            sceneHeader.appendChild(createSlideDownloadButton([downloadIndex],
+                `Download slide ${downloadIndex + 1}`));
+        }
         sceneSection.appendChild(sceneHeader);
         
         // Group results by OCR class

@@ -31,6 +31,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.units import inch
 from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 from export_jobs import export_workspace
+from ffmpeg_tools import media_executable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,7 @@ class ExportDocumentTests(unittest.TestCase):
         self.directory.mkdir()
         self.addCleanup(shutil.rmtree, self.directory)
         self.functions = load_export_functions()
+        self.functions["media_executable"] = lambda name: name
         for name in ("EXPORTS_DIR", "TRANSCRIPTS_DIR", "SUMMARIES_DIR", "SCENES_DIR", "VIDEO_DIR", "FULLSIZE_IMAGES_DIR"):
             directory = self.directory / name
             directory.mkdir()
@@ -125,6 +127,14 @@ class ExportDocumentTests(unittest.TestCase):
                    and (part["end"] is None or item["start"] < part["end"])] for part in chapters]
         self.assertEqual(" ".join(text for chunk in chunks for text in chunk),
                          " ".join(item["text"] for item in self.transcript))
+
+    def test_missing_ffmpeg_clip_export_reports_installation_guidance(self):
+        def unavailable(name):
+            raise RuntimeError("Install FFmpeg and restart the server")
+
+        self.functions["media_executable"] = unavailable
+        with self.assertRaisesRegex(HTTPException, "Install FFmpeg and restart"):
+            self.run_export(include_webpage=True)
 
     def test_whisper_unpunctuated_phrases_join_until_pause_or_speaker_turn(self):
         phrases = [

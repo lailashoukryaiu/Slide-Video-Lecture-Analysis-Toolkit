@@ -8,6 +8,11 @@ from audio_decoder import decode_audio_samples
 
 
 class AudioDecoderTests(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch("audio_decoder.media_executable", return_value="ffmpeg")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_decodes_writable_mono_samples(self):
         samples = np.array([-0.5, 0, 0.5], dtype="<f4")
         with mock.patch("audio_decoder.subprocess.run") as run:

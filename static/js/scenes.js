@@ -6,6 +6,7 @@ import { updateTimelineHighlight, updateChapterCaptions } from './video.js';
 import { fetchOcrResults } from './ocr.js';
 import { showError } from './ui.js';
 import { saveBlobToUserLocation } from './utils.js';
+import { createSlideDownloadButton, setupSlideTextDownload } from './slide-downloads.js';
 
 // Add state variable for label visibility
 let labelsVisible = true;
@@ -124,7 +125,8 @@ export async function checkSceneDetection(videoId) {
                     `;
                     elements.thumbnailTimeline.innerHTML = '<p>No scene images were generated because no changes crossed the selected threshold.</p>';
                 } else if (data.scenes.length === 1 && data.scenes[0].time_seconds === 0) {
-                    elements.scenesContainer.innerHTML = '<p>No cuts detected; the video is being treated as one scene.</p>';
+                    elements.scenesContainer.insertAdjacentHTML('afterbegin',
+                        '<p>No cuts detected; the video is being treated as one slide.</p>');
                 }
                 if (elements.downloadScreenshotsBtn) {
                     elements.downloadScreenshotsBtn.disabled = data.scenes.length === 0;
@@ -221,6 +223,7 @@ export function updateScenes(scenes, videoPlayer) {
     clearSceneCache();
     
     state.videoScenes = scenes;
+    setupSlideTextDownload(scenes.length);
     const pdfButton = document.getElementById('downloadSlidesPdfBtn');
     if (pdfButton) pdfButton.disabled = scenes.length === 0;
     const scenesContainer = elements.scenesContainer;
@@ -281,6 +284,7 @@ export function updateScenes(scenes, videoPlayer) {
             <span class="scene-timestamp">${scene.timestamp}</span>
             <span>Scene ${index + 1}</span>
         `;
+        div.appendChild(createSlideDownloadButton([index], `Download slide ${index + 1}`));
         div.onclick = () => {
             videoPlayer.currentTime = scene.time_seconds;
         };
@@ -335,6 +339,7 @@ export function updateScenes(scenes, videoPlayer) {
             
             timelineItem.appendChild(img);
             timelineItem.appendChild(timestamp);
+            timelineItem.appendChild(createSlideDownloadButton([index], `Download slide ${index + 1}`));
             
             // Set click handler for seeking
             timelineItem.onclick = () => {
@@ -454,6 +459,13 @@ export function showDetectionOverlay(scene) {
     img.className = 'detection-image';
     img.src = scene.fullsize;
     imageContainer.appendChild(img);
+    const sceneIndex = (state.videoScenes || []).indexOf(scene);
+    const downloadIndex = sceneIndex >= 0 ? sceneIndex : scene.index;
+    if (Number.isInteger(downloadIndex) && downloadIndex >= 0
+        && downloadIndex < (state.videoScenes || []).length) {
+        imageContainer.appendChild(createSlideDownloadButton([downloadIndex],
+            `Download slide ${downloadIndex + 1}`));
+    }
     
     // Check if we have YOLO detections
     const hasYoloDetections = scene.yolo_detections && scene.yolo_detections.success;

@@ -6,6 +6,7 @@ import { showError, showErrorWithActions, showNotification } from './ui.js';
 import { saveBlobToUserLocation } from './utils.js';
 import { conciseTitle } from './chapter-navigation.js';
 import { scrollWithinContainer } from './scroll-utils.js';
+import { createSlideDownloadButton } from './slide-downloads.js';
 
 let chapterMarkerGeneration = 0;
 
@@ -254,6 +255,7 @@ export async function exportChapters() {
             export_filename: elements.exportFilename?.value.trim() || '',
             transcript_language: state.currentTranslationLanguage || '',
         };
+        if (elements.exportOptionsDialog?.open) elements.exportOptionsDialog.close();
         renderExportSteps({status: 'running', steps: [{elapsed: 0, message: 'Starting export job'}]});
         const response = await fetch(`/export_jobs/${encodeURIComponent(videoId)}`, {
             method: 'POST',
@@ -558,6 +560,7 @@ function expandToggle(row, list, noun) {
 export function attachChapterSlides() {
     const container = elements.chaptersContainer;
     if (!container) return;
+    container.querySelectorAll('.slide-download').forEach((element) => element.remove());
     container.querySelectorAll('.chapter-slides, .chapter-slides-wrap').forEach((element) => element.remove());
     container.querySelectorAll('.has-slides').forEach((row) => {
         row.classList.remove('has-slides', 'expanded');
@@ -589,6 +592,8 @@ export function attachChapterSlides() {
         const list = document.createElement('ol');
         list.className = 'chapter-slides';
         inside.forEach(({ scene, index, time }) => list.appendChild(slideRow(scene, index, time)));
+        row.appendChild(createSlideDownloadButton(inside.map(({ index }) => index),
+            `Download all slides in ${row.tagName === 'LI' ? 'section' : 'chapter'} (${inside.length})`, {archive: true}));
         row.classList.add('has-slides');
         row.prepend(expandToggle(row, list, 'slides'));
         if (row.tagName === 'LI') {
@@ -600,6 +605,12 @@ export function attachChapterSlides() {
             row.after(list);
         }
     });
+    container.querySelectorAll(':scope > .chapter-item.has-sections').forEach((chapter) => {
+        const sections = chapter.nextElementSibling;
+        const indices = [...sections.querySelectorAll('.chapter-slide')].map((slide) => Number(slide.dataset.index));
+        if (indices.length) chapter.appendChild(createSlideDownloadButton(indices,
+            `Download all slides in chapter (${indices.length})`, {archive: true}));
+    });
     activeChapterKey = '';
     updateActiveChapter();
 }
@@ -609,6 +620,7 @@ function slideRow(scene, index, time) {
     item.className = 'chapter-slide';
     item.tabIndex = 0;
     item.dataset.start = time;
+    item.dataset.index = index;
     if (scene.thumbnail) {
         const image = document.createElement('img');
         image.src = scene.thumbnail;
@@ -622,6 +634,7 @@ function slideRow(scene, index, time) {
     const title = document.createElement('span');
     title.textContent = `Slide ${index + 1}`;
     item.append(timestamp, title);
+    item.appendChild(createSlideDownloadButton([index], `Download slide ${index + 1}`));
     const seek = (event) => {
         event.stopPropagation();
         elements.videoPlayer.currentTime = time;

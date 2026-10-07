@@ -114,6 +114,24 @@ The Video Lecture Analysis Toolkit features a web interface designed as an inter
 - **Scene Changes Tab**: Log of detected scene transitions
 - **Slide Content Tab**: OCR-extracted text from slides with temporal alignment
 
+**Slide downloads**: Download an individual full-size JPG with the download icon
+beside a slide in **Slide changes** or beneath a chapter/section in the sidebar.
+The same download icon appears on detected-slide timeline cards, OCR slide
+headers, and the enlarged slide view; downloading never seeks or selects a slide.
+The default chapter-only timeline remains unchanged.
+Chapter and section rows have a separate download icon for **all their slides**
+(ZIP, including a `screenshots.json` timestamp manifest). These downloads follow
+the nested slide list and never include slides from the next chapter/section.
+
+**All slide text in Word**: In **Slide changes**, choose **Export all slide text
+as Word**. One `.docx` contains chapter → section → slide headings and numbered
+OCR text lists in chronological slide order. Existing OCR is reused; slides
+without saved text are read automatically from their full-size screenshots using
+Tesseract (install Tesseract or configure `TESSERACT_CMD`). This can take a few
+minutes. Slides with no readable text remain in the document with an explicit
+notice; failures are reported instead of silently omitting slides. With no
+generated chapters, the document contains a single ordered Slides group.
+
 **Integrated Search**: Search functionality that queries both spoken transcript and OCR-extracted visual text
 
 ### The Interactive Layer
@@ -182,7 +200,12 @@ brew install tesseract ffmpeg
 
    Local Whisper and speaker identification decode audio with system FFmpeg
    and pass 16 kHz mono samples directly to their models, bypassing PyAV's file
-   decoder. FFmpeg must be installed and available on `PATH`.
+   decoder. FFmpeg must be installed and available on `PATH`. Windows launches
+   also check the installed user/system PATH and the Python environment's
+   `Library/bin` directory, so an older VS Code process PATH does not hide a
+   newly installed FFmpeg. Set `FFMPEG_BINARY` and `FFPROBE_BINARY` to executable
+   paths if using a custom installation. These tools are shared by speaker
+   detection, online transcription and chapter clip exports.
 
    Dependencies also constrain `av>=11,<19`: PyAV 19 removed the
    `metadata_errors` argument used by faster-whisper 1.2.1. If an existing

@@ -388,7 +388,6 @@ function initApp() {
         }
     });
     bind(elements.startExportBtn, 'click', () => {
-        elements.exportOptionsDialog.close();
         void exportChapters();
     });
     document.addEventListener('transcriptUpdated', () => void refreshSavedExports());

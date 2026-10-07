@@ -739,6 +739,8 @@ function resetVideoStates() {
         state.sceneDetectionInterval = null;
     }
     state.videoScenes = [];
+    const slideTextDownload = document.getElementById('downloadSlideTextWordBtn');
+    if (slideTextDownload) slideTextDownload.disabled = true;
     state.sceneDetectionStartedAt = null;
     state.currentDebugScene = null;
     elements.detectScenesBtn.disabled = true;

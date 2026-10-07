@@ -940,6 +940,8 @@ class TranscriptProcessor:
                 "with access to pyannote/speaker-diarization-3.1."
             )
         try:
+            if on_step:
+                on_step("Loading speaker identification libraries")
             from pyannote.audio import Pipeline
         except ImportError as error:
             raise RuntimeError(
@@ -950,8 +952,7 @@ class TranscriptProcessor:
             annotation = self._run_pyannote(Pipeline, token, video_path, on_step)
         except Exception as error:
             raise RuntimeError(
-                f"Speaker identification could not start. Confirm the Hugging Face token "
-                f"has accepted the pyannote model terms: {error}"
+                f"Speaker identification failed: {error}"
             ) from error
 
         speaker_segments = [
