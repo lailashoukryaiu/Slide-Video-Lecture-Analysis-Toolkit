@@ -17,7 +17,7 @@ from project_paths import SUMMARIES_DIR
 # Gemini's free-tier quotas are counted per model, so another model often
 # still has quota when the selected one is exhausted.
 GEMINI_FALLBACK_MODELS = (
-    "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash",
+    "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
 )
 # Gemini retires older models for new API keys with 404 NOT_FOUND; skip those.
 MODEL_UNAVAILABLE_MARKERS = (
@@ -374,7 +374,8 @@ class SummaryProcessor:
                 return JSONResponse({
                     "success": False,
                     "error": "Every configured AI model is out of quota, busy or unavailable. "
-                             "Wait a while, or add GROQ_API_KEY (free) as another fallback. "
+                             "Retry after the provider's stated wait time, choose another available model, "
+                             "or check quota/billing for your configured providers. "
                              "Details: " + " | ".join(failures),
                 })
             chapters = self._parse_chapter_list(response_text)

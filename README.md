@@ -249,6 +249,11 @@ review or fixed cap on genuinely distinct topics. This applies when generating
 chapters, not retroactively to saved chapters. Slide-based export sections
 still follow the detected slide changes.
 
+Automatic chapter and translation fallbacks include Gemini 3.5 Flash-Lite
+instead of the retired Gemini 2.5 models. Provider quota limits and temporary
+overload can still prevent generation; failures retain existing chapters and
+include each provider's reason and retry timing when supplied.
+
 For downloaded HTML exports, use **Extract All** on the ZIP and open
 `index.html` from the extracted folder, not from inside the ZIP. Keep the
 HTML, images and videos together. The page shows guidance if its media cannot

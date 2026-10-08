@@ -361,7 +361,7 @@ class SummaryProviderFallbackTests(unittest.TestCase):
             ("gemini", "gemini-2.5-flash"),
             ("gemini", "gemini-3.6-flash"),
             ("gemini", "gemini-3.8-flash"),
-            ("gemini", "gemini-2.5-flash-lite"),
+            ("gemini", "gemini-3.5-flash-lite"),
             ("groq", "groq-test"),
             ("openai", "gpt-test"),
         ])
@@ -676,6 +676,54 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         self.assertFalse(response.content["success"])
         self.assertIn("Every configured AI model", response.content["error"])
         self.assertIn("Groq groq-test", response.content["error"])
+        self.assertNotIn("add GROQ_API_KEY", response.content["error"])
+
+    def test_daily_groq_quota_and_busy_gemini_fall_back_to_current_lite_model(self):
+        processor = self._processor(None, None, None)
+        calls = []
+        processor._save_chapters = mock.Mock()
+
+        def complete(provider, model, *args):
+            calls.append((provider, model))
+            if provider == "groq":
+                raise RuntimeError(
+                    "429 rate_limit_exceeded on tokens per day (TPD). Please try again in 22m0.192s."
+                )
+            if model != "gemini-3.5-flash-lite":
+                raise RuntimeError("503 UNAVAILABLE: This model is currently experiencing high demand.")
+            return '{"chapters": [{"timestamp": "00:00", "title": "Intro"}]}'
+
+        processor._complete = complete
+        with mock.patch("processors.summary_processor.asyncio.sleep", new_callable=mock.AsyncMock) as sleep:
+            response = asyncio.run(processor.generate_summary(
+                [{"start": 0, "duration": 5, "text": "Welcome"}], "video",
+            ))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(response.content["model"], "gemini-3.5-flash-lite")
+        self.assertEqual(calls, [
+            ("groq", "groq-test"),
+            ("gemini", "gemini-3.6-flash"),
+            ("gemini", "gemini-3.8-flash"),
+            ("gemini", "gemini-3.5-flash-lite"),
+        ])
+        sleep.assert_not_called()
+        processor._save_chapters.assert_called_once()
+
+    def test_unavailable_providers_preserve_chapters_and_report_retry_time(self):
+        processor = self._processor(None, None, None)
+        processor._save_chapters = mock.Mock()
+
+        def complete(provider, model, *args):
+            raise RuntimeError("429 rate_limit_exceeded. Please try again in 22m0.192s.")
+
+        processor._complete = complete
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 5, "text": "Welcome"}], "video",
+        ))
+        self.assertFalse(response.content["success"])
+        self.assertIn("22m0.192s", response.content["error"])
+        self.assertNotIn("add GROQ_API_KEY", response.content["error"])
+        processor._save_chapters.assert_not_called()
 
 
 if __name__ == "__main__":
