@@ -1650,6 +1650,10 @@ def build_export_subparts(chapter, sentences, points, scenes, mode, section_titl
             item["points" if kind == "point" else "slides"].append(entry)
     boundaries.setdefault(chapter["start"], {"start": chapter["start"], "points": [], "slides": []})
     subparts = [boundaries[start] for start in sorted(boundaries)]
+    # Opening speech belongs to the first real topic, not an invented transcript heading.
+    if mode == "points" and len(subparts) > 1 and not subparts[0]["points"] and not section_titles.get(chapter["start"]):
+        opening = subparts.pop(0)
+        subparts[0]["start"] = opening["start"]
     for index, subpart in enumerate(subparts):
         end = subparts[index + 1]["start"] if index + 1 < len(subparts) else chapter["end"]
         subpart["sentences"] = [
@@ -1659,8 +1663,7 @@ def build_export_subparts(chapter, sentences, points, scenes, mode, section_titl
         subpart["title"] = (
             subpart["points"][0]["title"] if subpart["points"] else
             section_titles.get(subpart["start"])
-            or (" ".join(subpart["sentences"][0]["text"].split()[:6]).rstrip(".,!?")
-                if subpart["sentences"] else chapter["title"])
+            or chapter["title"]
         )
     return subparts
 
@@ -2406,6 +2409,18 @@ async def export_chapters(video_id: str, request: Request, on_step=None, on_arti
                     "pre{white-space:pre-wrap;font-family:inherit;background:var(--soft);padding:.75rem 1rem;border-radius:8px;margin:.5rem 0}"
                     "@media print{details{display:block}video{display:none}}</style></head><body>",
                     f"<h1>{html.escape(document_title)}</h1>",
+                    '<p id="media-help" role="alert" hidden>'
+                    'Pictures or videos could not be loaded. If you downloaded a ZIP, use Extract All '
+                    'and then open index.html from the extracted folder. Keep the HTML, JPG and MP4 files '
+                    'together. You can also use Saved exports &gt; Open in the app.</p>',
+                    "<script>function showMediaHelp(){document.getElementById('media-help').hidden=false;}"
+                    "document.addEventListener('error',function(event){"
+                    "if(event.target.matches&&event.target.matches('img,video'))showMediaHelp();},true);"
+                    "document.addEventListener('DOMContentLoaded',function(){"
+                    "document.querySelectorAll('img').forEach(function(image){"
+                    "if(image.complete&&!image.naturalWidth)showMediaHelp();});"
+                    "document.querySelectorAll('video').forEach(function(video){"
+                    "if(video.error)showMediaHelp();});});</script>",
                 ]
                 if export_flags["include_scorm"]:
                     webpage_parts.insert(1, "<script src=\"scorm_api.js\"></script>")

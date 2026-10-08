@@ -205,6 +205,12 @@ export async function refreshSavedExports() {
             list.appendChild(row);
         });
         if (completed.length) container.appendChild(list);
+        if (completed.some((item) => item.open_url)) {
+            const help = document.createElement('p');
+            help.className = 'saved-exports-empty';
+            help.textContent = 'For downloaded HTML: extract the entire ZIP, then open index.html from the extracted folder. Keep its images and videos alongside it, or use Open above.';
+            container.appendChild(help);
+        }
     } catch (error) {
         if (state.currentVideoId !== videoId) return;
         container.replaceChildren();

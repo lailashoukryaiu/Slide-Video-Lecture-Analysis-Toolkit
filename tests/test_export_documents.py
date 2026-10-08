@@ -281,6 +281,46 @@ class ExportDocumentTests(unittest.TestCase):
         self.assertNotIn("Slide 2:", webpage)
         self.assertFalse(any(name.startswith("slide_") for name in names), names)
 
+    def test_opening_speech_is_preserved_in_first_real_section(self):
+        sentences = [
+            {"start": 0, "text": "Hello everyone, welcome to this course."},
+            {"start": 5, "text": "We will create a course."},
+            {"start": 10, "text": "Next we upload a video."},
+        ]
+        chapter = {"start": 0, "end": 20, "title": "Course setup"}
+        points = [
+            {"start": 5, "title": "Create a course", "text": "Create the course."},
+            {"start": 10, "title": "Upload a video", "text": "Upload the video."},
+        ]
+        parts = self.functions["build_export_subparts"](chapter, sentences, points, [], "points")
+        self.assertEqual([part["title"] for part in parts], ["Create a course", "Upload a video"])
+        self.assertEqual([part["start"] for part in parts], [0, 10])
+        self.assertEqual([sentence for part in parts for sentence in part["sentences"]], sentences)
+        self.assertEqual(parts[0]["points"], [points[0]])
+
+    def test_unnamed_slide_sections_use_topic_not_transcript_fragment(self):
+        chapter = {"start": 0, "end": 20, "title": "Course setup"}
+        sentences = [{"start": 0, "text": "Hello everyone, welcome to this course."},
+                     {"start": 10, "text": "Now let me show you this."}]
+        parts = self.functions["build_export_subparts"](
+            chapter, sentences, [], [{"timestamp": "00:10"}], "slides",
+        )
+        self.assertEqual([part["title"] for part in parts], ["Course setup", "Course setup"])
+        self.assertEqual([part["start"] for part in parts], [0, 10])
+        named = self.functions["build_export_subparts"](
+            chapter, sentences, [], [{"timestamp": "00:10"}], "slides", {10: "Upload a video"},
+        )
+        self.assertEqual(named[1]["title"], "Upload a video")
+
+    def test_html_warns_when_archive_media_cannot_load(self):
+        response = self.run_export(include_webpage=True)
+        with zipfile.ZipFile(response.path) as archive:
+            webpage = archive.read("index.html").decode()
+        self.assertIn('id="media-help" role="alert" hidden', webpage)
+        self.assertIn('use Extract All', webpage)
+        self.assertIn("document.addEventListener('error'", webpage)
+        self.assertIn("image.complete&&!image.naturalWidth", webpage)
+
     def test_explicit_transcripts_and_formats_are_preserved(self):
         response = self.run_export(include_webpage=True, include_transcripts=True,
                                    include_word=True, include_pdf=True, include_outline=True)

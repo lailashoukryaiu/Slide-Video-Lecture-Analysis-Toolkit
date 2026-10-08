@@ -238,6 +238,14 @@ brew install tesseract ffmpeg
 Chapter exports default to the HTML webpage package. Word, PDF and other
 formats are optional selections in the export dialog.
 
+For downloaded HTML exports, use **Extract All** on the ZIP and open
+`index.html` from the extracted folder, not from inside the ZIP. Keep the
+HTML, images and videos together. The page shows guidance if its media cannot
+load. Alternatively, use **Saved exports > Open** in the app.
+Opening speech before the first named section is included in that section's
+transcript rather than turned into an extra section with a verbatim greeting
+as its title.
+
 Exports run in a background job with timestamped steps (clip encoding, images,
 AI summaries, document building, packaging and saving). Export and
 transcription progress show only the current step, replacing the previous one.
