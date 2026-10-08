@@ -282,6 +282,36 @@ function initApp() {
     const bind = (element, event, handler) => {
         if (element) element.addEventListener(event, handler);
     };
+    [
+        ['summaryOptionsBtn', 'summaryOptionsPanel'],
+        ['transcriptOptionsBtn', 'transcriptOptionsDialog'],
+        ['exportChaptersBtn', 'exportOptionsDialog'],
+        ['detectScenesBtn', 'sceneDetectionOptionsDialog'],
+        ['settingsBtn', 'settingsModal'],
+    ].forEach(([buttonId, panelId]) => {
+        const button = document.getElementById(buttonId);
+        const panel = document.getElementById(panelId);
+        if (!button || !panel) return;
+        const indicator = document.createElement('span');
+        indicator.className = 'options-state-indicator';
+        indicator.setAttribute('aria-hidden', 'true');
+        button.appendChild(indicator);
+        button.setAttribute('aria-controls', panelId);
+        const update = () => {
+            const open = panel.tagName === 'DIALOG' ? panel.open
+                : panelId === 'settingsModal' ? getComputedStyle(panel).display !== 'none' : !panel.hidden;
+            button.setAttribute('aria-expanded', String(open));
+            button.classList.toggle('options-open', open);
+            indicator.textContent = open ? ' \u25b2 Open' : ' \u25bc';
+            if (buttonId === 'summaryOptionsBtn') {
+                button.firstChild.textContent = open ? 'Hide chapter options' : 'Chapter options';
+            }
+            if (!button.contains(indicator)) button.appendChild(indicator);
+        };
+        new MutationObserver(update).observe(panel, {attributes: true, attributeFilter: ['open', 'hidden', 'style', 'class']});
+        panel.addEventListener('close', update);
+        update();
+    });
 
     // Wire the core video controls before optional analysis features initialize.
     bind(elements.loadVideoBtn, 'click', processVideo);

@@ -882,3 +882,13 @@ input:checked + .toggle-slider:before {
     }
     .main-content.min-player .video-container .timeline-header { justify-content: flex-start; }
 }
+/* Options buttons visibly reflect their associated panel state. */
+.btn.options-open {
+    outline: 2px solid #6655ff;
+    outline-offset: 1px;
+}
+.options-state-indicator {
+    margin-left: 0.3em;
+    font-size: 0.85em;
+    white-space: nowrap;
+}

@@ -57,6 +57,9 @@
   (summaries and exports follow the chosen version), or delete versions you no longer need.
 - **Resizable Layout**: Drag the handles between the video, visual timeline and side
   panel to resize them; sizes are remembered and a double-click resets them.
+- **Options State**: Options buttons show a downward indicator when closed and
+  a highlighted **Open** state when expanded. Chapter options changes to
+  **Hide chapter options** so it is clear how to collapse the inline panel.
 - **Export Options**: Export Chapters opens the full options dialog immediately:
   grouping, fixed intervals, timestamps, sections, filenames and document formats.
   The default structure uses content chapters with key-point sections (slide changes
