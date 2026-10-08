@@ -581,6 +581,91 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         self.assertLess(calls[2][0], calls[0][0])
         self.assertEqual(len(response.content["chapters"]), 2)
 
+    def test_fenced_chapter_response_keeps_nested_sections_and_continuations(self):
+        data = {
+            "continued_sections": [{"timestamp": "04:00", "title": "Continuation", "point": "More."}],
+            "chapters": [{
+                "timestamp": "08:00", "title": "Practice",
+                "sections": [{"timestamp": "08:00", "title": "Example", "point": "Use [x] and quotes \"like this\"."}],
+            }],
+        }
+        chapters, continued = SummaryProcessor._parse_chapter_response(
+            "```json\n" + json.dumps(data) + "\n```",
+        )
+        self.assertEqual(chapters, data["chapters"])
+        self.assertEqual(continued, data["continued_sections"])
+        with self.assertRaises(json.JSONDecodeError):
+            SummaryProcessor._parse_chapter_response(json.dumps(data) + json.dumps(data))
+
+    def test_extra_json_data_gets_one_corrective_retry(self):
+        processor = self._processor(None, None, None)
+        replies = iter([
+            '{"chapters":[{"timestamp":"00:00","title":"Incomplete"}]}'
+            '{"chapters":[{"timestamp":"02:00","title":"Extra"}]}',
+            '{"chapters":[{"timestamp":"00:00","title":"Complete",'
+            '"sections":[{"timestamp":"00:00","title":"Topic","point":"Full answer."}]}]}',
+        ])
+        prompts = []
+        processor._complete = lambda provider, model, prompt, *args: prompts.append(prompt) or next(replies)
+        processor._save_chapters = mock.Mock()
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 180, "text": "Lecture"}], "video", "gemini-3.5-flash-lite",
+        ))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("exactly ONE JSON object", prompts[1])
+        self.assertEqual(response.content["chapters"][0]["title"], "Complete")
+        processor._save_chapters.assert_called_once()
+
+    def test_malformed_response_retries_then_splits_without_repeating_finished_parts(self):
+        from processors import summary_processor as module
+        processor = self._processor(None, None, None)
+        prompts = []
+        answers = iter([
+            '{"chapters":[{"timestamp":"00:00","title":"First"}]}',
+            '{"chapters":[]}{"chapters":[]}',
+            '{"chapters":[]}{"chapters":[]}',
+            '{"chapters":[{"timestamp":"02:00","title":"Second"}]}',
+            '{"chapters":[{"timestamp":"03:00","title":"Third"}]}',
+        ])
+        processor._complete = lambda provider, model, prompt, *args: prompts.append(prompt) or next(answers)
+        with mock.patch.object(module, "CHAPTER_CHUNK_CHARS", 60):
+            response = asyncio.run(processor.generate_summary(
+                [{"start": i * 60, "duration": 60, "text": "word " * 3} for i in range(4)],
+                "video", "gemini-3.5-flash-lite",
+            ))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(len(prompts), 5)
+        self.assertEqual([chapter["title"] for chapter in response.content["chapters"]],
+                         ["First", "Second", "Third"])
+
+    def test_invalid_json_falls_back_and_never_replaces_saved_chapters_on_failure(self):
+        processor = self._processor(None, None, None)
+        calls = []
+        processor._save_chapters = mock.Mock()
+
+        def complete(provider, model, *args):
+            calls.append(model)
+            if model == "gemini-3.5-flash-lite":
+                return '{"chapters":[]}{"chapters":[]}'
+            return '{"chapters":[{"timestamp":"00:00","title":"Fallback"}]}'
+
+        processor._complete = complete
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 60, "text": "Lecture"}], "video", "gemini-3.5-flash-lite",
+        ))
+        self.assertTrue(response.content["success"], response.content)
+        self.assertEqual(calls, ["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash"])
+        processor._save_chapters.assert_called_once()
+        processor._save_chapters.reset_mock()
+        processor._complete = lambda *args: '{"chapters":[]}{"chapters":[]}'
+        response = asyncio.run(processor.generate_summary(
+            [{"start": 0, "duration": 60, "text": "Lecture"}], "video", "gemini-3.5-flash-lite",
+        ))
+        self.assertFalse(response.content["success"])
+        self.assertIn("Extra data", response.content["error"])
+        processor._save_chapters.assert_not_called()
+
     def test_chapters_follow_the_open_translation_and_are_saved_with_it(self):
         processor = self._processor(None, None, None)
         saved, prompts = [], []

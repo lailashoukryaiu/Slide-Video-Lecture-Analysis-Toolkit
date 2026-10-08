@@ -253,6 +253,10 @@ Automatic chapter and translation fallbacks include Gemini 3.5 Flash-Lite
 instead of the retired Gemini 2.5 models. Provider quota limits and temporary
 overload can still prevent generation; failures retain existing chapters and
 include each provider's reason and retry timing when supplied.
+Chapter responses are parsed before a transcript part is accepted. Malformed
+JSON gets one corrective retry, then smaller transcript parts when possible
+and a provider fallback if parsing still fails. Valid responses need no extra
+AI calls; ambiguous extra JSON is never silently discarded.
 
 For downloaded HTML exports, use **Extract All** on the ZIP and open
 `index.html` from the extracted folder, not from inside the ZIP. Keep the

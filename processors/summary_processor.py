@@ -358,6 +358,8 @@ class SummaryProcessor:
                             f"no answer within {CHAPTER_TIMEOUT_SECONDS} seconds (the model is busy or slow)"
                         )
                     failures.append(f"{PROVIDER_LABELS[candidate]} {model}: {error}")
+                    if isinstance(error, json.JSONDecodeError):
+                        continue
                     if "timed out" in str(error).lower() or "no answer within" in str(error):
                         continue
                     if self._is_model_unavailable(error):
@@ -373,7 +375,7 @@ class SummaryProcessor:
             if response_text is None:
                 return JSONResponse({
                     "success": False,
-                    "error": "Every configured AI model is out of quota, busy or unavailable. "
+                    "error": "Every configured AI model failed: out of quota, busy, unavailable or invalid chapter JSON. "
                              "Retry after the provider's stated wait time, choose another available model, "
                              "or check quota/billing for your configured providers. "
                              "Details: " + " | ".join(failures),
@@ -467,20 +469,7 @@ class SummaryProcessor:
 
     @staticmethod
     def _parse_chapter_list(response_text):
-        try:
-            chapters = json.loads(response_text)
-        except json.JSONDecodeError:
-            match = re.search(r'\[.*\]', response_text.replace('\n', ' '), re.DOTALL)
-            if not match:
-                raise ValueError("Could not parse the AI response as JSON")
-            chapters = json.loads(match.group())
-        if isinstance(chapters, dict):
-            chapters = chapters["chapters"] if isinstance(chapters.get("chapters"), list) else next(
-                (value for key, value in chapters.items() if isinstance(value, list) and key != "continued_sections"), []
-            )
-        if isinstance(chapters, list) and chapters and isinstance(chapters[0], list):
-            chapters = [item for sublist in chapters for item in sublist]
-        return [item for item in chapters if isinstance(item, dict)]
+        return SummaryProcessor._parse_chapter_response(response_text)[0]
 
     @staticmethod
     def _chapter_settings(structure="sections", detail="balanced", instructions=""):
@@ -577,14 +566,24 @@ class SummaryProcessor:
     @staticmethod
     def _parse_chapter_response(response_text):
         """Return (chapters, continued_sections) from one chapter answer."""
+        text = (response_text or "").strip()
+        fence = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        if fence:
+            text = fence.group(1).strip()
+        data = json.loads(text)
         continued = []
-        try:
-            data = json.loads(response_text)
-            if isinstance(data, dict) and isinstance(data.get("continued_sections"), list):
+        chapters = data
+        if isinstance(data, dict):
+            if isinstance(data.get("continued_sections"), list):
                 continued = [item for item in data["continued_sections"] if isinstance(item, dict)]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return SummaryProcessor._parse_chapter_list(response_text), continued
+            chapters = data["chapters"] if isinstance(data.get("chapters"), list) else next(
+                (value for key, value in data.items() if isinstance(value, list) and key != "continued_sections"), []
+            )
+        if not isinstance(chapters, list):
+            raise json.JSONDecodeError("Expected a chapter list or object", text, 0)
+        if chapters and isinstance(chapters[0], list):
+            chapters = [item for sublist in chapters for item in sublist]
+        return [item for item in chapters if isinstance(item, dict)], continued
 
     async def _chunked_chapters(self, provider, model, transcript, language_instruction, settings=None):
         """Generate chapters part by part and return them as one JSON list."""
@@ -631,12 +630,24 @@ class SummaryProcessor:
                         asyncio.to_thread(self._complete, provider, model, prompt, 0.4, True, max_tokens, True),
                         timeout=CHAPTER_TIMEOUT_SECONDS,
                     )
+                    part_chapters, continued = self._parse_chapter_response(text)
                     break
                 except Exception as error:
+                    text = None
                     message = str(error).lower()
-                    if "json_validate_failed" in message or "failed to generate json" in message:
+                    if (
+                        isinstance(error, json.JSONDecodeError)
+                        or "json_validate_failed" in message or "failed to generate json" in message
+                    ):
+                        print(f"{PROVIDER_LABELS[provider]} {model} returned invalid chapter JSON "
+                              f"(part {number}/{total}, attempt {attempt + 1}): {error}")
                         invalid_json += 1
                         if invalid_json == 1 and attempt < 5:
+                            prompt += (
+                                "\nThe previous answer was invalid JSON. Return exactly ONE JSON object "
+                                "with chapters and optional continued_sections arrays. No extra objects, "
+                                "commentary or markdown; escape quotes inside text."
+                            )
                             continue
                         if len(items) > 1:
                             middle = len(items) // 2
@@ -662,7 +673,6 @@ class SummaryProcessor:
                           f"(part {number}/{total}); waiting {delay:.0f}s")
                     await asyncio.sleep(delay)
             if text is not None:
-                part_chapters, continued = self._parse_chapter_response(text)
                 if continued and chapters:
                     chapters[-1].setdefault("sections", [])
                     if isinstance(chapters[-1]["sections"], list):
