@@ -9,6 +9,7 @@ import { loadTranscript } from './transcript.js';
 import { updateChapters, clearChapterMarkers } from './chapters.js';
 import { checkSceneDetection, updateScenes, stopDetectionPolling } from './scenes.js';
 import { fetchOcrResults, resetOcrStatus } from './ocr.js';
+import { refreshTranscriptVersions } from './transcript-versions.js';
 
 export async function regenerateTranscript(options = {}) {
     const speakersOnly = options?.speakersOnly === true;
@@ -34,6 +35,7 @@ export async function regenerateTranscript(options = {}) {
     const startedAt = Date.now();
     renderWhisperProgress({ status: 'queued', progress: 0 }, startedAt);
     try {
+        if (!options.resumeOnly) {
         const response = await fetch(`/generate_whisper_transcript/${encodeURIComponent(videoId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -56,6 +58,7 @@ export async function regenerateTranscript(options = {}) {
                 : 'Transcript regeneration started.',
             'info'
         );
+        }
 
         while (
             state.currentVideoId === videoId
@@ -1011,6 +1014,7 @@ export async function processVideoUpload(file) {
             throw new Error(data.error);
         }
         state.currentVideoId = data.video_id;
+        await refreshTranscriptVersions();
         elements.exportChaptersBtn.disabled = false;
 
         // Set new source and wait for metadata to load
@@ -1204,6 +1208,7 @@ export async function loadUploadedVideo(videoId) {
         });
 
         state.currentVideoId = data.video_id;
+        await refreshTranscriptVersions();
         elements.detectScenesBtn.disabled = false;
         elements.exportChaptersBtn.disabled = false;
         if (Array.isArray(data.scenes) && data.scenes.length > 0) {
@@ -1232,7 +1237,7 @@ export async function loadUploadedVideo(videoId) {
                 updateChapters(summaryData.chapters);
             }
         } else if (data.transcript_in_progress) {
-            elements.transcriptContainer.innerHTML = '<p>Whisper transcript is still processing. You can detect slides now.</p>';
+            void regenerateTranscript({resumeOnly: true});
         } else {
             elements.transcriptContainer.innerHTML = '<p>No transcript available for this video.</p>';
         }

@@ -358,6 +358,31 @@ function initApp() {
     document.addEventListener('scenesLoaded', () => attachChapterSlides());
     document.addEventListener('slidesUpdated', () => attachChapterSlides());
     bind(document.getElementById('chapterSlidesToggle'), 'change', attachChapterSlides);
+    bind(document.getElementById('refreshSlideTitlesBtn'), 'click', async () => {
+        if (!state.videoScenes?.length) {
+            showError('Detect or load slides first. Adding titles does not detect slides.');
+            return;
+        }
+        const button = document.getElementById('refreshSlideTitlesBtn');
+        const videoId = state.currentVideoId;
+        const language = state.currentTranslationLanguage || '';
+        button.disabled = true;
+        try {
+            if (!state.videoChapters?.length) {
+                if (!state.currentTranscript?.length) {
+                    showError('Load a transcript or chapters before adding slide titles.');
+                    return;
+                }
+                await generateChapters();
+            }
+            if (videoId !== state.currentVideoId || language !== (state.currentTranslationLanguage || '')) return;
+            if (!state.videoChapters?.length) return;
+            updateChapterCaptions();
+            showNotification('Slide titles refreshed from the open chapters and sections. Existing slide images were reused.', 'success');
+        } finally {
+            button.disabled = false;
+        }
+    });
     bind(elements.summaryOptionsBtn, 'click', () => {
         elements.summaryOptionsPanel.hidden = !elements.summaryOptionsPanel.hidden;
     });

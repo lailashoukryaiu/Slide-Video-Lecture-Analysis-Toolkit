@@ -23,6 +23,9 @@
 - **Scene Names**: Slide Changes shows the existing timeline topic name next to
   each scene number when available, preferring the specific section title and
   falling back to the chapter title, without another AI request.
+  **Add / refresh slide titles** applies the same titles after slides were detected
+  earlier. If chapters are missing, it first generates them from the open transcript;
+  it never reruns slide detection or OCR.
 - **Optional Chapter Slides**: Chapter generation uses the transcript only.
   Enable **Add detected slides** afterwards to show existing slide images under
   chapters and sections; this does not detect slides, run OCR, or regenerate chapters.
@@ -31,6 +34,8 @@
 - **Processing Controls**: Stop transcription/speaker detection and restore the
   previous transcript, or keep processing in the background while browsing saved
   transcripts. Selecting a saved version prevents progress polling from replacing it.
+  Reopening a saved video reconnects to the running job's steps and refreshes
+  the saved-transcript selector even when the current transcript is still processing.
 - **Saved Video Loading**: Saved transcripts and scenes are read as UTF-8,
   including Arabic text, without printing transcript content to the server console.
 - **Speaker Identification**: Add speakers to the current transcript without
