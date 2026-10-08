@@ -38,6 +38,31 @@ def _write_json(path, data):
     os.replace(temporary, path)
 
 
+def _active_source_path(video_id):
+    return TRANSCRIPTS_DIR / f"{video_id}_active_source.json"
+
+
+def get_active_source(video_id):
+    """Which transcript/chapter version (whisper, uploaded, or a translation) is
+    currently active for this video, so reloading the page can restore it."""
+    data = _read_json(_active_source_path(video_id), {})
+    if isinstance(data, dict) and data.get("kind") in {"transcript", "translation"}:
+        return data
+    return {"kind": "transcript", "source": "whisper"}
+
+
+def set_active_source(video_id, kind, *, source=None, language=None):
+    """Record which version is active so it keeps being shown after a reload."""
+    if kind not in {"transcript", "translation"}:
+        return
+    payload = {"kind": kind}
+    if kind == "translation":
+        payload["language"] = language
+    else:
+        payload["source"] = source or "whisper"
+    _write_json(_active_source_path(video_id), payload)
+
+
 def content_hash(segments):
     """Identify a transcript by its timing and wording only."""
     normalized = [
@@ -249,12 +274,15 @@ def activate_version(video_id, version_id):
         else:
             # Chapters of another translation must not be shown or exported with this one.
             (SUMMARIES_DIR / f"{video_id}_summary_{language}.json").unlink(missing_ok=True)
+        set_active_source(video_id, "translation", language=language)
     elif entry.get("source") == "uploaded":
         _write_json(TRANSCRIPTS_DIR / f"{video_id}_uploaded.json", segments)
+        set_active_source(video_id, "transcript", source="uploaded")
     else:
         _write_json(TRANSCRIPTS_DIR / f"{video_id}_whisper.json", segments)
         if payload.get("metadata") is not None:
             _write_json(TRANSCRIPTS_DIR / f"{video_id}_whisper_meta.json", payload["metadata"])
+        set_active_source(video_id, "transcript", source="whisper")
     public = {key: value for key, value in entry.items() if key not in {"hash", "text_hash"}}
     public["label"] = _describe(entry)
     return {"version": public, "transcript": segments, "chapters": payload.get("chapters"),
@@ -280,6 +308,10 @@ def delete_version(video_id, version_id):
             current.unlink(missing_ok=True)
             if entry["kind"] == "translation":
                 (SUMMARIES_DIR / f"{video_id}_summary_{entry.get('language')}.json").unlink(missing_ok=True)
+                active = get_active_source(video_id)
+                if active.get("kind") == "translation" and active.get("language") == entry.get("language"):
+                    # The active translation was just deleted; fall back to the Whisper transcript.
+                    set_active_source(video_id, "transcript", source="whisper")
         remaining = [item for item in index if item.get("id") != version_id]
         _write_json(_versions_dir(video_id) / "index.json", remaining)
         (_versions_dir(video_id) / f"{version_id}.json").unlink(missing_ok=True)

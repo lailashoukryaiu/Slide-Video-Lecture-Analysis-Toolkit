@@ -6,6 +6,7 @@ import re
 import json
 
 from project_paths import VIDEO_DIR, TRANSCRIPTS_DIR, SCENES_DIR
+from . import transcript_versions
 
 class VideoProcessor:
     def __init__(self):
@@ -24,6 +25,25 @@ class VideoProcessor:
         
         whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_hash}_whisper.json")
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
+
+        # Restore whichever transcript/translation the user was last viewing so a
+        # reload (or re-selecting this video) doesn't silently revert the language.
+        active_source = transcript_versions.get_active_source(video_hash)
+        active_language = None
+        transcript_source = "whisper"
+        active_transcript_path = whisper_transcript_path
+        if active_source.get("kind") == "translation":
+            language = active_source.get("language")
+            candidate_path = TRANSCRIPTS_DIR / f"{video_hash}_translated_{language}.json"
+            if language and candidate_path.exists():
+                active_transcript_path = str(candidate_path)
+                active_language = language
+                transcript_source = "translation"
+        elif active_source.get("source") == "uploaded":
+            candidate_path = TRANSCRIPTS_DIR / f"{video_hash}_uploaded.json"
+            if candidate_path.exists():
+                active_transcript_path = str(candidate_path)
+                transcript_source = "uploaded"
 
         scenes_path = str(SCENES_DIR / f"{video_hash}.json")
         has_scenes = False
@@ -46,14 +66,16 @@ class VideoProcessor:
         progress_file = str(TRANSCRIPTS_DIR / f"{video_hash}_whisper_progress.txt")
         transcript_in_progress = os.path.exists(progress_file)
         
-        # Load existing transcript if available
+        # Load existing transcript if available (the active translation/upload, if any)
         transcript_to_use = None
         if has_whisper_transcript:
             try:
-                with open(whisper_transcript_path, 'r', encoding='utf-8') as f:
+                with open(active_transcript_path, 'r', encoding='utf-8') as f:
                     transcript_to_use = json.load(f)
             except Exception as e:
                 print(f"Error loading existing transcript: {e}")
+                active_language = None
+                transcript_source = "whisper"
         
         # Uploaded files do not have a YouTube ID, so do not make a network
         # transcript request using their content hash.
@@ -73,7 +95,9 @@ class VideoProcessor:
             "has_whisper_transcript": has_whisper_transcript,
             "transcript_in_progress": transcript_in_progress,
             "scenes": existing_scenes,
-            "is_duplicate": True
+            "is_duplicate": True,
+            "transcript_source": transcript_source,
+            "active_language": active_language
         })
 
     async def process_new_video(self, video_hash: str, video_path: str, background_tasks):

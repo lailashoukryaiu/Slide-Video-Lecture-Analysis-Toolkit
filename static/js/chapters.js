@@ -483,6 +483,10 @@ export function updateChapters(chapters) {
     if (!chapters || chapters.length === 0) {
         chaptersContainer.innerHTML = '<p>No chapters available.</p>';
         setSummaryStatus('complete', '<i class="fas fa-info-circle"></i> No chapters are available.');
+        // Still clear/refresh any stale timeline and scene captions from a
+        // previously loaded video/language instead of leaving them stale.
+        state.videoChapters = [];
+        document.dispatchEvent(new CustomEvent('chaptersUpdated', { detail: [] }));
         return;
     }
 

@@ -11,6 +11,26 @@ import { checkSceneDetection, updateScenes, stopDetectionPolling } from './scene
 import { fetchOcrResults, resetOcrStatus } from './ocr.js';
 import { refreshTranscriptVersions } from './transcript-versions.js';
 
+// Translate backend transcript_source/active_language fields (set from the
+// persisted "active source" marker) into the state.currentTranscriptSource
+// convention used across the app, and build the matching /summary URL so
+// chapters/timeline/scenes stay in the same language as the transcript.
+function applyActiveTranscriptSource(data, videoId) {
+    if (data.transcript_source === 'translation' && data.active_language) {
+        state.currentTranscriptSource = `translation:${data.active_language}`;
+        state.currentTranslationLanguage = data.active_language;
+        return `/summary/${encodeURIComponent(videoId)}?language=${encodeURIComponent(data.active_language)}`;
+    }
+    if (data.transcript_source === 'uploaded') {
+        state.currentTranscriptSource = 'uploaded';
+        state.currentTranslationLanguage = null;
+        return `/summary/${encodeURIComponent(videoId)}`;
+    }
+    state.currentTranscriptSource = 'whisper';
+    state.currentTranslationLanguage = null;
+    return `/summary/${encodeURIComponent(videoId)}`;
+}
+
 export async function regenerateTranscript(options = {}) {
     const speakersOnly = options?.speakersOnly === true;
     const videoId = getActiveVideoId();
@@ -884,7 +904,15 @@ export async function processVideo() {
         // Determine which transcript to use based on preference and availability
         let transcriptToUse = data.transcript;
         let transcriptSource = state.currentTranscriptSource;
-        
+        // Restore the active translation (if any) so this video reopens in whichever
+        // language it was last viewed, instead of always reverting to the original.
+        let translationLanguage = null;
+        if (data.transcript_source === 'translation' && data.active_language) {
+            translationLanguage = data.active_language;
+        } else if (data.transcript_source === 'uploaded') {
+            transcriptSource = transcriptSource === 'youtube' ? transcriptSource : 'uploaded';
+        }
+
         if (transcriptSource === 'whisper' && !hasWhisperTranscript) {
             // If whisper is preferred but not available, show notification
             if (hasYoutubeTranscript) {
@@ -899,6 +927,7 @@ export async function processVideo() {
             if (hasWhisperTranscript) {
                 showNotification('YouTube transcript not available. Using Whisper transcript instead.', 'info');
                 transcriptSource = 'whisper';
+                translationLanguage = null;
                 
                 // Fetch Whisper transcript
                 const whisperResponse = await fetch(`/get_transcript/${videoId}/whisper`);
@@ -910,10 +939,13 @@ export async function processVideo() {
                 showNotification('No transcripts available. Please generate a Whisper transcript in Settings.', 'info');
                 transcriptSource = null;
             }
+        } else if (transcriptSource === 'whisper' && translationLanguage) {
+            transcriptSource = `translation:${translationLanguage}`;
         }
         
         // Update current transcript source
         state.currentTranscriptSource = transcriptSource;
+        state.currentTranslationLanguage = transcriptSource?.startsWith('translation:') ? translationLanguage : null;
 
         // Transcript generation is independent from slide detection. Make
         // scene controls available even when Whisper has no usable speech.
@@ -923,7 +955,10 @@ export async function processVideo() {
             state.currentTranscript = transcriptToUse;
             
             // Check for existing summary
-            const summaryResponse = await fetch(`/summary/${videoId}`);
+            const summaryUrl = state.currentTranslationLanguage
+                ? `/summary/${videoId}?language=${encodeURIComponent(state.currentTranslationLanguage)}`
+                : `/summary/${videoId}`;
+            const summaryResponse = await fetch(summaryUrl);
             const summaryData = await summaryResponse.json();
             
             if (summaryData.success && summaryData.exists) {
@@ -1227,11 +1262,11 @@ export async function loadUploadedVideo(videoId) {
 
         if (data.transcript) {
             state.currentTranscript = data.transcript;
-            state.currentTranscriptSource = 'whisper';
+            const summaryUrl = applyActiveTranscriptSource(data, data.video_id);
             loadTranscript(data.transcript);
             elements.generateSummaryBtn.disabled = false;
             elements.exportChaptersBtn.disabled = false;
-            const summaryResponse = await fetch(`/summary/${data.video_id}`);
+            const summaryResponse = await fetch(summaryUrl);
             const summaryData = await summaryResponse.json();
             if (summaryData.success && summaryData.exists) {
                 updateChapters(summaryData.chapters);

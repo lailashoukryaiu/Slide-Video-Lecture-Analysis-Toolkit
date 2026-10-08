@@ -1164,9 +1164,18 @@ class SummaryProcessor:
                 return parts[0] * 3600 + parts[1] * 60 + parts[2]
         raise ValueError("Invalid timestamp")
 
-    async def get_summary(self, video_id: str):
-        """Get saved chapter summary for a video."""
+    async def get_summary(self, video_id: str, language: str = ""):
+        """Get saved chapter summary for a video.
+
+        When ``language`` matches an existing translation, its chapters are
+        returned instead of the original-language ones, so the timeline and
+        scene titles keep matching whichever transcript language is active.
+        """
         summary_path = str(SUMMARIES_DIR / f"{video_id}.json")
+        if language:
+            translated_summary_path = str(SUMMARIES_DIR / f"{video_id}_summary_{language}.json")
+            if os.path.exists(translated_summary_path):
+                summary_path = translated_summary_path
         if os.path.exists(summary_path):
             try:
                 with open(summary_path, 'r', encoding='utf-8') as f:

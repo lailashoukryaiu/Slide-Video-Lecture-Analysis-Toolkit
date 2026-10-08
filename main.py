@@ -362,6 +362,8 @@ async def translate_transcript(video_id: str, request: Request):
         model=translation["model"], chapters=translated_chapters,
         based_on=transcript_versions.find_transcript_label(video_id, transcript),
     )
+    # Keep showing this translation (transcript, timeline, and scene titles) after a reload.
+    transcript_versions.set_active_source(video_id, "translation", language=target)
     return {
         "success": True,
         "transcript": translated,
@@ -995,6 +997,25 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks, quali
         whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
 
+        # Restore whichever transcript/translation the user was last viewing so a
+        # reload (or re-selecting this video) doesn't silently revert the language.
+        active_source = transcript_versions.get_active_source(video_id)
+        active_language = None
+        transcript_source = "whisper"
+        active_transcript_path = whisper_transcript_path
+        if active_source.get("kind") == "translation":
+            language = active_source.get("language")
+            candidate_path = TRANSCRIPTS_DIR / f"{video_id}_translated_{language}.json"
+            if language and candidate_path.exists():
+                active_transcript_path = str(candidate_path)
+                active_language = language
+                transcript_source = "translation"
+        elif active_source.get("source") == "uploaded":
+            candidate_path = TRANSCRIPTS_DIR / f"{video_id}_uploaded.json"
+            if candidate_path.exists():
+                active_transcript_path = str(candidate_path)
+                transcript_source = "uploaded"
+
         scenes_path = str(SCENES_DIR / f"{video_id}.json")
         has_scenes = False
         if os.path.exists(scenes_path):
@@ -1017,14 +1038,16 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks, quali
         progress_file = str(TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt")
         transcript_in_progress = os.path.exists(progress_file)
         
-        # Load existing transcript if available
+        # Load existing transcript if available (the active translation/upload, if any)
         transcript_to_use = None
         if has_whisper_transcript:
             try:
-                with open(whisper_transcript_path, 'r') as f:
+                with open(active_transcript_path, 'r') as f:
                     transcript_to_use = json.load(f)
             except Exception as e:
                 print(f"Error loading existing transcript: {e}")
+                active_language = None
+                transcript_source = "whisper"
         
         # Try to get YouTube transcript if Whisper transcript is not available
         has_youtube_transcript = False
@@ -1055,7 +1078,9 @@ async def download_video(video_id: str, background_tasks: BackgroundTasks, quali
             "has_whisper_transcript": has_whisper_transcript,
             "transcript_in_progress": transcript_in_progress,
             "scenes": existing_scenes,
-            "is_duplicate": os.path.exists(video_path)
+            "is_duplicate": os.path.exists(video_path),
+            "transcript_source": transcript_source,
+            "active_language": active_language
         })
             
     except Exception as e:
@@ -1108,8 +1133,8 @@ async def generate_summary(request: Request):
         })
 
 @app.get("/summary/{video_id}")
-async def get_summary(video_id: str):
-    return await summary_processor.get_summary(video_id)
+async def get_summary(video_id: str, language: str = ""):
+    return await summary_processor.get_summary(video_id, language)
 
 def ascii_filename(text: str) -> str:
     import unicodedata
