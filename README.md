@@ -242,6 +242,14 @@ filename while a whole-video title suggestion loads. Suggestions from an
 older video or language cannot overwrite the current fields, and names you
 type yourself are preserved.
 
+Chapter sections follow topic changes rather than a fixed count. Balanced
+groups related examples, steps and continuations of the same subject.
+Chapters with unusually many sections get an additional topic review after
+transcript chunks are combined; genuinely distinct topics remain separate,
+and merged sections retain their takeaways. This applies when generating
+chapters, not retroactively to saved chapters. Slide-based export sections
+still follow the detected slide changes.
+
 For downloaded HTML exports, use **Extract All** on the ZIP and open
 `index.html` from the extracted folder, not from inside the ZIP. Keep the
 HTML, images and videos together. The page shows guidance if its media cannot

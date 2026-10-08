@@ -51,9 +51,9 @@ FILLER_OPENING = re.compile(
 # minutes: target chapter length; min_seconds/min_share: chapters shorter than
 # min(min_seconds, min_share * video length) are merged into a neighbour.
 CHAPTER_DETAIL_LEVELS = {
-    "brief": {"minutes": 12, "sections": "2 to 4", "min_seconds": 240, "min_share": 0.08},
-    "balanced": {"minutes": 6, "sections": "2 to 5", "min_seconds": 90, "min_share": 0.04},
-    "detailed": {"minutes": 3, "sections": "3 to 6", "min_seconds": 30, "min_share": 0.02},
+    "brief": {"minutes": 12, "section_guidance": "Only broad, clearly different subjects; merge related subtopics", "min_seconds": 240, "min_share": 0.08},
+    "balanced": {"minutes": 6, "section_guidance": "One section per genuinely separate topic; merge examples, steps and continuations of the same topic", "min_seconds": 90, "min_share": 0.04},
+    "detailed": {"minutes": 3, "section_guidance": "Separate meaningful subtopics, but not every sentence, example or transcript fragment", "min_seconds": 30, "min_share": 0.02},
 }
 TRANSLATION_CONCURRENCY = max(1, int(os.getenv("TRANSLATION_CONCURRENCY", "4")))
 
@@ -383,6 +383,10 @@ class SummaryProcessor:
                 min_seconds=min(settings["min_seconds"], transcript_end * settings["min_share"]),
                 end=transcript_end, sectioned=settings["sections"],
             )
+            if settings["sections"]:
+                chapters = await self._review_fragmented_sections(
+                    chapters, candidate, used_model, settings,
+                )
             self._save_chapters(video_id, chapters, transcript_language, transcript)
 
             return JSONResponse({
@@ -493,6 +497,83 @@ class SummaryProcessor:
             "instructions": " ".join(str(instructions or "").split())[:CHAPTER_INSTRUCTIONS_LIMIT],
         }
 
+    async def _review_fragmented_sections(self, chapters, provider, model, settings):
+        reviewed = []
+        for chapter in chapters:
+            sections = chapter.get("sections") or []
+            # This triggers review, not a limit: all genuinely distinct topics may remain.
+            if len(sections) < 10:
+                reviewed.append(chapter)
+                continue
+            prompt = (
+                "Review the section outline of one chapter for artificial fragmentation. "
+                f"{settings['section_guidance']}. There is NO fixed section count or maximum. "
+                "Merge only adjacent sections about the same subject: examples, setup steps, repeated "
+                "explanations and continuations do not each need a section. Keep genuinely different "
+                "topics separate, even if many remain. Do not group merely by duration or index. "
+                "Use concise topic titles in the same language as the input. "
+                "Return JSON with groups in chronological order, each containing a title and indices. "
+                "Every input index must appear exactly once; indices within each group must be contiguous. "
+                'Format: {"groups":[{"title":"Topic name","indices":[0,1]},{"title":"Next topic","indices":[2]}]}.\n'
+                f"Chapter: {chapter['title']}\n"
+                "Sections:\n" + json.dumps([
+                    {"index": index, "title": section["title"], "point": section.get("point", "")}
+                    for index, section in enumerate(sections)
+                ], ensure_ascii=False)
+            )
+            if settings["instructions"]:
+                prompt += f"\nUser emphasis: {settings['instructions']}"
+            failures = []
+            result = None
+            chain = [(provider, model), *[
+                pair for pair in self._provider_chain(prefer_groq=True) if pair != (provider, model)
+            ]]
+            for review_provider, review_model in chain:
+                for _ in range(2):
+                    try:
+                        text = await asyncio.wait_for(
+                            asyncio.to_thread(self._complete, review_provider, review_model, prompt, 0.2, True, 3000, True),
+                            timeout=CHAPTER_TIMEOUT_SECONDS,
+                        )
+                        data = json.loads(re.sub(r"^```(?:json)?|```$", "", (text or "").strip()).strip())
+                        groups = data.get("groups") if isinstance(data, dict) else None
+                        if not isinstance(groups, list) or not groups:
+                            raise ValueError("Topic review returned no groups")
+                        indices = []
+                        result = []
+                        for group in groups:
+                            if not isinstance(group, dict):
+                                raise ValueError("Topic review returned an invalid group")
+                            members = group.get("indices")
+                            raw_title = group.get("title")
+                            title = " ".join(raw_title.split()) if isinstance(raw_title, str) else ""
+                            if not title or not isinstance(members, list) or not members or any(
+                                type(index) is not int or not 0 <= index < len(sections) for index in members
+                            ):
+                                raise ValueError("Topic review returned invalid section indices or title")
+                            indices.extend(members)
+                            merged = {**sections[members[0]], "title": title}
+                            if len(members) > 1:
+                                merged["point"] = " ".join(
+                                    sections[index].get("point") or sections[index]["title"] for index in members
+                                )
+                            result.append(merged)
+                        if indices != list(range(len(sections))):
+                            raise ValueError("Topic review omitted, duplicated or reordered sections")
+                        break
+                    except Exception as error:
+                        result = None
+                        failures.append(f"{review_provider} {review_model}: {error}")
+                        print(f"Section topic review failed: {failures[-1]}")
+                        if not isinstance(error, ValueError):
+                            break
+                if result is not None:
+                    break
+            if result is None:
+                raise RuntimeError("Could not review fragmented chapter sections: " + " | ".join(failures))
+            reviewed.append({**chapter, "sections": result})
+        return reviewed
+
     @staticmethod
     def _stamp(seconds):
         seconds = int(float(seconds))
@@ -523,7 +604,8 @@ class SummaryProcessor:
             guidance.append(
                 f"Each chapter has: timestamp (HH:MM:SS where it starts, taken from the transcript); title ({title_rule}); "
                 "summary (one short sentence that states the content itself); "
-                f"sections ({settings['sections']} sections in time order, the first starting with the chapter). "
+                "sections (in time order, the first starting with the chapter). "
+                f"{settings['section_guidance']}. Choose the number from actual topic changes, not a fixed quota. "
                 f"Each section has timestamp (HH:MM:SS from the transcript), title ({title_rule}) and point "
                 "(one concise complete sentence with the key takeaway, grounded only in the transcript). "
                 "State content directly and concisely: write 'Gradient descent minimizes the loss.' and never "
@@ -552,7 +634,9 @@ class SummaryProcessor:
                 guidance.append(
                     f"The previous part ended inside the chapter \"{previous_title}\". If this part begins by "
                     "continuing that topic, return those sections in continued_sections instead of starting "
-                    "a new chapter at the very beginning."
+                    "a new chapter at the very beginning. Keep only major topic changes; do not turn every "
+                    "transcript fragment into a section. Keep distinct topics, but group continued explanations "
+                    "of the same topic together."
                 )
             else:
                 guidance.append(
