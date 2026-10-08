@@ -40,6 +40,19 @@ assert.equal(caption.textContent, '<Learning>');
 assert.equal(items[0].caption.textContent, 'Introduction');
 assert.equal(items[1].caption.textContent, '<Learning>', 'Timeline titles omit the number already shown in the badge');
 assert.equal(sceneLabel.textContent, 'Scene 2 - <Learning>', 'Scene list reuses the timeline name safely');
+state.videoChapters[1].sections = [
+    {timestamp: '00:20', title: 'Specific section'},
+    {timestamp: '00:30', title: 'Later section'},
+];
+context.updateChapterCaptions();
+assert.equal(sceneLabel.textContent, 'Scene 2 - Specific section');
+assert.equal(items[1].caption.textContent, 'Specific section');
+assert.equal(context.sceneTopicTitle(state.videoChapters, 31), 'Later section');
+assert.equal(context.sceneTopicTitle(state.videoChapters, 5), 'Introduction');
+assert.equal(context.sceneTopicTitle([
+    ...state.videoChapters, {timestamp: '00:40', title: 'Next chapter'},
+], 45), 'Next chapter', 'Section names never leak into the next chapter');
+delete state.videoChapters[1].sections;
 assert.equal(context.navigationParts(state.videoChapters, state.videoScenes).length, 2, 'Default navigation uses content chapters only');
 assert.equal(context.navigationParts(state.videoChapters, state.videoScenes, 'combined').length, 3);
 assert.equal(JSON.stringify(context.navigationParts([], state.videoScenes).map((part) => part.start)), '[0,25]', 'Without chapters, content mode falls back to slides');

@@ -4,7 +4,7 @@ import { elements } from './elements.js';
 import { formatTime } from './utils.js';
 import { state } from './main.js';
 import { updateActiveTranscript } from './transcript.js';
-import { navigationParts, activePart, conciseTitle, chapterStart } from './chapter-navigation.js';
+import { navigationParts, activePart, conciseTitle, chapterStart, sceneTopicTitle } from './chapter-navigation.js';
 import { scrollWithinContainer } from './scroll-utils.js';
 import { updateActiveChapter } from './chapters.js';
 
@@ -27,7 +27,8 @@ export function updateChapterCaptions() {
             title.className = 'chapter-caption';
             item.appendChild(title);
         }
-        const text = activePart(parts, Number(image.dataset.time))?.title || 'No chapter title available.';
+        const text = sceneTopicTitle(state.videoChapters || [], Number(image.dataset.time))
+            || activePart(parts, Number(image.dataset.time))?.title || 'No chapter title available.';
         // The numbered badge already identifies the slide, so show only the topic beneath it.
         const shown = conciseTitle(text.replace(/^\d+:\s*/, '').replace(/^\d+$/, ''));
         title.title = text;
@@ -35,7 +36,7 @@ export function updateChapterCaptions() {
     });
     document.querySelectorAll('.scene-item .scene-label').forEach((label) => {
         const time = Number(label.closest('.scene-item').dataset.time);
-        const title = activePart(parts, time)?.title || '';
+        const title = sceneTopicTitle(state.videoChapters || [], time) || activePart(parts, time)?.title || '';
         const name = title.replace(/^\d+:\s*/, '').replace(/^\d+$/, '');
         const text = `Scene ${label.dataset.number}` + (name ? ` - ${name}` : '');
         label.title = name;

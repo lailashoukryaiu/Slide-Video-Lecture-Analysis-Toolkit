@@ -34,3 +34,16 @@ export function navigationParts(chapters = [], scenes = [], mode = 'topic') {
 export function activePart(parts, time) {
     return parts.filter((part) => part.start <= time + 0.01).at(-1);
 }
+
+export function sceneTopicTitle(chapters, time) {
+    const ordered = chapters.map((chapter) => ({...chapter, start: chapterStart(chapter)}))
+        .filter((chapter) => Number.isFinite(chapter.start))
+        .sort((a, b) => a.start - b.start);
+    const chapter = activePart(ordered, time);
+    if (!chapter) return '';
+    const sections = (Array.isArray(chapter.sections) ? chapter.sections : [])
+        .map((section) => ({start: chapterStart(section), title: section.title}))
+        .filter((section) => Number.isFinite(section.start))
+        .sort((a, b) => a.start - b.start);
+    return activePart(sections, time)?.title || chapter.title || '';
+}

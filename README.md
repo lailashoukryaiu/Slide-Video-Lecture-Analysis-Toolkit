@@ -21,12 +21,16 @@
 - **Slide Content in Exports**: Optionally add each slide's extracted text (OCR) as a bullet list under its chapter in HTML, Word, PDF and outline exports
 - **Visual Timeline**: Thumbnails follow the Navigate by setting (content chapters, slide changes, or both); the minimum slide duration is a percentage of the video length (2 s floor)
 - **Scene Names**: Slide Changes shows the existing timeline topic name next to
-  each scene number when available, without another AI request.
+  each scene number when available, preferring the specific section title and
+  falling back to the chapter title, without another AI request.
 - **Optional Chapter Slides**: Chapter generation uses the transcript only.
   Enable **Add detected slides** afterwards to show existing slide images under
   chapters and sections; this does not detect slides, run OCR, or regenerate chapters.
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
+- **Processing Controls**: Stop transcription/speaker detection and restore the
+  previous transcript, or keep processing in the background while browsing saved
+  transcripts. Selecting a saved version prevents progress polling from replacing it.
 - **Saved Video Loading**: Saved transcripts and scenes are read as UTF-8,
   including Arabic text, without printing transcript content to the server console.
 - **Speaker Identification**: Add speakers to the current transcript without

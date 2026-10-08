@@ -63,6 +63,7 @@ export async function regenerateTranscript(options = {}) {
         ) {
             const statusResponse = await fetch(`/whisper_transcript_status/${encodeURIComponent(videoId)}`);
             const status = await readJsonResponse(statusResponse, 'Transcript status');
+            if (state.currentVideoId !== videoId || state.whisperTranscriptPollGeneration !== pollGeneration) return;
             if (status.status === 'complete') {
                 state.currentTranscriptSource = 'whisper';
                 loadTranscript(applySpeakerNames(status.transcript, status.speaker_names || {}));
@@ -81,6 +82,13 @@ export async function regenerateTranscript(options = {}) {
                 throw error;
             }
             renderWhisperProgress(status, startedAt);
+            const browse = document.getElementById('browseDuringTranscriptionBtn');
+            if (browse) browse.onclick = () => {
+                state.whisperTranscriptPollGeneration++;
+                loadTranscript(originalTranscript);
+                if (button) { button.disabled = false; button.textContent = idleLabel; }
+                showNotification('Processing continues in the background. You can choose a saved transcript above.', 'info');
+            };
             await delay(3000);
         }
     } catch (error) {
@@ -163,8 +171,29 @@ function renderWhisperProgress(status, startedAt) {
             <p>${phase} (${elapsedSeconds}s elapsed).${lastUpdate}</p>
             ${renderTranscriptSteps(status)}
             <p>You can continue using slide detection and video controls while this runs.</p>
+            <button id="stopTranscriptionBtn" type="button" class="btn btn-secondary">Stop processing</button>
+            <button id="browseDuringTranscriptionBtn" type="button" class="btn btn-secondary">Keep processing and view transcript</button>
         </div>
     `;
+    const stop = document.getElementById('stopTranscriptionBtn');
+    if (stop) stop.onclick = async () => {
+        stop.disabled = true;
+        try {
+            const response = await fetch(`/cancel_whisper_transcript/${encodeURIComponent(state.currentVideoId)}`, {method: 'POST'});
+            const data = await readJsonResponse(response, 'Stopping transcription');
+            if (!data.success) throw new Error(data.error);
+            state.whisperTranscriptPollGeneration++;
+            loadTranscript(data.transcript || []);
+            const regenerate = elements.regenerateTranscriptBtn;
+            if (regenerate) { regenerate.disabled = false; regenerate.textContent = 'Regenerate transcript'; }
+            const speakers = document.getElementById('identifySpeakersBtn');
+            if (speakers) { speakers.disabled = false; speakers.textContent = 'Identify speakers in the current transcript'; }
+            showNotification('Processing stopped. Your previous transcript was preserved.', 'info');
+        } catch (error) {
+            showError(error.message);
+            stop.disabled = false;
+        }
+    };
 }
 
 function delay(milliseconds) {

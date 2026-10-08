@@ -793,6 +793,10 @@ async def generate_whisper_transcript(video_id: str, request: Request, backgroun
 async def whisper_transcript_status(video_id: str):
     return await transcript_processor.get_whisper_status(video_id)
 
+@app.post("/cancel_whisper_transcript/{video_id}")
+async def cancel_whisper_transcript(video_id: str):
+    return await transcript_processor.cancel_whisper_generation(video_id)
+
 @app.get("/transcript_metadata/{video_id}")
 async def transcript_metadata(video_id: str):
     return {"metadata": transcript_processor._public_whisper_metadata(video_id)}

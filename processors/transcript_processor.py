@@ -328,9 +328,7 @@ class TranscriptProcessor:
             
             # Start background task to generate transcript
             if os.path.exists(output_path):
-                if existing_transcript:
-                    # Kept until speaker identification ends, in case the server stops meanwhile.
-                    shutil.copyfile(output_path, self._speaker_backup_path(video_id))
+                shutil.copyfile(output_path, self._speaker_backup_path(video_id))
                 os.remove(output_path)
             progress_path.write_text(
                 "100" if existing_transcript else "0",
@@ -464,6 +462,18 @@ class TranscriptProcessor:
                 process.join(timeout=5)
             return True
         return False
+
+    async def cancel_whisper_generation(self, video_id):
+        if not self._terminate_whisper_process(video_id):
+            return JSONResponse({"success": False, "error": "No running transcription process was found. Refresh its status before retrying."})
+        backup = self._speaker_backup_path(video_id)
+        if backup.exists():
+            os.replace(backup, TRANSCRIPTS_DIR / f"{video_id}_whisper.json")
+        (TRANSCRIPTS_DIR / f"{video_id}_whisper_progress.txt").unlink(missing_ok=True)
+        (TRANSCRIPTS_DIR / f"{video_id}_whisper_error.txt").unlink(missing_ok=True)
+        self._remove_whisper_phase(video_id)
+        log_transcript_step(video_id, "Processing stopped by the user; the previous transcript was preserved")
+        return JSONResponse({"success": True, "transcript": self._read_transcript(video_id)})
 
     def _record_whisper_process_failure(self, video_id, exit_code, error=None):
         output_path = TRANSCRIPTS_DIR / f"{video_id}_whisper.json"

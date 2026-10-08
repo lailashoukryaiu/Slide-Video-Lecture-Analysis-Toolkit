@@ -38,6 +38,19 @@ from processors.transcript_processor import TranscriptProcessor
 
 
 class TranscriptProcessorReuseTests(unittest.TestCase):
+    def test_cancel_restores_previous_transcript_and_clears_progress(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(transcript_module, "TRANSCRIPTS_DIR", Path(directory)), \
+                mock.patch.object(TranscriptProcessor, "_terminate_whisper_process", return_value=True):
+            root = Path(directory)
+            segments = [{"text": "Previous", "start": 0}]
+            (root / "vid_whisper_before_speakers.json").write_text(json.dumps(segments), encoding="utf-8")
+            (root / "vid_whisper_progress.txt").write_text("100", encoding="utf-8")
+            response = asyncio.run(TranscriptProcessor().cancel_whisper_generation("vid"))
+            self.assertTrue(response.content["success"])
+            self.assertEqual(response.content["transcript"], segments)
+            self.assertFalse((root / "vid_whisper_progress.txt").exists())
+
     def test_interrupted_speaker_job_restores_transcript(self):
         with tempfile.TemporaryDirectory() as directory:
             working_dir = Path(directory)
