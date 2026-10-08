@@ -237,6 +237,10 @@ brew install tesseract ffmpeg
 
 Chapter exports default to the HTML webpage package. Word, PDF and other
 formats are optional selections in the export dialog.
+The export dialog immediately uses the current chapter topic or uploaded
+filename while a whole-video title suggestion loads. Suggestions from an
+older video or language cannot overwrite the current fields, and names you
+type yourself are preserved.
 
 For downloaded HTML exports, use **Extract All** on the ZIP and open
 `index.html` from the extracted folder, not from inside the ZIP. Keep the

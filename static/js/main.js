@@ -23,6 +23,7 @@ export const state = {
     transcriptOcrStatusInterval: null,
     whisperTranscriptPollGeneration: 0,
     currentVideoId: null,
+    currentVideoFilename: null,
     youtubeTranscriptInterval: null,
     youtubeRetryTimer: null,
     summaryRetryTimer: null,
@@ -217,9 +218,23 @@ function setupKeyboardControls() {
     });
 }
 
+let exportSuggestionGeneration = 0;
+
 async function loadExportSuggestions() {
     if (!state.currentVideoId) return;
-    const fallbackSuggestion = state.currentVideoId;
+    const generation = ++exportSuggestionGeneration;
+    const videoId = state.currentVideoId;
+    const language = state.currentTranslationLanguage;
+    const chapterSnapshot = JSON.stringify(state.videoChapters || []);
+    const isCurrent = () => generation === exportSuggestionGeneration
+        && state.currentVideoId === videoId && state.currentTranslationLanguage === language
+        && JSON.stringify(state.videoChapters || []) === chapterSnapshot;
+    const sourceTitle = (state.currentVideoFilename || '').replace(/\.[^.]+$/, '');
+    const fallbackSuggestion = (state.videoChapters || []).find((chapter) => chapter.title?.trim())?.title
+        || sourceTitle || 'Chapter export';
+    const fallbackFilename = (sourceTitle || fallbackSuggestion).normalize('NFKD')
+        .replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '').slice(0, 80)
+        || 'chapter_export';
     // A title or file name typed for another video must not be reused for this one.
     for (const input of [elements.exportTitle, elements.exportFilename]) {
         if (input.dataset.videoId !== state.currentVideoId) {
@@ -234,13 +249,15 @@ async function loadExportSuggestions() {
         input.value = value;
         input.dataset.autoValue = value;
     };
-    if (!elements.exportTitle.value.trim()) setAuto(elements.exportTitle, fallbackSuggestion);
-    if (!elements.exportFilename.value.trim()) setAuto(elements.exportFilename, fallbackSuggestion);
+    if (isAuto(elements.exportTitle)) setAuto(elements.exportTitle, fallbackSuggestion);
+    if (isAuto(elements.exportFilename)) setAuto(elements.exportFilename, fallbackFilename);
     const titleSuggestionHint = document.getElementById('exportTitleSuggestion');
     if (titleSuggestionHint) titleSuggestionHint.textContent = 'Suggesting a title...';
+    const filenameSuggestionHint = document.getElementById('exportFilenameSuggestion');
+    if (filenameSuggestionHint) filenameSuggestionHint.textContent = '';
     try {
         const response = await fetch(
-            `/export_suggestions/${encodeURIComponent(state.currentVideoId)}`,
+            `/export_suggestions/${encodeURIComponent(videoId)}`,
             {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -253,6 +270,7 @@ async function loadExportSuggestions() {
             throw new Error(`Could not load export suggestions (${response.status})`);
         }
         const suggestions = await response.json();
+        if (!isCurrent()) return;
         if (suggestions.title_suggestion && isAuto(elements.exportTitle)) {
             setAuto(elements.exportTitle, suggestions.title_suggestion);
         }
@@ -268,6 +286,7 @@ async function loadExportSuggestions() {
             filenameSuggestion.textContent = `Suggestion: ${suggestions.filename_suggestion}`;
         }
     } catch (error) {
+        if (!isCurrent()) return;
         if (titleSuggestionHint) titleSuggestionHint.textContent = '';
         showError(`Could not load export suggestions: ${error.message}`);
     }

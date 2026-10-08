@@ -759,6 +759,7 @@ function resetVideoStates() {
     // Reset video player
     const videoPlayer = elements.videoPlayer;
     state.currentVideoId = null;
+    state.currentVideoFilename = null;
     state.currentTranslationLanguage = null;
     state.whisperTranscriptPollGeneration += 1;
     if (elements.translationTarget) {
@@ -1049,6 +1050,7 @@ export async function processVideoUpload(file) {
             throw new Error(data.error);
         }
         state.currentVideoId = data.video_id;
+        state.currentVideoFilename = file.name;
         await refreshTranscriptVersions();
         elements.exportChaptersBtn.disabled = false;
 
@@ -1243,6 +1245,8 @@ export async function loadUploadedVideo(videoId) {
         });
 
         state.currentVideoId = data.video_id;
+        state.currentVideoFilename = Array.from(document.getElementById('uploadedVideos')?.options || [])
+            .find((option) => option.value === data.video_id)?.dataset.filename || null;
         await refreshTranscriptVersions();
         elements.detectScenesBtn.disabled = false;
         elements.exportChaptersBtn.disabled = false;

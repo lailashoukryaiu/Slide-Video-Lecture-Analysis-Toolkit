@@ -79,6 +79,7 @@ async function initUploadedVideos(inputSection) {
             const option = document.createElement('option');
             option.value = video.video_id;
             option.textContent = `${video.filename} (${(video.size_bytes / 1048576).toFixed(1)} MB)`;
+            option.dataset.filename = video.filename;
             select.appendChild(option);
         });
         select.addEventListener('change', () => {
