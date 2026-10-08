@@ -19,10 +19,8 @@ class VideoProcessor:
     async def handle_existing_video(self, video_hash: str, video_path: str, background_tasks):
         """Handle processing for an existing video."""
         from .transcript_processor import TranscriptProcessor
-        from .scene_processor import SceneProcessor
         
         transcript_processor = TranscriptProcessor()
-        scene_processor = SceneProcessor()
         
         whisper_transcript_path = str(TRANSCRIPTS_DIR / f"{video_hash}_whisper.json")
         has_whisper_transcript = os.path.exists(whisper_transcript_path)
@@ -40,7 +38,7 @@ class VideoProcessor:
         existing_scenes = []
         if has_scenes:
             try:
-                with open(scenes_path, 'r') as f:
+                with open(scenes_path, 'r', encoding='utf-8') as f:
                     existing_scenes = json.load(f)
             except Exception as e:
                 print(f"Error loading existing scenes: {e}")
@@ -51,9 +49,8 @@ class VideoProcessor:
         # Load existing transcript if available
         transcript_to_use = None
         if has_whisper_transcript:
-            print("Loading existing transcript")
             try:
-                with open(whisper_transcript_path, 'r') as f:
+                with open(whisper_transcript_path, 'r', encoding='utf-8') as f:
                     transcript_to_use = json.load(f)
             except Exception as e:
                 print(f"Error loading existing transcript: {e}")
@@ -67,7 +64,6 @@ class VideoProcessor:
             await transcript_processor.start_whisper_generation(video_hash, video_path, background_tasks)
             transcript_in_progress = True
         
-        print(transcript_to_use)
         return JSONResponse({
             "success": True,
             "video_url": f"/video/{video_hash}",

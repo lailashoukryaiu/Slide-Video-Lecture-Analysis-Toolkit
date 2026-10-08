@@ -27,6 +27,8 @@
   chapters and sections; this does not detect slides, run OCR, or regenerate chapters.
 - **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
+- **Saved Video Loading**: Saved transcripts and scenes are read as UTF-8,
+  including Arabic text, without printing transcript content to the server console.
 - **Speaker Identification**: Add speakers to the current transcript without
   re-transcribing. Interrupted speaker jobs restore the original transcript
   on server startup; worker initialization leaves active jobs untouched.

@@ -1155,7 +1155,7 @@ export async function loadUploadedVideo(videoId) {
     try {
         resetVideoStates();
         const response = await fetch(`/uploaded_videos/${encodeURIComponent(videoId)}`);
-        const data = await response.json();
+        const data = await readJsonResponse(response, 'Loading saved video');
         if (!response.ok || !data.success) {
             throw new Error(data.detail || data.error || 'Could not load saved video');
         }
