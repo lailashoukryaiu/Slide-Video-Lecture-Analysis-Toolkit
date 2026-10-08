@@ -29,7 +29,7 @@
 - **Optional Chapter Slides**: Chapter generation uses the transcript only.
   Enable **Add detected slides** afterwards to show existing slide images under
   chapters and sections; this does not detect slides, run OCR, or regenerate chapters.
-- **Dual OCR Systems**: Integration of both Tesseract and Surya OCR for text extraction from slides
+- **Dual OCR Systems**: Run Start Slide OCR first to read detected text with Tesseract. Once that pass completes with readable results and no pending or failed text elements, Process with Surya OCR becomes available as an optional additional pass.
 - **Multi-Source Transcription**: YouTube transcript extraction and Whisper-based speech recognition
 - **Processing Controls**: Stop transcription/speaker detection and restore the
   previous transcript, or keep processing in the background while browsing saved

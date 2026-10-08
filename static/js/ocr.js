@@ -81,9 +81,8 @@ function handleSSEEvent(data, videoId) {
             renderOcrStatus({ ...data.data, status: data.event === 'ocr_complete' ? 'complete' : 'stopped' });
             if (data.data.final_results) {
                 updatePartialOcrResults(data.data.final_results, videoId, true);
-            } else {
-                fetchOcrResults(videoId);
             }
+            fetchOcrResults(videoId);
             break;
 
         case 'ocr_error':
@@ -158,6 +157,8 @@ export function renderOcrStatus(progressData) {
     const status = progressData.status || 'running';
     const engine = progressData.type === 'surya' ? 'Surya' : 'Tesseract';
     const live = ['queued', 'running', 'stopping'].includes(status);
+    const suryaButton = document.getElementById('processSuryaBtn');
+    if (suryaButton) suryaButton.hidden = live;
     const titles = {
         queued: `${engine} OCR queued`,
         running: `${engine} OCR running`,
@@ -365,8 +366,10 @@ export async function fetchOcrResults(videoId) {
             // Add a button to trigger Surya OCR if we have no unmatched results yet
             const hasUnmatchedResults = state.ocrResults.some(result => result.ocr_class === 'unmatched');
             
-            // Only add the button if we don't already have unmatched results and OCR processing is complete
-            if (!hasUnmatchedResults && data.detections_complete) {
+            // Slide detection alone does not mean the primary OCR pass has finished.
+            const primaryOcrComplete = data.detections_complete
+                && !needsOcr && data.ocr_count > 0 && !data.ocr_running;
+            if (!hasUnmatchedResults && primaryOcrComplete) {
                 // Check if the button already exists
                 if (!document.getElementById('processSuryaBtn')) {
                     const suryaButton = document.createElement('button');
@@ -428,6 +431,8 @@ export async function fetchOcrResults(videoId) {
                     // Add the button to the slide content container
                     slideContentContainer.prepend(suryaButton);
                 }
+            } else {
+                document.getElementById('processSuryaBtn')?.remove();
             }
         } else {
             console.error('Error fetching OCR results:', data.error);
