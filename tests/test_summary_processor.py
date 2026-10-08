@@ -473,63 +473,33 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         self.assertIn("One section per genuinely separate topic", prompts[0])
         self.assertNotIn("True sections", prompts[0])
 
-    def test_fragmented_sections_are_reviewed_by_topic_not_a_fixed_limit(self):
+    def test_topic_guidance_does_not_add_a_second_ai_pass_or_fixed_limit(self):
         processor = self._processor(None, None, None)
         sections = [
             {"timestamp": SummaryProcessor._stamp(index * 60), "title": f"Topic {index}",
              "point": f"Takeaway {index}."}
             for index in range(33)
         ]
-        groups = [{"title": f"Distinct subject {index}", "indices": members}
-                  for index, members in enumerate(([0, 1], [2, 3, 4], [5, 6], [7, 8, 9],
-                                                  list(range(10, 20)), list(range(20, 30)), [30, 31, 32]))]
         answers = iter([json.dumps({"chapters": [
             {"timestamp": "00:00:00", "title": "Main topic", "sections": sections},
-        ]}), json.dumps({"groups": groups})])
+        ]})])
         prompts = []
         processor._complete = lambda provider, model, prompt, *args: prompts.append(prompt) or next(answers)
         transcript = [{"start": index * 30, "duration": 30, "text": "word"} for index in range(100)]
         response = asyncio.run(processor.generate_summary(transcript, None, detail="balanced"))
         self.assertTrue(response.content["success"], response.content)
         result = response.content["chapters"][0]["sections"]
-        self.assertEqual(len(result), 7, "Balanced may keep more than five genuinely separate subjects")
-        self.assertIn("NO fixed section count", prompts[-1])
+        self.assertEqual(len(prompts), 1, "No additional review call after generation")
+        self.assertEqual(len(result), 33, "Distinct topics must not be arbitrarily capped")
+        self.assertIn("actual topic changes, not a fixed quota", prompts[0])
         self.assertEqual(
             " ".join(section["point"] for section in result),
             " ".join(f"Takeaway {index}." for index in range(33)),
         )
         self.assertEqual([section["timestamp"] for section in result],
-                         [f"{group['indices'][0]:02d}:00" for group in groups])
+                         [f"{index:02d}:00" for index in range(33)])
 
-    def test_distinct_topics_are_not_capped_and_review_coverage_is_checked(self):
-        chapter = {"timestamp": "00:00", "title": "Topic", "sections": [
-            {"timestamp": f"{index:02d}:00", "title": f"Subject {index}", "point": f"Fact {index}."}
-            for index in range(12)
-        ]}
-        settings = SummaryProcessor._chapter_settings()
-        processor = self._processor(None, None, None)
-        processor._provider_chain = lambda **kwargs: []
-        groups = [{"title": section["title"], "indices": [index]}
-                  for index, section in enumerate(chapter["sections"])]
-        responses = iter([json.dumps({"groups": groups[:-1]}), json.dumps({"groups": groups})])
-        processor._complete = lambda *args: next(responses)
-        reviewed = asyncio.run(processor._review_fragmented_sections([chapter], "groq", "test", settings))
-        self.assertEqual(reviewed, [chapter])
-        for invalid in (
-            groups[:-1], groups + [groups[0]], list(reversed(groups)),
-            [{"title": "Interleaved", "indices": [0, 2]}, {"title": "Remainder", "indices": [1, *range(3, 12)]}],
-        ):
-            with self.subTest(groups=invalid):
-                processor._complete = lambda *args: json.dumps({"groups": invalid})
-                with self.assertRaisesRegex(RuntimeError, "omitted, duplicated or reordered"):
-                    asyncio.run(processor._review_fragmented_sections([chapter], "groq", "test", settings))
-        sparse = {**chapter, "sections": chapter["sections"][:3]}
-        processor._complete = mock.Mock(side_effect=AssertionError("Sparse outlines need no extra AI"))
-        self.assertEqual(
-            asyncio.run(processor._review_fragmented_sections([sparse], "groq", "test", settings)), [sparse],
-        )
-
-    def test_topic_review_runs_after_transcript_continuations_are_combined(self):
+    def test_transcript_continuations_do_not_trigger_an_extra_ai_review(self):
         processor = self._processor(None, None, None)
         sections = [
             {"timestamp": SummaryProcessor._stamp(index * 20), "title": f"Step {index}", "point": f"Fact {index}."}
@@ -538,7 +508,6 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         responses = iter([
             json.dumps({"chapters": [{"timestamp": "00:00:00", "title": "Workflow", "sections": sections[:6]}]}),
             json.dumps({"continued_sections": sections[6:], "chapters": []}),
-            json.dumps({"groups": [{"title": "One workflow", "indices": list(range(12))}]}),
         ])
         prompts = []
         processor._complete = lambda provider, model, prompt, *args: prompts.append(prompt) or next(responses)
@@ -546,26 +515,12 @@ class SummaryProviderFallbackTests(unittest.TestCase):
         with mock.patch("processors.summary_processor.GROQ_CHAPTER_CHUNK_CHARS", 3500):
             response = asyncio.run(processor.generate_summary(transcript, None))
         self.assertTrue(response.content["success"], response.content)
-        self.assertEqual(len(prompts), 3)
+        self.assertEqual(len(prompts), 2)
         result = response.content["chapters"][0]["sections"]
-        self.assertEqual(result, [{"timestamp": "00:00", "title": "One workflow",
-                                   "point": " ".join(section["point"] for section in sections)}])
-
-    def test_topic_review_failures_do_not_replace_saved_chapters(self):
-        processor = self._processor(None, None, None)
-        processor._provider_chain = lambda *args, **kwargs: [("groq", "test")]
-        chapter = {"timestamp": "00:00", "title": "Topic", "sections": [
-            {"timestamp": f"{index:02d}:00", "title": f"Subject {index}"} for index in range(12)
-        ]}
-        replies = iter([json.dumps({"chapters": [chapter]}), '{"groups":[]}', '{"groups":[]}'])
-        processor._complete = lambda *args: next(replies)
-        processor._save_chapters = mock.Mock()
-        response = asyncio.run(processor.generate_summary(
-            [{"start": 0, "duration": 720, "text": "Topics"}], "saved-video",
-        ))
-        self.assertFalse(response.content["success"])
-        self.assertIn("Could not review fragmented", response.content["error"])
-        processor._save_chapters.assert_not_called()
+        self.assertEqual(len(result), 12)
+        self.assertEqual([section["point"] for section in result],
+                         [section["point"] for section in sections])
+        self.assertIn("group continued explanations", prompts[1])
 
     def test_flat_structure_and_detail_level_change_the_prompt(self):
         processor = self._processor(None, None, None)

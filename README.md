@@ -244,9 +244,8 @@ type yourself are preserved.
 
 Chapter sections follow topic changes rather than a fixed count. Balanced
 groups related examples, steps and continuations of the same subject.
-Chapters with unusually many sections get an additional topic review after
-transcript chunks are combined; genuinely distinct topics remain separate,
-and merged sections retain their takeaways. This applies when generating
+Topic grouping is requested in the initial generation, with no second AI
+review or fixed cap on genuinely distinct topics. This applies when generating
 chapters, not retroactively to saved chapters. Slide-based export sections
 still follow the detected slide changes.
 

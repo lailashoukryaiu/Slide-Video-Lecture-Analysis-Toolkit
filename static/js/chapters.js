@@ -393,6 +393,8 @@ export async function generateChapters() {
             : '';
         const statusMessage = isModelError
             ? `<i class="fas fa-exclamation-circle"></i> The AI provider could not generate chapters: ${detail.innerHTML}. Your existing chapters were kept.${openAiHint}`
+            : error instanceof TypeError && /fetch|network/i.test(error.message)
+            ? '<i class="fas fa-exclamation-circle"></i> Lost connection to the app server. It may have stopped or restarted. Your existing chapters were kept. Restore the server connection before retrying.'
             : `<i class="fas fa-exclamation-circle"></i> Summary generation failed: ${detail.innerHTML}. Your existing chapters were kept. You can retry without reloading the video.`;
         const status = setSummaryStatus(
             'error',
