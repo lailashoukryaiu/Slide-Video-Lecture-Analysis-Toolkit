@@ -65,3 +65,7 @@ results/
 test.py
 debug.txt
 static/exports/
+.env
+.env
+static/quizzes/
+static/notes/

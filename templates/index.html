@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -395,7 +395,13 @@
                     </button>
                     <button class="tab-btn" data-tab="slides">
                         <i class="fas fa-file-alt"></i> Slide Content
+                    </button>                    <button class="tab-btn" data-tab="quiz">
+                        <i class="fas fa-question-circle"></i> Quiz
                     </button>
+                    <button class="tab-btn" data-tab="notes">
+                        <i class="fas fa-sticky-note"></i> Notes
+                    </button>
+
                     <button class="pane-minimize" type="button" data-pane="panel" title="Minimize the side panel" aria-label="Minimize the side panel"><i class="fas fa-window-minimize"></i></button>
                 </div>
                 
@@ -638,8 +644,45 @@
                         <div class="tab-body" id="transcriptContainer">
                             <!-- Transcript lines will be added here -->
                         </div>
+                    </div>                    <div class="tab-pane" id="quiz-tab">
+                        <div class="controls-bar quiz-controls">
+                            <select id="quizScope"></select>
+                            <select id="quizDifficulty">
+                                <option value="easy">Easy</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="hard">Hard</option>
+                            </select>
+                            <select id="quizBloom">
+                                <option value="remember">Remember</option>
+                                <option value="understand" selected>Understand</option>
+                                <option value="apply">Apply</option>
+                            </select>
+                            <input id="quizCount" type="number" min="1" max="20" value="6" style="width: 70px;">
+                            <button id="generateQuizBtn" class="btn btn-accent" type="button">Generate quiz</button>
+                        </div>
+                        <div class="controls-bar quiz-controls">
+                            <select id="quizSaved"><option value="">Saved quizzes</option></select>
+                            <button id="deleteQuizBtn" class="btn btn-secondary" type="button" disabled>Delete quiz</button>
+                            <span id="quizStatus" class="quiz-status"></span>
+                        </div>
+                        <div class="tab-body" id="quizContainer">
+                            <p>Open a video, then pick a chapter or the full lecture and generate a quiz.</p>
+                        </div>
                     </div>
                     
+                                        <div class="tab-pane" id="notes-tab">
+                        <div class="controls-bar notes-controls">
+                            <button id="saveNotesBtn" class="btn btn-accent" type="button">Save notes</button>
+                            <button id="makeSummaryBtn" class="btn btn-accent" type="button">Make summary</button>
+                            <span id="notesStatus" class="notes-status"></span>
+                        </div>
+                        <div class="tab-body">
+                            <textarea id="notesText" rows="8" placeholder="Write your notes for this lecture..."></textarea>
+                            <h3>Summary</h3>
+                            <div id="notesSummary"></div>
+                        </div>
+                    </div>
+
                     <div class="tab-pane" id="chapters-tab">
                         <details id="videoSummaryPanel" class="video-summary-panel" hidden>
                             <summary id="videoSummaryHeading">Video summary</summary>
@@ -1159,6 +1202,8 @@
     <script src="/static/js/popup-placement.js?v=slide-downloads-20261007"></script>
     <script src="/static/js/layout-resize.js?v=slide-downloads-20261007"></script>
     <script type="module" src="/static/js/index.js?v=slide-downloads-20261007"></script>
+    <script type="module" src="/static/js/quiz.js?v=quiz-1"></script>
+    <script type="module" src="/static/js/notes.js?v=notes-1"></script>
     <script>
     document.getElementById('videoPlayer').addEventListener('click', function() {
         if (this.paused) {
