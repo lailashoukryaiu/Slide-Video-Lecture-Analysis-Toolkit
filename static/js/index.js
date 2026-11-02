@@ -70,7 +70,7 @@ async function initUploadedVideos(inputSection) {
     const container = document.createElement('div');
     container.className = 'example-videos-container';
     container.innerHTML = '<select id="uploadedVideos" class="example-videos-select" title="Select a previously uploaded video"><option value="">Saved uploads ▾</option></select>';
-    inputSection.insertBefore(container, inputSection.querySelector('#extraOptionsMenu'));
+    inputSection.insertBefore(container, document.getElementById('videoVersions').parentElement);
     const select = container.querySelector('#uploadedVideos');
     try {
         const response = await fetch('/uploaded_videos');

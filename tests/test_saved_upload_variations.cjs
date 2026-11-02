@@ -32,10 +32,9 @@ const read = name => fs.readFileSync(path.join(__dirname, '..', 'static', 'js', 
     vm.runInContext(read('index.js'), layout);
     layout.initExampleVideos();
     assert.equal(children[0], projectHistory, 'Project Back/Next stays first');
-    assert.equal(children[1], versionContainer, 'Video version keeps its position');
-    assert.match(children[2].innerHTML, /id="exampleVideos"/, 'Examples follows Video version');
-    assert.match(children[children.indexOf(extraOptions) - 1].innerHTML, /id="uploadedVideos"/,
-        'Saved uploads is immediately before Extra options');
+    assert.match(children[1].innerHTML, /id="uploadedVideos"/, 'Saved uploads follows project history');
+    assert.equal(children[2], versionContainer, 'Video version immediately follows Saved uploads');
+    assert.match(children[3].innerHTML, /id="exampleVideos"/, 'Examples follows Video version');
     const screenshotButton = template.match(/<button id="takeScreenshotBtn"[\s\S]*?<\/button>/)[0];
     assert.match(screenshotButton, /aria-label="Take screenshot"/);
     assert.match(screenshotButton, /fa-camera/);
