@@ -1233,6 +1233,15 @@ body .search-highlight.active {
     color: var(--text-1);
 }
 
+.transcript-speaker {
+    flex-shrink: 0;
+    max-width: 35%;
+    margin-inline-end: 0.65em;
+    overflow-wrap: anywhere;
+    color: var(--brand);
+    font-weight: 700;
+}
+
 .transcript-timestamp {
     align-self: flex-start;
     padding: 1px 5px;
