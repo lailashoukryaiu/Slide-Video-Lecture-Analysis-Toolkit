@@ -1192,11 +1192,14 @@
             <details id="clipPrivacyOptions">
                 <summary>Privacy / hide regions</summary>
                 <label><input id="clipPrivacyEnabled" type="checkbox"> Apply privacy masks to this download</label>
-                <p>Draw a box on the preview, choose an existing detected region, or scan for people.
-                    Detection samples every 0.5 seconds and can miss faces, moving people or webcam tiles.
-                    Review the entire output before sharing. Blur/pixelation are not guaranteed anonymization.
-                    Audio and subtitles are kept and may still identify people.
-                    Scanning runs locally; first use downloads the people-detection model, not your video.</p>
+                <details class="contextual-help" data-help-for="clipPrivacyEnabled">
+                    <summary aria-label="Help for privacy masks">?</summary>
+                    <p>Draw a box on the preview, choose an existing detected region, or scan for people.
+                        Detection samples every 0.5 seconds and can miss faces, moving people or webcam tiles.
+                        Review the entire output before sharing. Blur/pixelation are not guaranteed anonymization.
+                        Audio and subtitles are kept and may still identify people.
+                        Scanning runs locally; first use downloads the people-detection model, not your video.</p>
+                </details>
                 <label for="clipPrivacyEffect">New region appearance</label>
                 <select id="clipPrivacyEffect">
                     <option value="blur">Blur</option>
