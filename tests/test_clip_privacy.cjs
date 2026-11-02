@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const outlines = [];
 function node() {
     return {
         children: [], listeners: {}, value: '', checked: false, disabled: false, textContent: '',
@@ -12,7 +13,8 @@ function node() {
         replaceChildren(...items) { this.children = items; },
         setAttribute(name, value) { this.attributes[name] = value; },
         getContext: () => ({drawImage() {}, save() {}, restore() {}, beginPath() {}, rect() {},
-            clip() {}, fillRect() {}, strokeRect() {}}),
+            clip() {}, fillRect() {}, setLineDash() {},
+            strokeRect(...box) { outlines.push({box, color: this.strokeStyle}); }}),
         getBoundingClientRect: () => ({left: 10, top: 20, width: 800, height: 400}),
         setPointerCapture(id) { this.pointer = id; }, hasPointerCapture(id) { return this.pointer === id; },
         releasePointerCapture() { this.pointer = null; },
@@ -51,8 +53,14 @@ const normalized = value => JSON.parse(JSON.stringify(value));
     assert.throws(() => context.detectionPrivacyBox({bbox: [0, 0, 3, 3]}, null), /source image size/);
     controls.open();
     assert.equal(controls.settings().length, 0);
+    outlines.length = 0;
+    change(ids.clipPrivacyDetection, '0');
+    assert.deepEqual(outlines.at(-1), {box: [720, 0, 240, 120], color: '#22d3ee'},
+        'The selected detection is highlighted at its normalized position before adding it');
+    assert.equal(controls.settings().length, 0, 'Previewing a candidate does not add an export mask');
     ids.clipPrivacyDetection.value = '0';
     ids.clipPrivacyAddDetection.onclick();
+    assert(outlines.some(outline => outline.color === '#f59e0b'), 'Added masks have a distinct outline');
     let region = normalized(controls.settings())[0];
     assert.deepEqual(region, {x: .75, y: 0, width: .25, height: .25, start: 0, end: 5, effect: 'blur'});
     const row = ids.clipPrivacyRegions.children[0];

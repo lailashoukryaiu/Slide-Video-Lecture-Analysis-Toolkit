@@ -81,6 +81,20 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
                 context.lineWidth = 2;
                 context.strokeRect(x, y, w, h);
             }
+            const candidate = detections[Number(detected.value)];
+            if (candidate) {
+                const box = detectionPrivacyBox(candidate, scene?.scene.yolo_detections?.image_size);
+                const x = box.x * canvas.width, y = box.y * canvas.height;
+                const w = box.width * canvas.width, h = box.height * canvas.height;
+                context.save();
+                context.fillStyle = 'rgba(34, 211, 238, 0.2)';
+                context.fillRect(x, y, w, h);
+                context.strokeStyle = '#22d3ee';
+                context.lineWidth = 3;
+                context.setLineDash([8, 4]);
+                context.strokeRect(x, y, w, h);
+                context.restore();
+            }
         } catch (error) {
             if (!previewFailed) message(`Could not draw the privacy preview: ${error.message}`, true);
             previewFailed = true;
@@ -278,7 +292,13 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
     });
     canvas.addEventListener('pointercancel', () => { drag = null; });
     player.addEventListener('seeked', () => { if (active) { refreshDetections(); draw(); } });
-    player.addEventListener('timeupdate', draw);
+    player.addEventListener('timeupdate', () => {
+        if (active && currentPrivacyScene(state.videoScenes || [], player.currentTime, player.duration)?.scene !== scene?.scene) {
+            refreshDetections();
+        }
+        draw();
+    });
+    detected.addEventListener('change', draw);
     enabled.addEventListener('change', draw);
     get('clipPrivacyOptions').addEventListener('toggle', draw);
     return {

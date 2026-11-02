@@ -950,6 +950,8 @@ panel or switching videos removes the markers; invalid typed ranges cannot be
 downloaded. No permanent toolbar controls are added.
 
 **Privacy masking:** Expand **Privacy / hide regions** in the custom clip panel.
+The preview highlights the selected detection with a cyan dashed box before you add it;
+orange outlines mark active masks. Selecting a detection alone does not hide it in the download.
 Draw a rectangle on the video preview, add an adjustable box, or choose an
 existing detected region in the current slide. Each region supports **Blur**
 (default), **Pixelate**, or **Solid black cover**, editable percentage coordinates,
