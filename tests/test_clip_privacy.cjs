@@ -4,6 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const outlines = [];
+const blurFilters = [];
 function node() {
     return {
         children: [], listeners: {}, value: '', checked: false, disabled: false, textContent: '',
@@ -12,7 +13,8 @@ function node() {
         append(...items) { this.children.push(...items); },
         replaceChildren(...items) { this.children = items; },
         setAttribute(name, value) { this.attributes[name] = value; },
-        getContext: () => ({drawImage() {}, save() {}, restore() {}, beginPath() {}, rect() {},
+        getContext: () => ({drawImage() { if (this.filter) blurFilters.push(this.filter); },
+            save() {}, restore() {}, beginPath() {}, rect() {},
             clip() {}, fillRect() {}, setLineDash() {},
             strokeRect(...box) { outlines.push({box, color: this.strokeStyle}); }}),
         getBoundingClientRect: () => ({left: 10, top: 20, width: 800, height: 400}),
@@ -23,8 +25,10 @@ function node() {
 const ids = Object.fromEntries(['clipPrivacyPreview', 'clipPrivacyEnabled', 'clipPrivacyStatus',
     'clipPrivacyScan', 'clipPrivacyRegions', 'clipPrivacyEffect', 'clipPrivacyDetection',
     'clipPrivacyAddDetection', 'clipPrivacyAddManual', 'clipPrivacyOptions', 'customClipStart',
-    'customClipEnd', 'clipPrivacyClear', 'clipPrivacyUndo'].map(id => [id, node()]));
+    'customClipEnd', 'clipPrivacyClear', 'clipPrivacyUndo', 'clipPrivacyBlurStrength',
+    'clipPrivacyBlurValue'].map(id => [id, node()]));
 ids.clipPrivacyEffect.value = 'blur';
+ids.clipPrivacyBlurStrength.value = ids.clipPrivacyBlurValue.value = '24';
 ids.customClipStart.value = '00:02';
 ids.customClipEnd.value = '00:08';
 const player = {...node(), currentTime: 3, duration: 10, videoWidth: 1600, videoHeight: 800};
@@ -72,7 +76,14 @@ const normalized = value => JSON.parse(JSON.stringify(value));
     await ids.clipPrivacyUndo.onclick();
     assert.equal(controls.settings()[0].effect, 'blur', 'Undo also restores individual appearance edits');
     let region = normalized(controls.settings())[0];
-    assert.deepEqual(region, {x: .75, y: 0, width: .25, height: .25, start: 0, end: 5, effect: 'blur'});
+    assert.deepEqual(region, {x: .75, y: 0, width: .25, height: .25, start: 0, end: 5, effect: 'blur', blur_strength: 24});
+    ids.clipPrivacyBlurStrength.value = '6';
+    ids.clipPrivacyBlurStrength.listeners.input();
+    ids.clipPrivacyBlurStrength.listeners.change();
+    assert.equal(controls.settings()[0].blur_strength, 6, 'The downloaded video uses the selected strength');
+    assert(blurFilters.includes('blur(3.6px)'), 'Preview strength scales with the source-to-preview resolution');
+    await ids.clipPrivacyUndo.onclick();
+    assert.equal(ids.clipPrivacyBlurStrength.value, '24', 'Undo restores the previous blur strength');
     const row = ids.clipPrivacyRegions.children[0];
     change(row.children[1], 'cover');
     change(row.children[2], 'range');

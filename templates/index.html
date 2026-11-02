@@ -1207,6 +1207,9 @@
                     <option value="pixelate">Pixelate</option>
                     <option value="cover">Solid black cover</option>
                 </select>
+                <label for="clipPrivacyBlurStrength">Blur strength: <output id="clipPrivacyBlurValue">24</output> (light to strong)</label>
+                <input id="clipPrivacyBlurStrength" type="range" min="1" max="48" step="1" value="24" aria-describedby="clipPrivacyBlurHelp">
+                <small id="clipPrivacyBlurHelp">Applies to all blur regions, including new ones. Preview updates as you adjust. Lighter blur can leave people or text identifiable.</small>
                 <div class="row-actions">
                     <select id="clipPrivacyDetection" aria-label="Detected region in the current slide"></select>
                     <button id="clipPrivacyAddDetection" class="btn btn-secondary" type="button">Add detected region</button>

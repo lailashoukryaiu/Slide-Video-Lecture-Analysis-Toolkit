@@ -30,6 +30,11 @@ def privacy_regions(value, duration):
             raise ValueError("Privacy regions must stay inside the video.")
         if not 0 <= values["start"] < values["end"] <= duration + 0.001:
             raise ValueError("Privacy region times must stay inside the video.")
+        if "blur_strength" in region:
+            strength = region["blur_strength"]
+            if type(strength) not in (int, float) or not math.isfinite(strength) or not 1 <= strength <= 48:
+                raise ValueError("Blur strength must be a number from 1 to 48.")
+            values["blur_strength"] = float(strength)
         result.append({**values, "effect": region["effect"]})
     return result
 
@@ -73,7 +78,7 @@ def privacy_filter(regions, width, height, start, end):
                            f"enable='{enable}'[{output}]")
         else:
             filters.append(f"[{previous}]split[base{count}][crop{count}]")
-            effect = ("gblur=sigma=24:steps=2" if region["effect"] == "blur" else
+            effect = (f"gblur=sigma={region.get('blur_strength', 24):g}:steps=2" if region["effect"] == "blur" else
                       f"scale={max(1, w // 16)}:{max(1, h // 16)},scale={w}:{h}:flags=neighbor")
             filters.append(f"[crop{count}]crop={w}:{h}:{x}:{y}:exact=1,{effect}[mask{count}]")
             filters.append(f"[base{count}][mask{count}]overlay={x}:{y}:"

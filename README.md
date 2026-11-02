@@ -967,6 +967,12 @@ panel or switching videos removes the markers; invalid typed ranges cannot be
 downloaded. No permanent toolbar controls are added.
 
 **Privacy masking:** Expand **Privacy / hide regions** in the custom clip panel.
+Adjust **Blur strength** from 1 (light) to 48 (strong) for all blur regions,
+including newly added/scanned boxes. The default 24 preserves the previous export
+strength. Changes update the preview immediately and apply to the downloaded MP4;
+Undo restores the previous strength. Pixelation and solid covers are unaffected.
+Lighter blur may leave identifying details visible; preview is approximate and
+the finished video should always be reviewed before sharing.
 Use **Clear all regions** to remove all selected masks and turn masking off.
 **Undo region change** restores the last addition, removal, clear, appearance,
 coordinate or timing edit (up to 50 steps). History stays within the current

@@ -54,6 +54,18 @@ class VideoPrivacyTests(unittest.TestCase):
                 [{**self.region, "effect": effect}] * privacy.MAX_REGIONS, 3840, 2160, 0, 3)
             self.assertLess(len(subprocess.list2cmdline(["ffmpeg", "-filter_complex", graph])) + 4096, 32767)
 
+    def test_adjustable_blur_strength_validation_and_export(self):
+        for strength in (1, 6, 24, 48):
+            regions = privacy.privacy_regions([{**self.region, "blur_strength": strength}], 3)
+            self.assertEqual(regions[0]["blur_strength"], strength)
+            graph, _ = privacy.privacy_filter(regions, 160, 96, 0, 3)
+            self.assertIn(f"gblur=sigma={strength}:steps=2", graph)
+        for strength in (0, 49, True, None, "6", float("nan"), float("inf")):
+            with self.subTest(strength=strength), self.assertRaises(ValueError):
+                privacy.privacy_regions([{**self.region, "blur_strength": strength}], 3)
+        graph, _ = privacy.privacy_filter([self.region], 160, 96, 0, 3)
+        self.assertIn("gblur=sigma=24:steps=2", graph, "Legacy masks retain their old strength")
+
     def test_merging_is_conservative_and_keeps_disjoint_times_separate(self):
         regions = []
         box = privacy.expanded_box((90, 30, 20, 20), 100, 100)

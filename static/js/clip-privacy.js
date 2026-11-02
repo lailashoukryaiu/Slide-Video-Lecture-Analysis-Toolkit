@@ -31,14 +31,16 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
     const scanButton = get('clipPrivacyScan'), list = get('clipPrivacyRegions');
     const effect = get('clipPrivacyEffect'), detected = get('clipPrivacyDetection');
     const clearButton = get('clipPrivacyClear'), undoButton = get('clipPrivacyUndo');
+    const blurStrength = get('clipPrivacyBlurStrength'), blurValue = get('clipPrivacyBlurValue');
     const context = canvas.getContext('2d');
     const snapshot = doc.createElement('canvas'), patch = doc.createElement('canvas');
     let regions = [], detections = [], scene = null, identity = null, drag = null;
     let active = false, scanId = null, generation = 0, timer = null, rejectWait = null;
     let previewFailed = false;
     let history = [];
+    let adjustingStrength = false;
     const remember = () => {
-        history.push({regions: structuredClone(regions), enabled: enabled.checked});
+        history.push({regions: structuredClone(regions), enabled: enabled.checked, strength: blurValue.value || '24'});
         if (history.length > 50) history.shift();
     };
     const message = (text, error = false) => {
@@ -73,7 +75,7 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
                     context.fillStyle = '#000';
                     context.fillRect(x, y, w, h);
                 } else if (region.effect === 'blur') {
-                    context.filter = 'blur(16px)';
+                    context.filter = `blur(${Number(blurStrength.value) * canvas.width / player.videoWidth}px)`;
                     context.drawImage(snapshot, 0, 0);
                 } else {
                     patch.width = Math.max(1, Math.round(w / 16));
@@ -272,6 +274,18 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
         }
     };
     get('clipPrivacyAddManual').onclick = () => add({x: 0.1, y: 0.1, width: 0.3, height: 0.3});
+    blurStrength.addEventListener('input', () => {
+        const strength = Number(blurStrength.value);
+        if (!Number.isFinite(strength) || strength < 1 || strength > 48) {
+            message('Blur strength must be from 1 to 48.', true); return;
+        }
+        if (!adjustingStrength) remember();
+        adjustingStrength = true;
+        blurValue.value = blurStrength.value;
+        undoButton.disabled = false;
+        draw();
+    });
+    blurStrength.addEventListener('change', () => { adjustingStrength = false; });
     clearButton.onclick = async () => {
         if (!regions.length || (scanId && !await stopScan())) return;
         remember(); regions = []; enabled.checked = false;
@@ -281,6 +295,8 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
         if (!history.length || (scanId && !await stopScan())) return;
         const previous = history.pop();
         regions = previous.regions; enabled.checked = previous.enabled;
+        blurStrength.value = blurValue.value = previous.strength;
+        adjustingStrength = false;
         render(); draw(); message('Last region change undone.');
     };
     get('clipPrivacyAddDetection').onclick = () => {
@@ -346,7 +362,10 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
             if (!regions.some(region => region.start < end && region.end > start)) {
                 throw new Error('No privacy regions overlap this clip. Adjust their timing or turn masking off.');
             }
-            return regions.map(({x, y, width, height, start, end, effect}) => ({x, y, width, height, start, end, effect}));
+            return regions.map(({x, y, width, height, start, end, effect}) => ({
+                x, y, width, height, start, end, effect,
+                ...(effect === 'blur' ? {blur_strength: Number(blurStrength.value)} : {}),
+            }));
         },
     };
 }
