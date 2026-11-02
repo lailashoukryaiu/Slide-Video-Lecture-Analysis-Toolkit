@@ -38,10 +38,12 @@ import { initCompatibleAudio } from './compatible-audio.js';
 import { initSecondJumps, initPlaybackSpeed } from './video.js';
 import { initFrameScreenshot } from './slide-downloads.js';
 import { initTranscriptReady } from './transcript-ready.js';
+import { initResourceLinks } from './resource-links.js';
 
 // Global state
 export const state = {
     outlineRowEditing: false,
+    resourceLinkEditing: false,
     chapterGrouping: 'topic',
     navigationKinds: ['chapters'],
     currentTranscript: [],
@@ -543,6 +545,7 @@ function initApp() {
     initCaptionExport();
     initVttBatch(updateTranslationModelStatus);
     initInlineEditor();
+    initResourceLinks();
     initOutlineEditor();
     initClipMerge();
     initVideoSplit();

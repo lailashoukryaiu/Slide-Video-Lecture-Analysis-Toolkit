@@ -33,18 +33,25 @@ export function applyOutlineOperation(chapters, op, savedChapters = chapters) {
         }
         chapter.sections.push(...following.sections);
         chapter.summary = [chapter.summary, following.summary].filter(Boolean).join('\n\n');
+        if (chapter.resources || following.resources) chapter.resources = [...(chapter.resources || []), ...(following.resources || [])];
     } else if (op.action === 'merge_section') {
         let following;
         if (op.section === sections.length - 1 && result[op.chapter + 1]?.sections?.length) {
             const next = result[op.chapter + 1];
             following = next.sections.shift();
             if (next.sections.length) next.timestamp = next.sections[0].timestamp;
-            else result.splice(op.chapter + 1, 1);
+            else {
+                if (next.resources?.length) following.resources = [...(following.resources || []), ...next.resources];
+                result.splice(op.chapter + 1, 1);
+            }
         } else {
             if (!sections[op.section + 1]) throw new Error('Choose adjacent sections.');
             following = sections.splice(op.section + 1, 1)[0];
         }
         sections[op.section].point = [sections[op.section].point, following.title, following.point].filter(Boolean).join('\n\n');
+        if (sections[op.section].resources || following.resources) {
+            sections[op.section].resources = [...(sections[op.section].resources || []), ...(following.resources || [])];
+        }
     } else if (op.action === 'promote') {
         const selected = sections[op.section];
         if (seconds(selected.timestamp) <= seconds(chapter.timestamp)) {
@@ -465,7 +472,7 @@ export function initInlineEditor() {
     for (const kind of ['chapters', 'slides', 'transcript']) {
         document.getElementById(`edit-${kind}-btn`).addEventListener('click', async () => {
             if (loading || editing?.saving) return;
-            if (state.outlineRowEditing || state.summaryGenerationInProgress) {
+            if (state.outlineRowEditing || state.resourceLinkEditing || state.summaryGenerationInProgress) {
                 showError('Save or cancel the open row edit, and wait for chapter generation to finish before reorganizing.');
                 return;
             }

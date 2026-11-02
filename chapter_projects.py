@@ -28,6 +28,7 @@ from project_paths import (
 )
 from slide_exports import slide_seconds
 from video_ranges import clip_timestamp, split_ranges
+from resource_links import retime_resources
 from video_privacy import EFFECTS, privacy_regions, privacy_filter, video_dimensions, scan_people
 
 
@@ -265,7 +266,7 @@ def _snapshot(video_id, data, *, full_video=False):
         "title": chapter["title"], "transcript": transcript, "language": language,
         "source": source, "scenes": scenes, "metadata": metadata, "baseline": baseline or transcript,
         "caption_track_index": caption_index,
-        **({"chapters": chapters} if full_video else {}),
+        "chapters": chapters, "chapter_language": chapter_language,
     }
 
 
@@ -302,6 +303,8 @@ def clip_speed_chapters(chapters, start, end, rate):
         chapter = copy.deepcopy(original)
         chapter.pop("clip_arrangement", None)
         chapter["timestamp"] = precise_stamp((max(left, start) - start) / rate)
+        if "resources" in chapter:
+            chapter["resources"] = retime_resources(chapter["resources"], start, end, rate)
         sections = []
         parts = original.get("sections", [])
         for part_index, part in enumerate(parts):
@@ -310,6 +313,8 @@ def clip_speed_chapters(chapters, start, end, rate):
             if part_start < end and part_end > start:
                 sections.append({**copy.deepcopy(part),
                                  "timestamp": precise_stamp((max(part_start, start) - start) / rate)})
+                if "resources" in part:
+                    sections[-1]["resources"] = retime_resources(part["resources"], start, end, rate)
         if "sections" in original:
             chapter["sections"] = sections
         result.append(chapter)
@@ -556,21 +561,36 @@ async def create_project(snapshot, project_id, step):
                 if not chapters or chapters[-1]["source_timestamp"] != owner["timestamp"]:
                     chapter = {**copy.deepcopy(owner), "timestamp": precise_stamp(offset),
                                "source_timestamp": owner["timestamp"], "sections": []}
+                    if "resources" in owner:
+                        chapter["resources"] = []
                     chapter.pop("clip_arrangement", None)
                     chapters.append(chapter)
                 if "section_content" in clip:
                     parts = [{**clip["section_content"], "timestamp": precise_stamp(offset)}]
+                    if "resources" in parts[0]:
+                        parts[0]["resources"] = retime_resources(parts[0]["resources"], left, right, offset=offset)
                 else:
                     clipped = clip_speed_chapters([owner], left, right, 1)
                     parts = clipped[0].get("sections", []) if clipped else []
                     for part in parts:
                         part["timestamp"] = precise_stamp(_seconds(part["timestamp"]) + offset)
+                        if "resources" in part:
+                            part["resources"] = retime_resources(part["resources"], 0, right - left, offset=offset)
+                if "resources" in owner:
+                    for link in retime_resources(owner["resources"], left, right, offset=offset):
+                        if link not in chapters[-1]["resources"]:
+                            chapters[-1]["resources"].append(link)
                 chapters[-1]["sections"].extend(parts)
                 offset += right - left
             for chapter in chapters:
                 chapter.pop("source_timestamp")
             output_duration = offset
-        if "speed" in snapshot or "clips" in snapshot:
+        if "clips" not in snapshot:
+            source_chapters = snapshot["chapters"]
+            has_resources = any(row.get("resources") for chapter in source_chapters
+                                for row in [chapter, *chapter.get("sections", [])])
+            chapters = clip_speed_chapters(source_chapters, start, end, rate) if "speed" in snapshot or has_resources else []
+        if chapters or "speed" in snapshot or "clips" in snapshot:
             if "speed" in snapshot:
                 transcript = scale_cues(transcript, rate)
                 baseline = scale_cues(baseline, rate)
@@ -578,7 +598,6 @@ async def create_project(snapshot, project_id, step):
                     scene["time_seconds"] /= rate
                     scene["duration"] /= rate
                     scene["timestamp"] = precise_stamp(scene["time_seconds"])
-                chapters = clip_speed_chapters(snapshot["chapters"], start, end, rate)
             language = snapshot["language"]
             chapter_language = snapshot.get("chapter_language", language)
             transcript_versions._write_json(SUMMARIES_DIR / f"{project_id}.json", chapters)
@@ -600,13 +619,13 @@ async def create_project(snapshot, project_id, step):
             transcript_versions.save_version(
                 project_id, "transcript", baseline, source="whisper",
                 model=metadata.get("model") or "chapter:excerpt", metadata=metadata,
-                **({"chapters": chapters} if "speed" in snapshot or "clips" in snapshot else {}),
+                chapters=chapters,
             )
             language = snapshot["language"]
             if language and transcript:
                 transcript_versions._write_json(TRANSCRIPTS_DIR / f"{project_id}_translated_{language}.json", transcript)
                 transcript_versions.save_version(project_id, "translation", transcript, language=language,
-                    **({"chapters": chapters} if "speed" in snapshot or "clips" in snapshot else {}))
+                    chapters=chapters)
                 transcript_versions.set_active_source(project_id, "translation", language=language)
             else:
                 transcript_versions.set_active_source(project_id, "transcript", source="whisper")

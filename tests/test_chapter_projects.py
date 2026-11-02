@@ -89,6 +89,16 @@ class ChapterProjectTests(unittest.TestCase):
                 mock.patch.object(chapter_projects, "media_executable", return_value="ffmpeg"):
             return asyncio.run(chapter_projects.create_project(snapshot, "child", lambda _: None))
 
+    def test_chapter_project_keeps_resource_links_with_relative_times(self):
+        self.chapters[0]["resources"] = [
+            {"title": "Docs", "url": "https://example.com", "start": 3.125, "end": 5.5}]
+        self.write(self.SUMMARIES_DIR / "parent.json", self.chapters)
+        self.create()
+        saved = self.read(self.SUMMARIES_DIR / "child.json")
+        self.assertEqual(saved[0]["timestamp"], "00:00:00.000")
+        self.assertEqual(saved[0]["resources"][0]["start"], 1.125)
+        self.assertEqual(saved[0]["resources"][0]["end"], 3.5)
+
     def arranged_selection(self):
         from clip_arrangement import reorder_section
         chapters = [

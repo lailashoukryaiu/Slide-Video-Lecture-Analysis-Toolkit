@@ -683,6 +683,23 @@ are saved on the server. Editing and new exports use the selected content langua
 Generating new chapters returns chapter display to the open transcript's language.
 Older mismatched outlines need an explicit translation or regeneration.
 
+**Further-information links:** Expand **Further information** on a chapter or
+section and choose **Add link**. Enter a title and an HTTP/HTTPS URL, then
+**Save link**. Existing entries have **Edit link** and **Remove link** controls.
+Links open in a separate tab and do not seek the player. By default they follow
+the owning chapter/section's time range. **Use custom video time range** sets an
+independent start/end measured from the beginning of the original video, with
+millisecond precision. Custom End must be after Start and within the video.
+The **Further information - now playing** panel beside the player automatically
+shows matching chapter and section links, including while another tab is open.
+It hides when no links match. Links are saved with the selected outline/language,
+participate in saved-content Undo/Redo, and are protected against stale edits.
+Copied/speed-adjusted projects retain links and clip/scale custom times. Chapter
+projects with links also keep the corresponding outline so its links are not lost.
+Regenerating/replacing the outline replaces its links too; undo that saved-content
+change to recover the previous outline. Ordinary MP4 downloads do not contain
+clickable links; these annotations are part of the LectureSeek project/player.
+
 **Export defaults:** Content chapters remain the top-level parts, with saved
 topic sections and slide-change sections included by default. Saved sections
 are reused even when slide changes are included, avoiding unnecessary AI calls.
@@ -950,6 +967,11 @@ panel or switching videos removes the markers; invalid typed ranges cannot be
 downloaded. No permanent toolbar controls are added.
 
 **Privacy masking:** Expand **Privacy / hide regions** in the custom clip panel.
+Use **Clear all regions** to remove all selected masks and turn masking off.
+**Undo region change** restores the last addition, removal, clear, appearance,
+coordinate or timing edit (up to 50 steps). History stays within the current
+video/version and is reset on a source change or page reload. Clearing during an
+active scan first requests cancellation so later scan results cannot replace the cleared state.
 The preview highlights the selected detection with a cyan dashed box before you add it;
 orange outlines mark active masks. Selecting a detection alone does not hide it in the download.
 Draw a rectangle on the video preview, add an adjustable box, or choose an

@@ -13,6 +13,7 @@ from processors import transcript_versions
 from caption_exports import video_duration
 from project_paths import SCENES_DIR, SUMMARIES_DIR, TRANSCRIPTS_DIR, VIDEO_DIR
 from clip_arrangement import reorder_section, section_arrangement
+from resource_links import validate_resources
 
 
 router = APIRouter()
@@ -29,6 +30,15 @@ def _review_fields(edit, old):
     fields["flag_reason"] = _text(edit.get("flag_reason", old.get("flag_reason", "")),
                                   "Review reason", blank=True, limit=1000)
     return fields
+
+
+def _resource_fields(edit, old):
+    if "resources" not in edit and "resources" not in old:
+        return {}
+    try:
+        return {"resources": validate_resources(edit.get("resources", old.get("resources", [])))}
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
 
 
 def _read(path, default=None):
@@ -179,6 +189,7 @@ def _chapters(original, edits):
                    "timestamp": timestamp, "summary": _text(edit.get("summary", ""), "Chapter summary", blank=True),
                    "user_edited": True}
         chapter.update(_review_fields(edit, old))
+        chapter.update(_resource_fields(edit, old))
         if timestamp != old.get("timestamp"):
             chapter["timestamp_edited"] = True
         sections = old.get("sections") or []
@@ -200,6 +211,7 @@ def _chapters(original, edits):
             chapter["sections"].append({
                 **section, "timestamp": stamp, "title": _text(change.get("title"), "Section title", limit=500),
                 **_review_fields(change, section),
+                **_resource_fields(change, section),
                 "point": _text(change.get("point", ""), "Section text", blank=True),
                 **({"timestamp_edited": True} if stamp != section.get("timestamp") else {}),
             })
@@ -446,6 +458,8 @@ def outline_operations(chapters, operations):
                                          "point": item.get("summary", "")}]
             chapter["sections"] += following["sections"]
             chapter["summary"] = "\n\n".join(filter(None, [chapter.get("summary"), following.get("summary")]))
+            if "resources" in chapter or "resources" in following:
+                chapter["resources"] = chapter.get("resources", []) + following.get("resources", [])
         else:
             part = operation.get("section")
             if type(part) is not int or not 0 <= part < len(sections):
@@ -460,12 +474,16 @@ def outline_operations(chapters, operations):
                         next_chapter["timestamp"] = next_chapter["sections"][0]["timestamp"]
                         next_chapter["timestamp_edited"] = True
                     else:
+                        if next_chapter.get("resources"):
+                            following["resources"] = following.get("resources", []) + next_chapter["resources"]
                         result.pop(index + 1)
                 else:
                     following = sections.pop(part + 1)
                 sections[part]["point"] = "\n\n".join(filter(None, [
                     sections[part].get("point"), following["title"], following.get("point"),
                 ]))
+                if "resources" in sections[part] or "resources" in following:
+                    sections[part]["resources"] = sections[part].get("resources", []) + following.get("resources", [])
             elif action == "promote":
                 selected = sections[part]
                 if _seconds(selected["timestamp"]) == _seconds(chapter["timestamp"]):
@@ -531,6 +549,8 @@ def _merge_selected_chapters(original, selections, merged_groups):
                                                   "point": part.get("summary", "")}]
         merged["sections"] = sections
         merged["summary"] = "\n\n".join(filter(None, (part.get("summary") for part in parts)))
+        if any("resources" in part for part in parts):
+            merged["resources"] = [link for part in parts for link in part.get("resources", [])]
         merged["user_edited"] = True
         del result[group[0] + 1:group[-1] + 1]
         if merged_groups is not None:
@@ -602,6 +622,8 @@ def mutate_selected_sections(original, action, selections, merged_groups=None):
                 *("\n".join(filter(None, [part["title"], part.get("point", "")])) for part in parts[1:]),
             ]))
             merged["flagged"] = any(part.get("flagged") for part in parts)
+            if any("resources" in part for part in parts):
+                merged["resources"] = [link for part in parts for link in part.get("resources", [])]
             merged["skipped"] = all(part.get("skipped") for part in parts)
             merged["flag_reason"] = "\n".join(dict.fromkeys(
                 part["flag_reason"] for part in parts if part.get("flag_reason")))[:1000]
@@ -612,6 +634,8 @@ def mutate_selected_sections(original, action, selections, merged_groups=None):
                 result[ci]["user_edited"] = True
                 if ci != chapter:
                     consumed_chapters.add(ci)
+                    if not result[ci]["sections"] and result[ci].get("resources"):
+                        merged.setdefault("resources", []).extend(result[ci]["resources"])
             sections[first] = merged
             if merged_groups is not None:
                 merged_groups.append((merged, parts, "section"))
@@ -695,6 +719,7 @@ async def save_content_edits(video_id: str, request: Request):
         raise HTTPException(400, "Edits must be an object.")
     kind, language = data.get("kind"), data.get("language", "")
     source, version_id = data.get("source", "whisper"), data.get("version_id", "")
+    media_duration = await _outline_media_duration(video_id) if kind == "chapters" else None
     with _lock:
         selected_language = data.get("transcript_language", language)
         original, context = _snapshot(video_id, kind, language, source, version_id, selected_language)
@@ -732,6 +757,11 @@ async def save_content_edits(video_id: str, request: Request):
             if kind == "chapters":
                 structured = outline_operations(original, data.get("operations", []))
                 content = _chapters(structured, edits)
+                duration = media_duration if media_duration is not None else _transcript_duration(context[1])
+                for chapter in content:
+                    for row in [chapter, *chapter.get("sections", [])]:
+                        if any(link.get("end", 0) > duration for link in row.get("resources", [])):
+                            raise HTTPException(400, "Custom link times must be within the video duration.")
                 version = persist_chapters(video_id, content, context, language, selected_language, source)
             else:
                 if not isinstance(edits, list) or len(edits) != len(original):

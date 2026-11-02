@@ -86,7 +86,7 @@ export function initChapterTools() {
         if (!button) continue;
         button.addEventListener('click', async () => {
             if (busy || state.summaryGenerationInProgress) return;
-            if (state.outlineRowEditing) { showError('Save or cancel the open row edit first.'); return; }
+            if (state.outlineRowEditing || state.resourceLinkEditing) { showError('Save or cancel the open row or link edit first.'); return; }
             if (id === 'confirmChapterTranslationBtn') {
                 if (translationContext !== translationKey()) {
                     showError('The video, transcript or chapters changed. Reopen Translate chapters first.');

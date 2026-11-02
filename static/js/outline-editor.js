@@ -25,7 +25,7 @@ export function initOutlineEditor() {
         state.outlineRowEditing = false;
     };
     document.addEventListener('outlineEditRequested', async event => {
-        if (saving || state.summaryGenerationInProgress) {
+        if (saving || state.resourceLinkEditing || state.summaryGenerationInProgress) {
             showError('Wait for the current save or chapter generation to finish.');
             return;
         }

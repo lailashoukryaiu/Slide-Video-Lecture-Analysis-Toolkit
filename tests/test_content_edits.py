@@ -84,6 +84,47 @@ class ContentEditsTests(unittest.TestCase):
         self.assertEqual(saved, self.get("chapters")["content"])
         self.assertNotIn("timestamp_edited", saved[0])
 
+    def test_resources_save_reload_remove_and_conflict(self):
+        edits = copy.deepcopy(self.chapters)
+        link = {"title": "Documentation", "url": "https://example.com/docs"}
+        edits[0]["resources"] = [link]
+        edits[0]["sections"][0]["resources"] = [{**link, "start": 2.125, "end": 10.5}]
+        revision = self.get("chapters")["revision"]
+        saved = self.save("chapters", edits)["content"]
+        self.assertEqual(saved, self.get("chapters")["content"])
+        self.assertEqual(saved[0]["resources"], [link])
+        self.assertEqual(saved[0]["sections"][0]["resources"][0]["start"], 2.125)
+        self.save("chapters", edits, status=409, revision=revision)
+        saved[0]["resources"] = []
+        saved[0]["sections"][0]["resources"][0]["title"] = "Updated"
+        changed = self.save("chapters", saved)["content"]
+        self.assertEqual(changed[0]["resources"], [])
+        self.assertEqual(changed[0]["sections"][0]["resources"][0]["title"], "Updated")
+
+    def test_resources_reject_invalid_urls_times_and_shapes(self):
+        base = {"title": "Docs", "url": "https://example.com"}
+        for value in (None, {}, [None], [base] * 51,
+                      [{**base, "title": ""}], [{**base, "url": "javascript:alert(1)"}],
+                      [{**base, "url": "https://name:password@example.com"}],
+                      [{**base, "url": "https://example.com/a b"}],
+                      [{**base, "start": 2, "end": 1}],
+                      [{**base, "start": True, "end": 2}],
+                      [{**base, "start": 0}],
+                      [{**base, "start": 0, "end": 5000}]):
+            with self.subTest(value=value):
+                edits = copy.deepcopy(self.chapters)
+                edits[0]["resources"] = value
+                self.save("chapters", edits, status=400)
+        self.assertEqual(self.get("chapters")["content"], self.chapters)
+
+    def test_resource_links_survive_outline_merges(self):
+        link = {"title": "Docs", "url": "https://example.com"}
+        chapters = copy.deepcopy(self.chapters)
+        chapters[0]["resources"] = [link]
+        chapters[1]["resources"] = [{**link, "title": "Second"}]
+        merged = content_edits.outline_operations(chapters, [{"action": "merge_chapter", "chapter": 0}])
+        self.assertEqual([item["title"] for item in merged[0]["resources"]], ["Docs", "Second"])
+
     def edit_row(self, action, chapter, section=None, item=None, status=200, revision=None):
         response = self.client.post("/outline_item/vid", json={
             "action": action, "chapter": chapter, "section": section, "item": item,

@@ -445,7 +445,7 @@ export async function exportChapters() {
  * Generates chapter markers from the transcript
  */
 export async function generateChapters() {
-    if (state.outlineRowEditing) { showError('Save or cancel the open row edit first.'); return; }
+    if (state.outlineRowEditing || state.resourceLinkEditing) { showError('Save or cancel the open row or link edit first.'); return; }
     if (state.summaryGenerationInProgress) {
         if (!summaryJobVideoId) {
             showNotification('Another outline operation is running.', 'info');

@@ -23,7 +23,7 @@ function node() {
 const ids = Object.fromEntries(['clipPrivacyPreview', 'clipPrivacyEnabled', 'clipPrivacyStatus',
     'clipPrivacyScan', 'clipPrivacyRegions', 'clipPrivacyEffect', 'clipPrivacyDetection',
     'clipPrivacyAddDetection', 'clipPrivacyAddManual', 'clipPrivacyOptions', 'customClipStart',
-    'customClipEnd'].map(id => [id, node()]));
+    'customClipEnd', 'clipPrivacyClear', 'clipPrivacyUndo'].map(id => [id, node()]));
 ids.clipPrivacyEffect.value = 'blur';
 ids.customClipStart.value = '00:02';
 ids.customClipEnd.value = '00:08';
@@ -37,7 +37,7 @@ let media = null, reply, posts = [];
 const context = vm.createContext({
     document: {getElementById: id => ids[id], createElement: node},
     clipSeconds: value => value.split(':').reduce((n, part) => n * 60 + Number(part), 0),
-    setTimeout, clearTimeout, DOMException,
+    setTimeout, clearTimeout, DOMException, structuredClone,
     fetch: async (url, options) => {
         posts.push({url, options});
         return {ok: true, json: async () => options ? {job_id: 'scan'} : reply};
@@ -61,6 +61,16 @@ const normalized = value => JSON.parse(JSON.stringify(value));
     ids.clipPrivacyDetection.value = '0';
     ids.clipPrivacyAddDetection.onclick();
     assert(outlines.some(outline => outline.color === '#f59e0b'), 'Added masks have a distinct outline');
+    await ids.clipPrivacyClear.onclick();
+    assert.equal(controls.settings().length, 0);
+    assert.equal(ids.clipPrivacyEnabled.checked, false);
+    assert.equal(ids.clipPrivacyClear.disabled, true);
+    await ids.clipPrivacyUndo.onclick();
+    assert.equal(controls.settings().length, 1, 'Undo restores all cleared regions and masking');
+    change(ids.clipPrivacyRegions.children[0].children[1], 'pixelate');
+    assert.equal(controls.settings()[0].effect, 'pixelate');
+    await ids.clipPrivacyUndo.onclick();
+    assert.equal(controls.settings()[0].effect, 'blur', 'Undo also restores individual appearance edits');
     let region = normalized(controls.settings())[0];
     assert.deepEqual(region, {x: .75, y: 0, width: .25, height: .25, start: 0, end: 5, effect: 'blur'});
     const row = ids.clipPrivacyRegions.children[0];

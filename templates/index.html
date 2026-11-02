@@ -382,6 +382,7 @@
             <div class="layout-splitter" id="panelSplitter" role="separator" aria-orientation="vertical" aria-label="Resize side panel" title="Drag to resize. Double-click to reset." tabindex="0"></div>
             <!-- Right column: Tabs for transcript, chapters, and scenes -->
             <div class="content-tabs" data-pane="panel">
+                <aside id="currentResources" class="current-resources" aria-label="Further information for current playback" hidden></aside>
                 <button class="pane-restore" type="button" data-pane="panel" title="Show the side panel again"><i class="fas fa-window-maximize"></i><span>Side panel</span></button>
                 <div class="tabs-header">
                     <button class="tab-btn active" data-tab="transcript">
@@ -1214,6 +1215,10 @@
                 </div>
                 <canvas id="clipPrivacyPreview" class="clip-privacy-preview" aria-label="Privacy preview. Drag to add a box, or use Add adjustable box and edit its coordinates."></canvas>
                 <p>Cyan dashed box: selected detection (not yet added). Orange outline: active privacy mask.</p>
+                <div class="row-actions">
+                    <button id="clipPrivacyClear" class="btn btn-secondary" type="button" disabled>Clear all regions</button>
+                    <button id="clipPrivacyUndo" class="btn btn-secondary" type="button" disabled>Undo region change</button>
+                </div>
                 <p id="clipPrivacyStatus" role="status" aria-live="polite"></p>
                 <div id="clipPrivacyRegions"></div>
             </details>

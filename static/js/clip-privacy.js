@@ -30,11 +30,17 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
     const enabled = get('clipPrivacyEnabled'), status = get('clipPrivacyStatus');
     const scanButton = get('clipPrivacyScan'), list = get('clipPrivacyRegions');
     const effect = get('clipPrivacyEffect'), detected = get('clipPrivacyDetection');
+    const clearButton = get('clipPrivacyClear'), undoButton = get('clipPrivacyUndo');
     const context = canvas.getContext('2d');
     const snapshot = doc.createElement('canvas'), patch = doc.createElement('canvas');
     let regions = [], detections = [], scene = null, identity = null, drag = null;
     let active = false, scanId = null, generation = 0, timer = null, rejectWait = null;
     let previewFailed = false;
+    let history = [];
+    const remember = () => {
+        history.push({regions: structuredClone(regions), enabled: enabled.checked});
+        if (history.length > 50) history.shift();
+    };
     const message = (text, error = false) => {
         status.textContent = text;
         status.classList.toggle('outline-error', error);
@@ -108,10 +114,12 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
             control.append(option);
         }
         control.value = value;
-        control.addEventListener('change', () => { change(control.value); draw(); });
+        control.addEventListener('change', () => { remember(); change(control.value); render(); draw(); });
         return control;
     };
     const render = () => {
+        clearButton.disabled = !regions.length;
+        undoButton.disabled = !history.length;
         list.replaceChildren();
         regions.forEach((region, index) => {
             const row = doc.createElement('details'), summary = doc.createElement('summary');
@@ -145,7 +153,11 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
                         || region.y + region.height > 1) {
                         region[key] = old; input.value = (old * 100).toFixed(1);
                         message('Keep each region inside the video, with positive width and height.', true);
-                    } else { message(''); draw(); }
+                    } else {
+                        region[key] = old; remember(); region[key] = value;
+                        undoButton.disabled = false;
+                        message(''); draw();
+                    }
                 });
                 label.append(input); row.append(label);
             }
@@ -154,7 +166,7 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
             preview.onclick = () => { player.currentTime = region.start; draw(); };
             const remove = doc.createElement('button');
             remove.type = 'button'; remove.className = 'btn btn-secondary'; remove.textContent = 'Remove region';
-            remove.onclick = () => { regions.splice(index, 1); render(); draw(); };
+            remove.onclick = () => { remember(); regions.splice(index, 1); render(); draw(); };
             row.append(preview, remove);
             list.append(row);
         });
@@ -173,6 +185,7 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
     };
     const add = box => {
         if (regions.length >= limit) { message(`Choose at most ${limit} regions.`, true); return; }
+        remember();
         enabled.checked = true;
         regions.push({...box, effect: effect.value, scope: scene ? 'scene' : 'range',
             start: scene?.start ?? 0, end: scene?.end ?? player.duration,
@@ -233,6 +246,7 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
                 if (status.status === 'cancelled') { message('Privacy scan stopped.'); return; }
                 if (status.status === 'complete') {
                     if (regions.length + status.regions.length > limit) throw new Error('Too many regions. Remove existing regions or scan a shorter clip.');
+                    if (status.regions.length) remember();
                     regions.push(...status.regions.map(region => ({...region, scope: 'detected',
                         detectedStart: region.start, detectedEnd: region.end})));
                     if (status.regions.length) enabled.checked = true;
@@ -258,6 +272,17 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
         }
     };
     get('clipPrivacyAddManual').onclick = () => add({x: 0.1, y: 0.1, width: 0.3, height: 0.3});
+    clearButton.onclick = async () => {
+        if (!regions.length || (scanId && !await stopScan())) return;
+        remember(); regions = []; enabled.checked = false;
+        render(); draw(); message('All privacy regions cleared. Undo restores them.');
+    };
+    undoButton.onclick = async () => {
+        if (!history.length || (scanId && !await stopScan())) return;
+        const previous = history.pop();
+        regions = previous.regions; enabled.checked = previous.enabled;
+        render(); draw(); message('Last region change undone.');
+    };
     get('clipPrivacyAddDetection').onclick = () => {
         try { add(detectionPrivacyBox(detections[Number(detected.value)], scene?.scene.yolo_detections?.image_size)); }
         catch (error) { message(error.message, true); }
@@ -303,7 +328,7 @@ export function initClipPrivacy({state, player, mediaExportId, doc = document}) 
     get('clipPrivacyOptions').addEventListener('toggle', draw);
     return {
         open() {
-            if (identity !== identityNow()) { regions = []; enabled.checked = false; identity = identityNow(); }
+            if (identity !== identityNow()) { regions = []; history = []; enabled.checked = false; identity = identityNow(); }
             active = true; previewFailed = false;
             refreshDetections(); render(); draw(); message('');
         },

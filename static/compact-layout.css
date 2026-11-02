@@ -1392,3 +1392,47 @@ progress {
 #clipPrivacyRegions input {
     width: 70px;
 }
+.resource-links {
+    flex-basis: 100%;
+    min-width: 0;
+    margin-top: 4px;
+}
+.resource-links > summary {
+    cursor: pointer;
+    color: var(--brand);
+    font-weight: 600;
+}
+.resource-link-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 5px 0;
+}
+.resource-link-row a, .current-resources a {
+    color: var(--brand);
+    overflow-wrap: anywhere;
+    text-decoration: underline;
+}
+.resource-link-editor {
+    display: grid;
+    gap: 8px;
+    padding: 8px;
+    background: var(--surface-2);
+}
+.resource-link-editor label { display: block; }
+.resource-link-editor input:not([type="checkbox"]) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+.current-resources {
+    flex-shrink: 0;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+}
+.current-resources ul { margin: 4px 0 0; padding-inline-start: 20px; }
