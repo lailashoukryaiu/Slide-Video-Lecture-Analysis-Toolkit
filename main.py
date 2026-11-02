@@ -77,6 +77,10 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+from quiz_routes import router as quiz_router
+app.include_router(quiz_router)
+from notes_routes import router as notes_router
+app.include_router(notes_router)
 app.include_router(content_edits_router)
 app.include_router(chapter_projects_router)
 app.include_router(library.router)
